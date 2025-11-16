@@ -309,6 +309,9 @@ class Namespace extends React.Component {
     const {titleAvatar, colorAvatar} = this.getAvatar(namespace.displayName);
     const canTransfer = !canDelete;
     const isForSale = !!namespace.price;
+    const displayNameWithShortcode = namespace.shortCode
+      ? `${namespace.displayName} @${namespace.shortCode}`
+      : namespace.displayName;
     const {
       avatarCandidateUris,
       avatarCandidateRequestId,
@@ -347,7 +350,7 @@ const avatarContent = avatarSource ? (
           </View>
           <View style={{ flex: 1, justifyContent: 'space-between', paddingHorizontal: 7, paddingTop: 10 }}>
             <View style={{ flex: 1 }} >
-              <Text style={[styles.cardTitleText, isForSale && {color: KevaColors.okColor}]} numberOfLines={1} ellipsizeMode="tail">{namespace.displayName}</Text>
+              <Text style={[styles.cardTitleText, isForSale && {color: KevaColors.okColor}]} numberOfLines={1} ellipsizeMode="tail">{displayNameWithShortcode}</Text>
             </View>
             <View style={styles.actionContainer}>
               {
