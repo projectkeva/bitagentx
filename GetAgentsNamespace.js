@@ -3,7 +3,6 @@ import BlueElectrum from './BlueElectrum';
 import { HDSegwitP2SHWallet } from './class';
 import { createKevaNamespace } from './class/keva-ops';
 import { FALLBACK_DATA_PER_BYTE_FEE } from './models/networkTransactionFees';
-import { addPendingGetAgentsNamespaceTx } from './GetAgentsNamespaceCache';
 
 async function ensureAppReady() {
   await BlueApp.startAndDecrypt();
@@ -89,13 +88,6 @@ export async function handleGetAgentsNamespaceRequest(request, sendMessage) {
 
     await refreshNamespaceWalletState(namespaceWallet);
     const txid = typeof broadcastResult === 'string' ? broadcastResult : null;
-    if (txid) {
-      try {
-        await addPendingGetAgentsNamespaceTx(txid, namespaceId);
-      } catch (error) {
-        console.warn('GetAgentsNamespace: failed to cache pending namespace tx', error);
-      }
-    }
     const result = {
       success: true,
       namespaceId,
