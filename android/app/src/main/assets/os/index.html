@@ -163,8 +163,8 @@ window.addEventListener('load', updateDesktopScale);
       <div class="icon" data-app="keva"><img src="theme/retro/icons/keva.png"/><span>Node</span></div>
       <div class="icon" data-app="wallet"><img src="theme/retro/icons/wallet.png"/><span>Wallet</span></div>
       <div class="icon" data-app="download"><img src="theme/retro/icons/download.png"/><span>Download</span></div>
-      <div class="icon" data-app="id"><img src="theme/retro/icons/id.png"/><span>Agents</span></div>
-      <div class="icon" data-app="getagents"><img src="theme/retro/icons/getagents.png"/><span>Get Agents</span></div>
+      <div class="icon" data-app="id"><img src="theme/retro/icons/id.png"/><span>Agents ID</span></div>
+      <div class="icon" data-app="getagents"><img src="theme/retro/icons/getagents.gif"/><span>Get Agents</span></div>
       <div class="icon" data-app="blog"><img src="theme/retro/icons/blog.png"/><span>Blog</span></div>
       <div class="icon" data-app="pool"><img src="theme/retro/icons/pool.png"/><span>Pool</span></div>
       <div class="icon" data-app="exchange"><img src="theme/retro/icons/exchange.png"/><span>Exchange</span></div>
@@ -208,11 +208,11 @@ window.addEventListener('load', updateDesktopScale);
     <div class="start-menu" id="startMenu" aria-hidden="true">
       <form>
         <label><input type="checkbox" data-app="keva" checked> Node</label>
-        <label><input type="checkbox" data-app="id" checked> Agents</label>
+        <label><input type="checkbox" data-app="id" checked> Agents ID</label>
         <label><input type="checkbox" data-app="getagents" checked> Get Agents</label>
         <label><input type="checkbox" data-app="readme" checked> Read mee！</label>
         <label><input type="checkbox" data-app="download" checked> Download</label>
-        <label><input type="checkbox" data-app="wallet"> Wallet</label>
+        <label><input type="checkbox" data-app="wallet" checked> Wallet</label>
         <label><input type="checkbox" data-app="pool"> Pool</label>
         <label><input type="checkbox" data-app="exchange"> Exchange</label>
         <label><input type="checkbox" data-app="blog"> Blog</label>
@@ -348,8 +348,8 @@ window.addEventListener('load', () => {
     document.documentElement.lang=lang;
     langBtn.textContent=(lang==='en')?'中':'EN';
     const map={
-      en:{keva:'Node',id:'Agents',getagents:'Get Agents',readme:'Read mee！',download:'Download',startBtn:'Start'},
-      zh:{keva:'网络节点',id:'代理人',getagents:'获取代理',readme:'读我！',download:'下载文件夹',startBtn:'开始'}
+      en:{keva:'Node',id:'Agents ID',getagents:'Get Agents',readme:'Read mee！',download:'Download',startBtn:'Start'},
+      zh:{keva:'网络节点',id:'代理人 ID',getagents:'获取代理',readme:'读我！',download:'下载文件夹',startBtn:'开始'}
     };
     for(const k in map[lang]){
       if(k==='startBtn')continue;
@@ -382,8 +382,9 @@ async function loadText(lang,id,path){
     if(el)el.innerHTML=txt;
   }catch(err){console.warn('Failed to load',path,err);}
 }
+const README_EN_PATH='text/readme_en.txt';
 const textFiles={
-  readme:{en:'text/readme_en.txt',zh:'text/readme_zh.txt'},
+  readme:{en:README_EN_PATH,zh:README_EN_PATH},
   download:{en:'text/download_en.txt',zh:'text/download_zh.txt'}
 };
 for(const win in textFiles){
