@@ -284,6 +284,12 @@ document.querySelectorAll('.icon').forEach(icon=>{
       }else{
         alert('Get Agents is only available inside the Kevacoin app.');
       }
+    } else if(app==='wallet'){
+      if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
+        window.ReactNativeWebView.postMessage('open_wallet');
+      } else {
+        alert('Wallets are only available inside the Kevacoin app.');
+      }
     } else if(links[app]){
       window.open(links[app],'_blank');
     }
