@@ -1693,6 +1693,12 @@ function handleNativeTimelineMessage(event) {
     console.error('Native Electrum bridge reported error', parsed.error);
     failBootOverlay('App Electrum service unavailable.');
     showStatus('App Electrum service unavailable. Please try again.', true);
+  } else if (parsed.type === 'getagents_wallet_state') {
+    const payload = parsed.payload || {};
+    const unconfirmedUpdate = sanitizeUnconfirmedCount(payload.unconfirmedTxCount);
+    setUnconfirmedTxCount(unconfirmedUpdate);
+    const fallbackHeight = Number.isFinite(payload.blockHeight) ? payload.blockHeight : baseBlockHeight;
+    setWalletAgentState(payload.walletAgents || null, fallbackHeight);
   } else if (parsed.type === 'getagents_create_namespace_result') {
     handleNamespaceCreationResponse(parsed);
   }
