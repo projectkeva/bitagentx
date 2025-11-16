@@ -3,8 +3,11 @@ import { Platform, StatusBar, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useSelector } from 'react-redux';
 import BlueElectrum from '../../BlueElectrum';
-import BlueApp from '../../BlueApp';
 import { handleGetAgentsNamespaceRequest } from '../../GetAgentsNamespace';
+import {
+  getPendingGetAgentsNamespaceTxs,
+  removePendingGetAgentsNamespaceTxs,
+} from '../../GetAgentsNamespaceCache';
 
 function parseBlockHeightFromShortcode(shortCode) {
   if (shortCode === undefined || shortCode === null) {
@@ -84,90 +87,53 @@ async function fetchBlockTimestampSeconds(blockHeight) {
   return null;
 }
 
-let pendingWalletRefreshPromise = null;
-
-async function refreshWalletDataForUnconfirmedCount() {
-  if (pendingWalletRefreshPromise) {
-    return pendingWalletRefreshPromise;
+async function getPendingNamespaceCreationCount() {
+  let pendingEntries = [];
+  try {
+    pendingEntries = await getPendingGetAgentsNamespaceTxs();
+  } catch (error) {
+    console.warn('GetAgentsScreen: failed to load pending namespace tx cache', error);
+    return 0;
   }
 
-  pendingWalletRefreshPromise = (async () => {
-    const wallets = typeof BlueApp.getWallets === 'function' ? BlueApp.getWallets() : [];
-    if (!Array.isArray(wallets) || wallets.length === 0) {
-      return;
+  const validEntries = Array.isArray(pendingEntries)
+    ? pendingEntries.filter(entry => entry && typeof entry.txid === 'string' && entry.txid.trim().length > 0)
+    : [];
+  if (validEntries.length === 0) {
+    return 0;
+  }
+
+  const txids = validEntries.map(entry => entry.txid.trim());
+  let txMap = {};
+  try {
+    await BlueElectrum.waitTillConnected();
+    txMap = await BlueElectrum.multiGetTransactionByTxid(txids, 20, true);
+  } catch (error) {
+    console.warn('GetAgentsScreen: failed to fetch pending namespace tx states', error);
+    return validEntries.length;
+  }
+
+  const confirmedTxids = [];
+  let pendingCount = 0;
+  validEntries.forEach(entry => {
+    const tx = txMap ? txMap[entry.txid] : null;
+    const confirmations = Number(tx && tx.confirmations);
+    if (Number.isFinite(confirmations) && confirmations > 0) {
+      confirmedTxids.push(entry.txid);
+    } else {
+      pendingCount += 1;
     }
+  });
 
-    await Promise.all(
-      wallets.map(async wallet => {
-        if (!wallet) {
-          return;
-        }
-
-        if (typeof wallet.fetchBalance === 'function') {
-          try {
-            await wallet.fetchBalance();
-          } catch (error) {
-            console.warn('GetAgentsScreen: failed to refresh wallet balance before counting unconfirmed tx', error);
-          }
-        }
-
-        if (typeof wallet.fetchTransactions === 'function') {
-          try {
-            await wallet.fetchTransactions();
-          } catch (error) {
-            console.warn('GetAgentsScreen: failed to refresh wallet transactions before counting unconfirmed tx', error);
-          }
-        }
-      }),
-    );
-
+  if (confirmedTxids.length > 0) {
     try {
-      await BlueApp.saveToDisk();
+      await removePendingGetAgentsNamespaceTxs(confirmedTxids);
     } catch (error) {
-      console.warn('GetAgentsScreen: failed to persist wallet data after refresh', error);
+      console.warn('GetAgentsScreen: failed to purge confirmed namespace tx cache', error);
     }
-  })();
-
-  try {
-    await pendingWalletRefreshPromise;
-  } finally {
-    pendingWalletRefreshPromise = null;
-  }
-}
-
-async function getUnconfirmedTransactionCount() {
-  try {
-    if (typeof BlueApp.waitForStart === 'function') {
-      await BlueApp.waitForStart();
-    }
-  } catch (error) {
-    console.warn('GetAgentsScreen: failed to wait for wallet start', error);
   }
 
-  if (typeof BlueApp.getWallets !== 'function') {
-    return 0;
-  }
-
-  try {
-    await refreshWalletDataForUnconfirmedCount();
-    return BlueApp.getWallets().reduce((total, wallet) => {
-      if (!wallet || typeof wallet.getTransactions !== 'function') {
-        return total;
-      }
-      const transactions = wallet.getTransactions() || [];
-      const walletCount = transactions.reduce((count, tx) => {
-        const confirmations = Number(tx && tx.confirmations);
-        if (!Number.isFinite(confirmations) || confirmations <= 0) {
-          return count + 1;
-        }
-        return count;
-      }, 0);
-      return total + walletCount;
-    }, 0);
-  } catch (error) {
-    console.warn('GetAgentsScreen: failed to compute unconfirmed tx count', error);
-    return 0;
-  }
+  return pendingCount;
 }
 
 const ANDROID_GETAGENTS_SOURCE = { uri: 'file:///android_asset/os/getagents.html' };
@@ -315,7 +281,7 @@ export default function GetAgentsScreen() {
       try {
         const [latestHeader, unconfirmedTxCount] = await Promise.all([
           BlueElectrum.getLatestHeaderSimple(),
-          getUnconfirmedTransactionCount(),
+          getPendingNamespaceCreationCount(),
         ]);
         const walletShortcodes = getWalletShortcodesForBlock(latestHeader.height);
         let walletBlockEntries = [];
