@@ -655,7 +655,7 @@ if (!hasNativeBridge && parentNativeBridge) {
 }
 const hasParentBridgeProxy = !hasNativeBridge && canProxyThroughParent();
 const usesNativeBridge = hasNativeBridge || hasParentBridgeProxy;
-const NATIVE_TIMEOUT_MS = 8000;
+const NATIVE_TIMEOUT_MS = 20000;
 let nativeRequestTimeoutId = null;
 let hasRenderedTimeline = false;
 let galleryRenderToken = 0;
