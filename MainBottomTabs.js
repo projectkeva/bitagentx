@@ -128,9 +128,9 @@ const KevaTabNavigator = createBottomTabNavigator({
         headerShown: false,
       },
     },
-    Wallets: {
-      screen: WalletsList,
-      path: 'wallets',
+    GetAgents: {
+      screen: GetAgents,
+      path: 'geta',
       navigationOptions: {
         headerShown: false,
       },
@@ -192,7 +192,7 @@ const KevaTabNavigator = createBottomTabNavigator({
 if (routeName === 'Home') {
   iconName = 'md-home';
 } else
-        if (routeName === 'Wallets') {
+        if (routeName === 'GetAgents') {
 
           iconName = 'md-wallet';
         } else if (routeName === 'Settings') {
@@ -211,8 +211,8 @@ if (routeName === 'Home') {
   label = 'Home';
 } else
 
-        if (routeName === 'Wallets') {
-          label = loc.general.label_wallets;
+        if (routeName === 'GetAgents') {
+          label = 'Get Agents';
         } else if (routeName === 'Settings') {
           label = loc.general.label_settings;
         } else if (routeName === 'Namespaces') {
@@ -277,6 +277,13 @@ const HomeStackNavigator = createStackNavigator({
       },
       headerTintColor: '#e7fff9',
       headerTitleStyle: { color: '#e7fff9' },
+    },
+  },
+  Wallets: {
+    screen: WalletsList,
+    path: 'wallets',
+    navigationOptions: {
+      headerShown: false,
     },
   },
   // Wallets
