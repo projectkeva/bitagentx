@@ -1,216 +1,14 @@
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useCallback, useRef } from 'react';
 import { Platform, StatusBar, View } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { useSelector } from 'react-redux';
 import BlueElectrum from '../../BlueElectrum';
 import { handleGetAgentsNamespaceRequest } from '../../GetAgentsNamespace';
-import {
-  getPendingGetAgentsNamespaceTxs,
-  removePendingGetAgentsNamespaceTxs,
-} from '../../GetAgentsNamespaceCache';
-
-function parseBlockHeightFromShortcode(shortCode) {
-  if (shortCode === undefined || shortCode === null) {
-    return null;
-  }
-  const normalized = String(shortCode).trim();
-  if (!/^[0-9]+$/.test(normalized) || normalized.length < 2) {
-    return null;
-  }
-  const heightDigits = parseInt(normalized[0], 10);
-  if (!Number.isFinite(heightDigits) || heightDigits <= 0 || normalized.length <= heightDigits) {
-    return null;
-  }
-  const blockSlice = normalized.slice(1, 1 + heightDigits);
-  const blockHeight = parseInt(blockSlice, 10);
-  if (!Number.isFinite(blockHeight)) {
-    return null;
-  }
-  return blockHeight;
-}
-
-function parseTimestampFromHeaderHex(headerHex) {
-  if (typeof headerHex !== 'string') {
-    return null;
-  }
-  const trimmedHex = headerHex.trim();
-  if (trimmedHex.length < 144) {
-    return null;
-  }
-  const tsLittleEndian = trimmedHex.slice(136, 144);
-  if (tsLittleEndian.length !== 8) {
-    return null;
-  }
-  const bytePairs = tsLittleEndian.match(/.{2}/g);
-  if (!bytePairs || bytePairs.length !== 4) {
-    return null;
-  }
-  const bigEndianHex = bytePairs.reverse().join('');
-  const timestamp = parseInt(bigEndianHex, 16);
-  if (!Number.isFinite(timestamp)) {
-    return null;
-  }
-  return timestamp;
-}
-
-function extractTimestampFromHeaderPayload(header) {
-  if (!header) {
-    return null;
-  }
-  if (typeof header === 'object') {
-    if (Number.isFinite(header.timestamp)) {
-      return Number(header.timestamp);
-    }
-    if (Number.isFinite(header.time)) {
-      return Number(header.time);
-    }
-    if (typeof header.hex === 'string') {
-      return parseTimestampFromHeaderHex(header.hex);
-    }
-  }
-  if (typeof header === 'string') {
-    return parseTimestampFromHeaderHex(header);
-  }
-  return null;
-}
-
-async function fetchBlockTimestampSeconds(blockHeight) {
-  try {
-    const header = await BlueElectrum.blockchainBlock_getHeader(blockHeight);
-    const timestamp = extractTimestampFromHeaderPayload(header);
-    if (Number.isFinite(timestamp)) {
-      return timestamp;
-    }
-  } catch (error) {
-    console.warn('GetAgentsScreen: failed to fetch header for wallet block timestamp', blockHeight, error);
-  }
-  return null;
-}
-
-async function getPendingNamespaceCreationCount() {
-  let pendingEntries = [];
-  try {
-    pendingEntries = await getPendingGetAgentsNamespaceTxs();
-  } catch (error) {
-    console.warn('GetAgentsScreen: failed to load pending namespace tx cache', error);
-    return 0;
-  }
-
-  const validEntries = Array.isArray(pendingEntries)
-    ? pendingEntries.filter(entry => entry && typeof entry.txid === 'string' && entry.txid.trim().length > 0)
-    : [];
-  if (validEntries.length === 0) {
-    return 0;
-  }
-
-  const txids = validEntries.map(entry => entry.txid.trim());
-  let txMap = {};
-  try {
-    await BlueElectrum.waitTillConnected();
-    txMap = await BlueElectrum.multiGetTransactionByTxid(txids, 20, true);
-  } catch (error) {
-    console.warn('GetAgentsScreen: failed to fetch pending namespace tx states', error);
-    return validEntries.length;
-  }
-
-  const confirmedTxids = [];
-  let pendingCount = 0;
-  validEntries.forEach(entry => {
-    const tx = txMap ? txMap[entry.txid] : null;
-    const confirmations = Number(tx && tx.confirmations);
-    if (Number.isFinite(confirmations) && confirmations > 0) {
-      confirmedTxids.push(entry.txid);
-    } else {
-      pendingCount += 1;
-    }
-  });
-
-  if (confirmedTxids.length > 0) {
-    try {
-      await removePendingGetAgentsNamespaceTxs(confirmedTxids);
-    } catch (error) {
-      console.warn('GetAgentsScreen: failed to purge confirmed namespace tx cache', error);
-    }
-  }
-
-  return pendingCount;
-}
 
 const ANDROID_GETAGENTS_SOURCE = { uri: 'file:///android_asset/os/getagents.html' };
 const IOS_GETAGENTS_SOURCE = { uri: 'getagents.html' };
 
 export default function GetAgentsScreen() {
   const webviewRef = useRef(null);
-  const namespaceList = useSelector(state => state?.namespaceList);
-
-  const walletShortcodesByBlock = useMemo(() => {
-    const namespaces = namespaceList && namespaceList.namespaces;
-    if (!namespaces || typeof namespaces !== 'object') {
-      return new Map();
-    }
-    const map = new Map();
-    Object.values(namespaces).forEach(ns => {
-      if (!ns || typeof ns.shortCode === 'undefined' || ns.shortCode === null) {
-        return;
-      }
-      const blockHeight = parseBlockHeightFromShortcode(ns.shortCode);
-      if (!Number.isFinite(blockHeight)) {
-        return;
-      }
-      const normalized = String(ns.shortCode).trim();
-      if (!map.has(blockHeight)) {
-        map.set(blockHeight, []);
-      }
-      map.get(blockHeight).push(normalized);
-    });
-    return map;
-  }, [namespaceList]);
-
-  const getWalletShortcodesForBlock = useCallback(
-    blockHeight => {
-      if (!Number.isFinite(blockHeight)) {
-        return [];
-      }
-      const shortcodes = walletShortcodesByBlock.get(blockHeight);
-      if (!shortcodes || shortcodes.length === 0) {
-        return [];
-      }
-      return shortcodes.slice();
-    },
-    [walletShortcodesByBlock],
-  );
-
-  const getWalletBlockEntries = useCallback(async () => {
-    if (!(walletShortcodesByBlock instanceof Map) || walletShortcodesByBlock.size === 0) {
-      return [];
-    }
-    const blockHeights = Array.from(walletShortcodesByBlock.keys()).filter(height => Number.isFinite(height));
-    if (blockHeights.length === 0) {
-      return [];
-    }
-    blockHeights.sort((a, b) => b - a);
-    const entries = [];
-    try {
-      await BlueElectrum.waitTillConnected();
-    } catch (error) {
-      console.warn('GetAgentsScreen: failed to wait for Electrum connection before resolving wallet block entries', error);
-    }
-    for (const height of blockHeights) {
-      const shortcodes = walletShortcodesByBlock.get(height) || [];
-      let timestamp = null;
-      try {
-        timestamp = await fetchBlockTimestampSeconds(height);
-      } catch (error) {
-        console.warn('GetAgentsScreen: failed to resolve wallet block timestamp', error);
-      }
-      entries.push({
-        blockHeight: height,
-        timestamp,
-        shortcodes: shortcodes.slice(),
-      });
-    }
-    return entries;
-  }, [walletShortcodesByBlock]);
 
   const sendMessageToWebView = useCallback(message => {
     const view = webviewRef.current;
@@ -279,17 +77,7 @@ export default function GetAgentsScreen() {
       }
 
       try {
-        const [latestHeader, unconfirmedTxCount] = await Promise.all([
-          BlueElectrum.getLatestHeaderSimple(),
-          getPendingNamespaceCreationCount(),
-        ]);
-        const walletShortcodes = getWalletShortcodesForBlock(latestHeader.height);
-        let walletBlockEntries = [];
-        try {
-          walletBlockEntries = await getWalletBlockEntries();
-        } catch (error) {
-          console.warn('GetAgentsScreen: failed to build wallet block list', error);
-        }
+        const latestHeader = await BlueElectrum.getLatestHeaderSimple();
         let electrumConfig = null;
         try {
           electrumConfig = await BlueElectrum.getConfig();
@@ -313,12 +101,6 @@ export default function GetAgentsScreen() {
             height: latestHeader.height,
             timestamp: latestHeader.timestamp,
             electrum: electrumPayload,
-            unconfirmedTxCount,
-            walletAgents: {
-              blockHeight: latestHeader.height,
-              shortcodes: walletShortcodes,
-              blocks: walletBlockEntries,
-            },
           },
         });
       } catch (error) {
@@ -329,12 +111,7 @@ export default function GetAgentsScreen() {
         });
       }
     },
-    [
-      sendMessageToWebView,
-      handleNamespaceCreationRequest,
-      getWalletShortcodesForBlock,
-      getWalletBlockEntries,
-    ],
+    [sendMessageToWebView, handleNamespaceCreationRequest],
   );
 
   return (

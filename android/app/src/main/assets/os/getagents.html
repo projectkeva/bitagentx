@@ -687,63 +687,7 @@ const AVATAR_BATCH_COUNT = 8;
 const AGENT_SEED_SUFFIX = 'projectkeva';
 const AGENT_HEAD_POOL = 1000n;
 const AGENT_CLOTH_POOL = 500n;
-let walletUnconfirmedTxCount = 0;
 const NAMESPACE_REFRESH_DELAY_MS = 800;
-
-function sanitizeUnconfirmedCount(value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return 0;
-  }
-  return Math.floor(numeric);
-}
-
-function clearAvatarGlow() {
-  Array.from(document.querySelectorAll('.avatar-item.avatar-glow')).forEach((item) => {
-    const parentGallery = item.closest('.avatar-gallery');
-    if (parentGallery && parentGallery.classList.contains('wallet-avatar-gallery')) {
-      return;
-    }
-    item.classList.remove('avatar-glow');
-  });
-}
-
-function applyUnconfirmedAvatarHighlights() {
-  clearAvatarGlow();
-  if (walletUnconfirmedTxCount <= 0) {
-    return;
-  }
-  const secondEntry = document.querySelector('.entry[data-index="1"]');
-  if (!secondEntry) {
-    return;
-  }
-  const gallery = secondEntry.querySelector('.avatar-gallery');
-  if (!gallery) {
-    return;
-  }
-  const avatars = Array.from(gallery.querySelectorAll('.avatar-item')).filter((item) => {
-    if (item.classList.contains('avatar-load-more')) {
-      return false;
-    }
-    if (item.classList.contains('avatar-loading') || item.classList.contains('avatar-error')) {
-      return false;
-    }
-    return !!item.querySelector('.avatar-sprite');
-  });
-  const highlightCount = Math.min(walletUnconfirmedTxCount, avatars.length);
-  for (let i = 0; i < highlightCount; i++) {
-    avatars[i].classList.add('avatar-glow');
-  }
-}
-
-function setUnconfirmedTxCount(value) {
-  const sanitized = sanitizeUnconfirmedCount(value);
-  if (sanitized === walletUnconfirmedTxCount) {
-    return;
-  }
-  walletUnconfirmedTxCount = sanitized;
-  applyUnconfirmedAvatarHighlights();
-}
 
 function parseWalletShortcode(shortCode) {
   if (shortCode === undefined || shortCode === null) {
@@ -1420,7 +1364,6 @@ async function loadAvatarBatch(gallery, blockHeight, token, startIndex, count) {
     }
   }
 
-  applyUnconfirmedAvatarHighlights();
 }
 
 function handleLoadMoreRequest(gallery) {
@@ -1546,7 +1489,6 @@ function appendMoreEntries(count) {
   entriesLoaded += count;
   populateAgentGalleries(newGalleries);
   hasRenderedTimeline = entriesLoaded > 0;
-  applyUnconfirmedAvatarHighlights();
   applyWalletAgentAvatars();
   maybePrimeWalletHistoryEntries();
 }
@@ -1668,8 +1610,6 @@ function handleNativeTimelineMessage(event) {
       } else {
         appendBootLine('ELECTRUM> Native relay online', 'accent');
       }
-      const payloadUnconfirmed = sanitizeUnconfirmedCount(payload.unconfirmedTxCount);
-      setUnconfirmedTxCount(payloadUnconfirmed);
       if (Number.isFinite(payload.height) && Number.isFinite(payload.timestamp)) {
         const tipDate = new Date(payload.timestamp * 1000);
         appendBootLine(`CHAIN> Tip ${payload.height} @ ${formatDateTime(tipDate)}`);
@@ -1695,8 +1635,6 @@ function handleNativeTimelineMessage(event) {
     showStatus('App Electrum service unavailable. Please try again.', true);
   } else if (parsed.type === 'getagents_wallet_state') {
     const payload = parsed.payload || {};
-    const unconfirmedUpdate = sanitizeUnconfirmedCount(payload.unconfirmedTxCount);
-    setUnconfirmedTxCount(unconfirmedUpdate);
     const fallbackHeight = Number.isFinite(payload.blockHeight) ? payload.blockHeight : baseBlockHeight;
     setWalletAgentState(payload.walletAgents || null, fallbackHeight);
   } else if (parsed.type === 'getagents_create_namespace_result') {
@@ -1784,9 +1722,6 @@ function handleNamespaceCreationResponse(parsed) {
     const namespaceId = payload.namespaceId || 'unknown';
     const txText = payload.txid ? `\nTX: ${payload.txid}` : '';
     const blockLabel = currentRequest.blockLabel ? `\n${currentRequest.blockLabel}` : '';
-    // Optimistically bump the unconfirmed count so avatars light up immediately
-    // even before the wallet data refresh propagates back through the native bridge.
-    setUnconfirmedTxCount(walletUnconfirmedTxCount + 1);
     alert(`Namespace "${GETAGENTS_NAMESPACE_NAME}" created!${blockLabel}\nID: ${namespaceId}${txText}`);
     schedulePageReloadAfterNamespaceCreation();
   } else {
@@ -1821,7 +1756,6 @@ function requestTimelineFromNative() {
     return;
   }
 
-  setUnconfirmedTxCount(0);
   showStatus('Loading block data via Kevacoin Electrum service…');
   appendBootLine('NET> Awaiting Electrum handshake from Kevacoin app…');
   try {
