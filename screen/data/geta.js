@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { Platform, StatusBar, View } from 'react-native';
 import { WebView } from 'react-native-webview';
+import { useSelector } from 'react-redux';
 import BlueElectrum from '../../BlueElectrum';
 import BlueApp from '../../BlueApp';
 import { handleGetAgentsNamespaceRequest } from '../../GetAgentsNamespace';
-import { findMyNamespaces } from '../../class/keva-ops';
 
 function parseBlockHeightFromShortcode(shortCode) {
   if (shortCode === undefined || shortCode === null) {
@@ -85,23 +85,15 @@ async function fetchBlockTimestampSeconds(blockHeight) {
 }
 
 let pendingWalletRefreshPromise = null;
-const UNCONFIRMED_REFRESH_INTERVAL_MS = 60 * 1000;
-let lastUnconfirmedRefreshTs = 0;
 
 async function refreshWalletDataForUnconfirmedCount() {
   if (pendingWalletRefreshPromise) {
     return pendingWalletRefreshPromise;
   }
 
-  const now = Date.now();
-  if (now - lastUnconfirmedRefreshTs < UNCONFIRMED_REFRESH_INTERVAL_MS) {
-    return Promise.resolve();
-  }
-
   pendingWalletRefreshPromise = (async () => {
     const wallets = typeof BlueApp.getWallets === 'function' ? BlueApp.getWallets() : [];
     if (!Array.isArray(wallets) || wallets.length === 0) {
-      lastUnconfirmedRefreshTs = Date.now();
       return;
     }
 
@@ -134,8 +126,6 @@ async function refreshWalletDataForUnconfirmedCount() {
     } catch (error) {
       console.warn('GetAgentsScreen: failed to persist wallet data after refresh', error);
     }
-
-    lastUnconfirmedRefreshTs = Date.now();
   })();
 
   try {
@@ -158,9 +148,9 @@ async function getUnconfirmedTransactionCount() {
     return 0;
   }
 
-  const wallets = BlueApp.getWallets();
-  const computeCount = () =>
-    wallets.reduce((total, wallet) => {
+  try {
+    await refreshWalletDataForUnconfirmedCount();
+    return BlueApp.getWallets().reduce((total, wallet) => {
       if (!wallet || typeof wallet.getTransactions !== 'function') {
         return total;
       }
@@ -174,13 +164,6 @@ async function getUnconfirmedTransactionCount() {
       }, 0);
       return total + walletCount;
     }, 0);
-
-  refreshWalletDataForUnconfirmedCount().catch(error => {
-    console.warn('GetAgentsScreen: background unconfirmed refresh failed', error);
-  });
-
-  try {
-    return computeCount();
   } catch (error) {
     console.warn('GetAgentsScreen: failed to compute unconfirmed tx count', error);
     return 0;
@@ -192,151 +175,76 @@ const IOS_GETAGENTS_SOURCE = { uri: 'getagents.html' };
 
 export default function GetAgentsScreen() {
   const webviewRef = useRef(null);
-  const walletNamespaceStateRef = useRef({ shortcodesByBlock: new Map(), lastUpdated: 0 });
-  const walletNamespaceRefreshPromiseRef = useRef(null);
-  const lastKnownBlockHeightRef = useRef(null);
-  const lastUnconfirmedCountRef = useRef(0);
+  const namespaceList = useSelector(state => state?.namespaceList);
 
-  const refreshWalletNamespaceState = useCallback(async () => {
-    if (walletNamespaceRefreshPromiseRef.current) {
-      return walletNamespaceRefreshPromiseRef.current;
+  const walletShortcodesByBlock = useMemo(() => {
+    const namespaces = namespaceList && namespaceList.namespaces;
+    if (!namespaces || typeof namespaces !== 'object') {
+      return new Map();
     }
-
-    walletNamespaceRefreshPromiseRef.current = (async () => {
-      try {
-        if (typeof BlueApp.waitForStart === 'function') {
-          await BlueApp.waitForStart();
-        }
-      } catch (error) {
-        console.warn('GetAgentsScreen: failed to wait for wallet start before refreshing namespaces', error);
+    const map = new Map();
+    Object.values(namespaces).forEach(ns => {
+      if (!ns || typeof ns.shortCode === 'undefined' || ns.shortCode === null) {
+        return;
       }
-
-      try {
-        await BlueElectrum.ping();
-        await BlueElectrum.waitTillConnected();
-      } catch (error) {
-        console.warn('GetAgentsScreen: failed to reach Electrum before refreshing namespaces', error);
+      const blockHeight = parseBlockHeightFromShortcode(ns.shortCode);
+      if (!Number.isFinite(blockHeight)) {
+        return;
       }
-
-      const wallets = typeof BlueApp.getWallets === 'function' ? BlueApp.getWallets() : [];
-      const map = new Map();
-      for (const wallet of wallets) {
-        if (!wallet) {
-          continue;
-        }
-        try {
-          const namespaces = await findMyNamespaces(wallet, BlueElectrum);
-          if (!namespaces || typeof namespaces !== 'object') {
-            continue;
-          }
-          Object.values(namespaces).forEach(ns => {
-            if (!ns || typeof ns.shortCode === 'undefined' || ns.shortCode === null) {
-              return;
-            }
-            const blockHeight = parseBlockHeightFromShortcode(ns.shortCode);
-            if (!Number.isFinite(blockHeight)) {
-              return;
-            }
-            const normalized = String(ns.shortCode).trim();
-            if (!map.has(blockHeight)) {
-              map.set(blockHeight, []);
-            }
-            map.get(blockHeight).push(normalized);
-          });
-        } catch (error) {
-          const walletId = wallet && typeof wallet.getID === 'function' ? wallet.getID() : 'unknown';
-          console.warn('GetAgentsScreen: failed to resolve namespaces for wallet', walletId, error);
-        }
+      const normalized = String(ns.shortCode).trim();
+      if (!map.has(blockHeight)) {
+        map.set(blockHeight, []);
       }
+      map.get(blockHeight).push(normalized);
+    });
+    return map;
+  }, [namespaceList]);
 
-      walletNamespaceStateRef.current = {
-        shortcodesByBlock: map,
-        lastUpdated: Date.now(),
-      };
-      return map;
-    })();
-
-    try {
-      return await walletNamespaceRefreshPromiseRef.current;
-    } finally {
-      walletNamespaceRefreshPromiseRef.current = null;
-    }
-  }, []);
-
-  const getWalletShortcodesForBlock = useCallback((blockHeight, shortcodesMap = null) => {
-    if (!Number.isFinite(blockHeight)) {
-      return [];
-    }
-    const map = shortcodesMap instanceof Map ? shortcodesMap : walletNamespaceStateRef.current.shortcodesByBlock;
-    if (!(map instanceof Map) || map.size === 0) {
-      return [];
-    }
-    const shortcodes = map.get(blockHeight);
-    if (!shortcodes || shortcodes.length === 0) {
-      return [];
-    }
-    return shortcodes.slice();
-  }, []);
-
-  const getWalletBlockEntries = useCallback(
-    async (shortcodesMap = null, options = {}) => {
-      const { allowRefresh = true } = options;
-      let map = shortcodesMap;
-      if (!(map instanceof Map)) {
-        map = walletNamespaceStateRef.current.shortcodesByBlock;
-      }
-      if ((!(map instanceof Map) || map.size === 0) && allowRefresh) {
-        map = await refreshWalletNamespaceState();
-      }
-      if (!(map instanceof Map) || map.size === 0) {
-        return [];
-      }
-      const blockHeights = Array.from(map.keys()).filter(height => Number.isFinite(height));
-      if (blockHeights.length === 0) {
-        return [];
-      }
-      blockHeights.sort((a, b) => b - a);
-      const entries = [];
-      for (const height of blockHeights) {
-        const shortcodes = map.get(height) || [];
-        let timestamp = null;
-        try {
-          timestamp = await fetchBlockTimestampSeconds(height);
-        } catch (error) {
-          console.warn('GetAgentsScreen: failed to resolve wallet block timestamp', error);
-        }
-        entries.push({
-          blockHeight: height,
-          timestamp,
-          shortcodes: shortcodes.slice(),
-        });
-      }
-      return entries;
-    },
-    [refreshWalletNamespaceState],
-  );
-
-  const buildCachedWalletAgentPayload = useCallback(
+  const getWalletShortcodesForBlock = useCallback(
     blockHeight => {
       if (!Number.isFinite(blockHeight)) {
-        return null;
+        return [];
       }
-      const map = walletNamespaceStateRef.current.shortcodesByBlock;
-      if (!(map instanceof Map) || map.size === 0) {
-        return null;
-      }
-      const shortcodes = getWalletShortcodesForBlock(blockHeight, map);
+      const shortcodes = walletShortcodesByBlock.get(blockHeight);
       if (!shortcodes || shortcodes.length === 0) {
-        return null;
+        return [];
       }
-      return {
-        blockHeight,
-        shortcodes: shortcodes.slice(),
-        blocks: [],
-      };
+      return shortcodes.slice();
     },
-    [getWalletShortcodesForBlock],
+    [walletShortcodesByBlock],
   );
+
+  const getWalletBlockEntries = useCallback(async () => {
+    if (!(walletShortcodesByBlock instanceof Map) || walletShortcodesByBlock.size === 0) {
+      return [];
+    }
+    const blockHeights = Array.from(walletShortcodesByBlock.keys()).filter(height => Number.isFinite(height));
+    if (blockHeights.length === 0) {
+      return [];
+    }
+    blockHeights.sort((a, b) => b - a);
+    const entries = [];
+    try {
+      await BlueElectrum.waitTillConnected();
+    } catch (error) {
+      console.warn('GetAgentsScreen: failed to wait for Electrum connection before resolving wallet block entries', error);
+    }
+    for (const height of blockHeights) {
+      const shortcodes = walletShortcodesByBlock.get(height) || [];
+      let timestamp = null;
+      try {
+        timestamp = await fetchBlockTimestampSeconds(height);
+      } catch (error) {
+        console.warn('GetAgentsScreen: failed to resolve wallet block timestamp', error);
+      }
+      entries.push({
+        blockHeight: height,
+        timestamp,
+        shortcodes: shortcodes.slice(),
+      });
+    }
+    return entries;
+  }, [walletShortcodesByBlock]);
 
   const sendMessageToWebView = useCallback(message => {
     const view = webviewRef.current;
@@ -364,97 +272,9 @@ export default function GetAgentsScreen() {
     }
   }, []);
 
-  const emitWalletAgentState = useCallback(
-    async (blockHeight, shortcodesMap = null, options = {}) => {
-      const { skipIfEmpty = false } = options;
-      if (!Number.isFinite(blockHeight)) {
-        return;
-      }
-      let map = shortcodesMap;
-      if (!(map instanceof Map)) {
-        map = walletNamespaceStateRef.current.shortcodesByBlock;
-      }
-      if (!(map instanceof Map) || map.size === 0) {
-        if (skipIfEmpty) {
-          return;
-        }
-        sendMessageToWebView({
-          type: 'getagents_wallet_state',
-          payload: {
-            blockHeight,
-            walletAgents: null,
-            unconfirmedTxCount: lastUnconfirmedCountRef.current || 0,
-          },
-        });
-        return;
-      }
-      const shortcodes = getWalletShortcodesForBlock(blockHeight, map);
-      let walletBlockEntries = [];
-      try {
-        walletBlockEntries = await getWalletBlockEntries(map, { allowRefresh: false });
-      } catch (error) {
-        console.warn('GetAgentsScreen: failed to build wallet block entries for emit', error);
-      }
-      const hasShortcodes = shortcodes.length > 0;
-      const hasBlocks = walletBlockEntries.length > 0;
-      if (!hasShortcodes && !hasBlocks && skipIfEmpty) {
-        return;
-      }
-      sendMessageToWebView({
-        type: 'getagents_wallet_state',
-        payload: {
-          blockHeight,
-          walletAgents:
-            hasShortcodes || hasBlocks
-              ? {
-                  blockHeight,
-                  shortcodes,
-                  blocks: walletBlockEntries,
-                }
-              : null,
-          unconfirmedTxCount: lastUnconfirmedCountRef.current || 0,
-        },
-      });
-    },
-    [
-      getWalletBlockEntries,
-      getWalletShortcodesForBlock,
-      lastUnconfirmedCountRef,
-      sendMessageToWebView,
-      walletNamespaceStateRef,
-    ],
-  );
-
-  useEffect(() => {
-    refreshWalletNamespaceState()
-      .then(map => {
-        const blockHeight = lastKnownBlockHeightRef.current;
-        if (Number.isFinite(blockHeight)) {
-          emitWalletAgentState(blockHeight, map, { skipIfEmpty: true });
-        }
-      })
-      .catch(error => {
-        console.warn('GetAgentsScreen: failed to prefetch wallet namespace state', error);
-      });
-  }, [emitWalletAgentState, lastKnownBlockHeightRef, refreshWalletNamespaceState]);
-
   const handleNamespaceCreationRequest = useCallback(
-    async request => {
-      const result = await handleGetAgentsNamespaceRequest(request, sendMessageToWebView);
-      if (result && result.success) {
-        try {
-          const map = await refreshWalletNamespaceState();
-          const blockHeight = lastKnownBlockHeightRef.current;
-          if (Number.isFinite(blockHeight)) {
-            await emitWalletAgentState(blockHeight, map, { skipIfEmpty: true });
-          }
-        } catch (error) {
-          console.warn('GetAgentsScreen: failed to refresh wallet namespaces after creation', error);
-        }
-      }
-      return result;
-    },
-    [emitWalletAgentState, lastKnownBlockHeightRef, refreshWalletNamespaceState, sendMessageToWebView],
+    request => handleGetAgentsNamespaceRequest(request, sendMessageToWebView),
+    [sendMessageToWebView],
   );
 
   const handleMessage = useCallback(
@@ -497,10 +317,13 @@ export default function GetAgentsScreen() {
           BlueElectrum.getLatestHeaderSimple(),
           getUnconfirmedTransactionCount(),
         ]);
-
-        lastKnownBlockHeightRef.current = latestHeader.height;
-        lastUnconfirmedCountRef.current = unconfirmedTxCount;
-
+        const walletShortcodes = getWalletShortcodesForBlock(latestHeader.height);
+        let walletBlockEntries = [];
+        try {
+          walletBlockEntries = await getWalletBlockEntries();
+        } catch (error) {
+          console.warn('GetAgentsScreen: failed to build wallet block list', error);
+        }
         let electrumConfig = null;
         try {
           electrumConfig = await BlueElectrum.getConfig();
@@ -518,8 +341,6 @@ export default function GetAgentsScreen() {
           electrumPayload.ssl = electrumPayload.port || latestHeader.ssl;
         }
 
-        const walletAgentsPayload = buildCachedWalletAgentPayload(latestHeader.height);
-
         sendMessageToWebView({
           type: 'getagents_latest_block_response',
           payload: {
@@ -527,15 +348,13 @@ export default function GetAgentsScreen() {
             timestamp: latestHeader.timestamp,
             electrum: electrumPayload,
             unconfirmedTxCount,
-            walletAgents: walletAgentsPayload,
+            walletAgents: {
+              blockHeight: latestHeader.height,
+              shortcodes: walletShortcodes,
+              blocks: walletBlockEntries,
+            },
           },
         });
-
-        refreshWalletNamespaceState()
-          .then(map => emitWalletAgentState(latestHeader.height, map, { skipIfEmpty: true }))
-          .catch(error => {
-            console.warn('GetAgentsScreen: failed to refresh wallet namespaces for timeline', error);
-          });
       } catch (error) {
         console.warn('GetAgentsScreen: failed to fetch latest block info', error);
         sendMessageToWebView({
@@ -545,11 +364,10 @@ export default function GetAgentsScreen() {
       }
     },
     [
-      buildCachedWalletAgentPayload,
-      emitWalletAgentState,
-      handleNamespaceCreationRequest,
-      refreshWalletNamespaceState,
       sendMessageToWebView,
+      handleNamespaceCreationRequest,
+      getWalletShortcodesForBlock,
+      getWalletBlockEntries,
     ],
   );
 
