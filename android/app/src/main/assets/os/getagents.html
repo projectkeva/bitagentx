@@ -509,9 +509,13 @@ const bootOverlay = document.getElementById('bootOverlay');
 const bootLogEl = document.getElementById('bootLog');
 const timelineWrapEl = document.getElementById('timelineWrap');
 const MAX_BOOT_LINES = 5;
+const BOOT_AUTO_DISMISS_DELAY_MS = 1000;
 let bootLineCounter = 0;
 let bootPreludeTimer = null;
-let bootOverlayDismissed = false;
+let bootOverlayDismissed = !bootOverlay;
+let bootAutoDismissTimer = null;
+let timelineReady = false;
+let timelineVisible = false;
 
 function appendBootLine(message, tone = 'normal', options = {}) {
   if (!bootLogEl || bootOverlayDismissed) {
@@ -530,6 +534,16 @@ function appendBootLine(message, tone = 'normal', options = {}) {
     requestAnimationFrame(() => line.classList.add('visible'));
   } else {
     line.classList.add('visible');
+  }
+  if (
+    !bootAutoDismissTimer &&
+    !bootOverlayDismissed &&
+    bootLineCounter >= MAX_BOOT_LINES
+  ) {
+    bootAutoDismissTimer = setTimeout(() => {
+      bootAutoDismissTimer = null;
+      concludeBootOverlay();
+    }, BOOT_AUTO_DISMISS_DELAY_MS);
   }
 }
 
@@ -570,12 +584,16 @@ function playBootPrelude() {
 
 function concludeBootOverlay(delay = 0) {
   if (!bootOverlay || bootOverlayDismissed) {
-    triggerTimelineReveal();
+    maybeRevealTimelineContent();
     return;
   }
   if (bootPreludeTimer) {
     clearTimeout(bootPreludeTimer);
     bootPreludeTimer = null;
+  }
+  if (bootAutoDismissTimer) {
+    clearTimeout(bootAutoDismissTimer);
+    bootAutoDismissTimer = null;
   }
   bootOverlayDismissed = true;
   setTimeout(() => {
@@ -585,7 +603,7 @@ function concludeBootOverlay(delay = 0) {
     setTimeout(() => {
       bootOverlay.classList.add('boot-overlay--hidden');
       bootOverlay.classList.remove('boot-overlay--portal');
-      triggerTimelineReveal();
+      maybeRevealTimelineContent();
       setTimeout(() => {
         if (bootOverlay.parentNode) {
           bootOverlay.parentNode.removeChild(bootOverlay);
@@ -596,19 +614,34 @@ function concludeBootOverlay(delay = 0) {
 }
 
 function revealTimelineContent() {
-  if (!timelineWrapEl) {
+  if (!timelineWrapEl || timelineVisible) {
     return;
   }
   timelineWrapEl.classList.add('wrap--visible');
+  timelineVisible = true;
 }
 
-function triggerTimelineReveal() {
-  revealTimelineContent();
+function maybeRevealTimelineContent() {
+  if (!timelineReady) {
+    return;
+  }
+  if (!bootOverlay || bootOverlayDismissed) {
+    revealTimelineContent();
+  }
+}
+
+function markTimelineReady() {
+  if (timelineReady) {
+    return;
+  }
+  timelineReady = true;
+  maybeRevealTimelineContent();
 }
 
 function failBootOverlay(message) {
   appendBootLine(`ERR> ${message}`, 'error', { force: true });
   concludeBootOverlay(1400);
+  markTimelineReady();
 }
 
 function getParentReactNativeBridge() {
@@ -1618,7 +1651,7 @@ function handleNativeTimelineMessage(event) {
       appendBootLine('LINK> Connecting the last human node…', 'accent');
       applyTimelineData(payload.height, payload.timestamp);
       setWalletAgentState(payload.walletAgents || null, payload.height);
-      concludeBootOverlay();
+      markTimelineReady();
     } catch (error) {
       console.error('Invalid payload from native Electrum bridge', error);
       failBootOverlay('Invalid response from app Electrum bridge.');
