@@ -46,6 +46,14 @@ const SELL_HASHTAG_BLOCK_WINDOW = 20000;
 const SELL_HASHTAG_LOWER = SELL_HASHTAG.toLowerCase();
 const DEFAULT_SHORTCODE_COLOR = '#000000';
 
+const formatShortCodeForDisplay = shortCode => {
+  const normalized = (shortCode || '').toString().trim();
+  if (!/^\d+$/.test(normalized)) {
+    return normalized;
+  }
+  return normalized.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+};
+
 const getShortCodeColor = length => {
   if (!Number.isFinite(length)) {
     return DEFAULT_SHORTCODE_COLOR;
@@ -299,11 +307,12 @@ class Item extends React.Component {
     const hashtagLower = (currentHashtag || '').trim().toLowerCase();
     const isSellHashtag = hashtagLower === SELL_HASHTAG_LOWER;
     const shortCodeText = (item.shortCode || '').toString().trim();
+    const formattedShortCode = formatShortCodeForDisplay(shortCodeText);
     let titleText = displayKey;
     let priceLabel = null;
     const titleStyles = [styles.keyDesc];
     if (isSellHashtag) {
-      titleText = shortCodeText || displayKey;
+      titleText = formattedShortCode || displayKey;
       if (shortCodeText.length > 0) {
         titleStyles.push({ color: getShortCodeColor(shortCodeText.length) });
       }
