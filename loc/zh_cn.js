@@ -23,7 +23,7 @@ module.exports = {
     copiedToClipboard: '已复制到剪贴板',
     unconfirmed: '未确认',
     label_wallets: '钱包',
-    label_data: '空间',
+    label_data: '文件',
     label_settings: '设置',
     label_explore: '探索',
     language_restart: '选择新语言后，需要重新启动应用程序才能使更改生效',
