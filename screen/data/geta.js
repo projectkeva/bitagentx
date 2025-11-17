@@ -1,14 +1,101 @@
 import React, { useCallback, useRef } from 'react';
 import { Platform, StatusBar, View } from 'react-native';
 import { WebView } from 'react-native-webview';
+import { useSelector } from 'react-redux';
 import BlueElectrum from '../../BlueElectrum';
 import { handleGetAgentsNamespaceRequest } from '../../GetAgentsNamespace';
 
 const ANDROID_GETAGENTS_SOURCE = { uri: 'file:///android_asset/os/getagents.html' };
 const IOS_GETAGENTS_SOURCE = { uri: 'getagents.html' };
 
+function parseBlockHeightFromShortcode(shortCode) {
+  if (shortCode === undefined || shortCode === null) {
+    return null;
+  }
+  const normalized = String(shortCode).trim();
+  if (!/^[0-9]+$/.test(normalized) || normalized.length < 2) {
+    return null;
+  }
+  const heightDigits = parseInt(normalized[0], 10);
+  if (!Number.isFinite(heightDigits) || heightDigits <= 0 || normalized.length <= heightDigits) {
+    return null;
+  }
+  const blockSlice = normalized.slice(1, 1 + heightDigits);
+  const blockHeight = parseInt(blockSlice, 10);
+  if (!Number.isFinite(blockHeight)) {
+    return null;
+  }
+  return blockHeight;
+}
+
+function normalizeShortcodeValue(value) {
+  if (typeof value === 'string' || typeof value === 'number') {
+    const normalized = String(value).trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+  return null;
+}
+
 export default function GetAgentsScreen() {
   const webviewRef = useRef(null);
+  const namespaceList = useSelector(state => state?.namespaceList);
+
+  const getWalletShortcodeGroups = useCallback(() => {
+    const namespaces = namespaceList && namespaceList.namespaces;
+    if (!namespaces || typeof namespaces !== 'object') {
+      return [];
+    }
+
+    const grouped = new Map();
+    Object.values(namespaces).forEach(ns => {
+      const normalized = normalizeShortcodeValue(ns && ns.shortCode);
+      if (!normalized) {
+        return;
+      }
+      const blockHeight = parseBlockHeightFromShortcode(normalized);
+      if (!Number.isFinite(blockHeight)) {
+        return;
+      }
+      if (!grouped.has(blockHeight)) {
+        grouped.set(blockHeight, new Set());
+      }
+      grouped.get(blockHeight).add(normalized);
+    });
+
+    return Array.from(grouped.entries())
+      .sort((a, b) => b[0] - a[0])
+      .map(([blockHeight, shortcodes]) => ({
+        blockHeight,
+        shortcodes: Array.from(shortcodes),
+      }));
+  }, [namespaceList]);
+
+  const buildWalletAgentsPayload = useCallback(
+    latestBlockHeight => {
+      const groups = getWalletShortcodeGroups();
+      if (!groups.length) {
+        return null;
+      }
+
+      const numericLatest = Number(latestBlockHeight);
+      const currentGroup = Number.isFinite(numericLatest)
+        ? groups.find(group => group.blockHeight === numericLatest)
+        : null;
+
+      return {
+        blockHeight: Number.isFinite(numericLatest)
+          ? numericLatest
+          : groups[0]?.blockHeight ?? null,
+        shortcodes: currentGroup ? currentGroup.shortcodes : [],
+        blocks: groups.map(group => ({
+          blockHeight: group.blockHeight,
+          timestamp: null,
+          shortcodes: group.shortcodes,
+        })),
+      };
+    },
+    [getWalletShortcodeGroups],
+  );
 
   const sendMessageToWebView = useCallback(message => {
     const view = webviewRef.current;
@@ -95,13 +182,19 @@ export default function GetAgentsScreen() {
           electrumPayload.ssl = electrumPayload.port || latestHeader.ssl;
         }
 
+        const walletAgents = buildWalletAgentsPayload(latestHeader.height);
+        const latestPayload = {
+          height: latestHeader.height,
+          timestamp: latestHeader.timestamp,
+          electrum: electrumPayload,
+        };
+        if (walletAgents) {
+          latestPayload.walletAgents = walletAgents;
+        }
+
         sendMessageToWebView({
           type: 'getagents_latest_block_response',
-          payload: {
-            height: latestHeader.height,
-            timestamp: latestHeader.timestamp,
-            electrum: electrumPayload,
-          },
+          payload: latestPayload,
         });
       } catch (error) {
         console.warn('GetAgentsScreen: failed to fetch latest block info', error);
@@ -111,7 +204,7 @@ export default function GetAgentsScreen() {
         });
       }
     },
-    [sendMessageToWebView, handleNamespaceCreationRequest],
+    [sendMessageToWebView, handleNamespaceCreationRequest, buildWalletAgentsPayload],
   );
 
   return (
