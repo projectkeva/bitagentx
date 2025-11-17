@@ -510,12 +510,39 @@ const bootLogEl = document.getElementById('bootLog');
 const timelineWrapEl = document.getElementById('timelineWrap');
 const MAX_BOOT_LINES = 5;
 const BOOT_AUTO_DISMISS_DELAY_MS = 1000;
+const BOOT_COMPLETION_STORAGE_KEY = 'geta_boot_complete';
 let bootLineCounter = 0;
 let bootPreludeTimer = null;
-let bootOverlayDismissed = !bootOverlay;
+let bootOverlayDismissalPersisted = false;
+let bootOverlayPreviouslyCompleted = false;
+
+try {
+  bootOverlayPreviouslyCompleted =
+    typeof window !== 'undefined' &&
+    window.sessionStorage &&
+    window.sessionStorage.getItem(BOOT_COMPLETION_STORAGE_KEY) === '1';
+} catch (error) {
+  bootOverlayPreviouslyCompleted = false;
+}
+
+let bootOverlayDismissed = !bootOverlay || bootOverlayPreviouslyCompleted;
 let bootAutoDismissTimer = null;
 let timelineReady = false;
 let timelineVisible = false;
+
+if (bootOverlayPreviouslyCompleted) {
+  bootOverlayDismissalPersisted = true;
+  if (bootOverlay) {
+    bootOverlay.classList.add('boot-overlay--hidden');
+    bootOverlay.classList.remove('boot-overlay--portal');
+    bootOverlay.style.display = 'none';
+    setTimeout(() => {
+      if (bootOverlay.parentNode) {
+        bootOverlay.parentNode.removeChild(bootOverlay);
+      }
+    }, 0);
+  }
+}
 
 function appendBootLine(message, tone = 'normal', options = {}) {
   if (!bootLogEl || bootOverlayDismissed) {
@@ -596,6 +623,16 @@ function concludeBootOverlay(delay = 0) {
     bootAutoDismissTimer = null;
   }
   bootOverlayDismissed = true;
+  if (!bootOverlayDismissalPersisted) {
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        window.sessionStorage.setItem(BOOT_COMPLETION_STORAGE_KEY, '1');
+      }
+    } catch (error) {
+      // Ignore storage failures.
+    }
+    bootOverlayDismissalPersisted = true;
+  }
   setTimeout(() => {
     bootOverlay.classList.add('boot-overlay--portal');
     const duration = parseInt(getComputedStyle(bootOverlay).getPropertyValue('--portal-duration'), 10);
