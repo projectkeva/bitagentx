@@ -23,7 +23,7 @@ module.exports = {
     copiedToClipboard: 'Copied to clipboard',
     unconfirmed: 'Unconfirmed',
     label_wallets: 'Wallets',
-    label_data: 'Content',
+    label_data: 'Files',
     label_settings: 'Settings',
     label_explore: 'Explore',
     language_restart: 'After selecting a new language, restarting the app is required for the change to take effect.',
