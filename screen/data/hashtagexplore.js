@@ -44,6 +44,32 @@ const IMAGE_ICON = <Icon name="ios-image" size={50} color="#fff"/>;
 const SELL_HASHTAG = '#NFTs';
 const SELL_HASHTAG_BLOCK_WINDOW = 20000;
 const SELL_HASHTAG_LOWER = SELL_HASHTAG.toLowerCase();
+const DEFAULT_SHORTCODE_COLOR = '#000000';
+
+const getShortCodeColor = length => {
+  if (!Number.isFinite(length)) {
+    return DEFAULT_SHORTCODE_COLOR;
+  }
+  if (length >= 3 && length <= 5) {
+    return '#FF0000';
+  }
+  if (length === 6) {
+    return '#FF8C00';
+  }
+  if (length === 7) {
+    return '#00B7D2';
+  }
+  if (length === 8) {
+    return '#4682E4';
+  }
+  if (length === 9) {
+    return '#8E44AD';
+  }
+  if (length === 10) {
+    return '#708090';
+  }
+  return DEFAULT_SHORTCODE_COLOR;
+};
 
 const formatSalePrice = rawPrice => {
   if (rawPrice === null || typeof rawPrice === 'undefined') {
@@ -272,10 +298,15 @@ class Item extends React.Component {
     const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
     const hashtagLower = (currentHashtag || '').trim().toLowerCase();
     const isSellHashtag = hashtagLower === SELL_HASHTAG_LOWER;
+    const shortCodeText = (item.shortCode || '').toString().trim();
     let titleText = displayKey;
     let priceLabel = null;
+    const titleStyles = [styles.keyDesc];
     if (isSellHashtag) {
-      titleText = item.shortCode || displayKey;
+      titleText = shortCodeText || displayKey;
+      if (shortCodeText.length > 0) {
+        titleStyles.push({ color: getShortCodeColor(shortCodeText.length) });
+      }
       const salePriceText = (item.salePriceText || '').toString().trim();
       if (salePriceText.length > 0) {
         priceLabel = (
@@ -310,7 +341,7 @@ class Item extends React.Component {
                 {avatarContent}
               </View>
               <View style={styles.headerTextContainer}>
-                <Text style={styles.keyDesc} numberOfLines={1} ellipsizeMode="tail">{titleText}</Text>
+                <Text style={titleStyles} numberOfLines={1} ellipsizeMode="tail">{titleText}</Text>
                 {priceLabel}
               </View>
             </View>
