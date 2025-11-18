@@ -50,13 +50,38 @@ const BLOCK_INTERVAL_MINUTES = 2;
 const BLOCKS_PER_LEVEL = 26280;
 const MS_PER_MINUTE = 60 * 1000;
 
-const calculateCurrentLevel = () => {
+const getCurrentBlockEstimate = () => {
   const elapsedMs = Date.now() - GENESIS_TIMESTAMP;
   const minutesSinceGenesis = Math.max(0, Math.floor(elapsedMs / MS_PER_MINUTE));
   const blocksSinceGenesis = Math.floor(minutesSinceGenesis / BLOCK_INTERVAL_MINUTES);
-  const currentBlock = 1 + blocksSinceGenesis;
-  const level = Math.floor((currentBlock - 1) / BLOCKS_PER_LEVEL) + 1;
-  return Math.max(1, level);
+  return 1 + blocksSinceGenesis;
+};
+
+const parseBlockHeightFromShortcode = shortCode => {
+  if (shortCode === undefined || shortCode === null) {
+    return null;
+  }
+  const normalized = String(shortCode).trim();
+  if (!/^\d+$/.test(normalized) || normalized.length < 2) {
+    return null;
+  }
+  const lengthPrefix = parseInt(normalized[0], 10);
+  if (!Number.isFinite(lengthPrefix) || lengthPrefix <= 0 || normalized.length < 1 + lengthPrefix) {
+    return null;
+  }
+  const blockStr = normalized.slice(1, 1 + lengthPrefix);
+  const blockHeight = parseInt(blockStr, 10);
+  return Number.isNaN(blockHeight) ? null : blockHeight;
+};
+
+const calculateLevelFromShortcode = shortCode => {
+  const blockHeight = parseBlockHeightFromShortcode(shortCode);
+  if (!Number.isFinite(blockHeight)) {
+    return null;
+  }
+  const currentBlock = getCurrentBlockEstimate();
+  const elapsedBlocks = Math.max(0, currentBlock - blockHeight);
+  return Math.max(1, Math.floor(elapsedBlocks / BLOCKS_PER_LEVEL) + 1);
 };
 
 const formatShortCodeForDisplay = shortCode => {
@@ -324,14 +349,15 @@ class Item extends React.Component {
     let titleText = displayKey;
     let priceLabel = null;
     const titleStyles = [styles.keyDesc];
-    const currentLevel = isSellHashtag ? calculateCurrentLevel() : null;
-    const levelLabelText = Number.isFinite(currentLevel)
-      ? `[ Lv.${currentLevel} ]`
-      : null;
+    let levelLabelText = null;
     if (isSellHashtag) {
       titleText = formattedShortCode || displayKey;
       if (shortCodeText.length > 0) {
         titleStyles.push({ color: getShortCodeColor(shortCodeText.length) });
+        const shortCodeLevel = calculateLevelFromShortcode(shortCodeText);
+        if (Number.isFinite(shortCodeLevel)) {
+          levelLabelText = `[ Lv.${shortCodeLevel} ]`;
+        }
       }
       const salePriceText = (item.salePriceText || '').toString().trim();
       if (salePriceText.length > 0) {
