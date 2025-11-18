@@ -45,6 +45,19 @@ const SELL_HASHTAG = '#NFTs';
 const SELL_HASHTAG_BLOCK_WINDOW = 20000;
 const SELL_HASHTAG_LOWER = SELL_HASHTAG.toLowerCase();
 const DEFAULT_SHORTCODE_COLOR = '#000000';
+const GENESIS_TIMESTAMP = Date.UTC(2020, 0, 16, 3, 0, 0);
+const BLOCK_INTERVAL_MINUTES = 2;
+const BLOCKS_PER_LEVEL = 26280;
+const MS_PER_MINUTE = 60 * 1000;
+
+const calculateCurrentLevel = () => {
+  const elapsedMs = Date.now() - GENESIS_TIMESTAMP;
+  const minutesSinceGenesis = Math.max(0, Math.floor(elapsedMs / MS_PER_MINUTE));
+  const blocksSinceGenesis = Math.floor(minutesSinceGenesis / BLOCK_INTERVAL_MINUTES);
+  const currentBlock = 1 + blocksSinceGenesis;
+  const level = Math.floor((currentBlock - 1) / BLOCKS_PER_LEVEL) + 1;
+  return Math.max(1, level);
+};
 
 const formatShortCodeForDisplay = shortCode => {
   const normalized = (shortCode || '').toString().trim();
@@ -311,6 +324,10 @@ class Item extends React.Component {
     let titleText = displayKey;
     let priceLabel = null;
     const titleStyles = [styles.keyDesc];
+    const currentLevel = isSellHashtag ? calculateCurrentLevel() : null;
+    const levelLabelText = Number.isFinite(currentLevel)
+      ? `[ Lv.${currentLevel} ]`
+      : null;
     if (isSellHashtag) {
       titleText = formattedShortCode || displayKey;
       if (shortCodeText.length > 0) {
@@ -333,6 +350,21 @@ class Item extends React.Component {
       </View>
     );
 
+    const titleContent = isSellHashtag ? (
+      <View style={styles.titleRow}>
+        <Text style={titleStyles} numberOfLines={1} ellipsizeMode="tail">
+          {titleText}
+        </Text>
+        {levelLabelText && (
+          <Text style={styles.levelLabel}>{levelLabelText}</Text>
+        )}
+      </View>
+    ) : (
+      <Text style={titleStyles} numberOfLines={1} ellipsizeMode="tail">
+        {titleText}
+      </Text>
+    );
+
     return (
       <View style={styles.card}>
         <TouchableOpacity onPress={() => onShow(item)}>
@@ -350,7 +382,7 @@ class Item extends React.Component {
                 {avatarContent}
               </View>
               <View style={styles.headerTextContainer}>
-                <Text style={titleStyles} numberOfLines={1} ellipsizeMode="tail">{titleText}</Text>
+                {titleContent}
                 {priceLabel}
               </View>
             </View>
@@ -1094,6 +1126,16 @@ var styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  titleRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
+  levelLabel: {
+    marginLeft: 6,
+    fontSize: 12,
+    color: '#9CA3AF',
   },
   priceLabel: {
     fontSize: 14,
