@@ -44,6 +44,7 @@ import { timeConverter, getInitials, stringToColor } from "../../util";
 import Biometric from '../../class/biometrics';
 import { extractMedia, getImageGatewayURL, removeMedia } from './mediaManager';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
 
 
 const PLAY_ICON  = <MIcon name="play-arrow" size={50} color="#fff"/>;
@@ -1200,6 +1201,8 @@ class KeyValues extends React.Component {
         displayName,
         shortCode,
       }
+      const shortCodeLevel = calculateLevelFromShortcode(shortCode);
+      const levelLabelText = Number.isFinite(shortCodeLevel) ? `[ Lv.${shortCodeLevel} ]` : null;
       listHeader = (
         <View style={styles.container}>
           <View style={styles.keyContainer}>
@@ -1225,6 +1228,9 @@ class KeyValues extends React.Component {
                   </Text>
                 </TouchableOpacity>
               </View>
+              {levelLabelText && (
+                <Text style={styles.levelLabel}>{levelLabelText}</Text>
+              )}
               {
                 isOther ?
                 (isFollowing ?
@@ -1589,5 +1595,10 @@ var styles = StyleSheet.create({
     color: KevaColors.actionText,
     lineHeight: 25,
     paddingBottom: 5,
+  },
+  levelLabel: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginBottom: 6,
   },
 });
