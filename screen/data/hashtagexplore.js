@@ -75,13 +75,14 @@ const parseBlockHeightFromShortcode = shortCode => {
 };
 
 const calculateLevelFromShortcode = shortCode => {
-  const blockHeight = parseBlockHeightFromShortcode(shortCode);
-  if (!Number.isFinite(blockHeight)) {
+  const birthBlock = parseBlockHeightFromShortcode(shortCode);
+  if (!Number.isFinite(birthBlock)) {
     return null;
   }
   const currentBlock = getCurrentBlockEstimate();
-  const elapsedBlocks = Math.max(0, currentBlock - blockHeight);
-  return Math.max(1, Math.floor(elapsedBlocks / BLOCKS_PER_LEVEL) + 1);
+  const ageBlocks = Math.max(0, currentBlock - birthBlock);
+  const level = Math.floor(ageBlocks / BLOCKS_PER_LEVEL);
+  return Math.max(1, level);
 };
 
 const formatShortCodeForDisplay = shortCode => {
@@ -348,7 +349,7 @@ class Item extends React.Component {
     const formattedShortCode = formatShortCodeForDisplay(shortCodeText);
     let titleText = displayKey;
     let priceLabel = null;
-    const titleStyles = [styles.keyDesc];
+    const titleStyles = [isSellHashtag ? styles.shortCodeTitle : styles.keyDesc];
     let levelLabelText = null;
     if (isSellHashtag) {
       titleText = formattedShortCode || displayKey;
@@ -1141,6 +1142,12 @@ var styles = StyleSheet.create({
     fontSize:16,
     color: KevaColors.darkText,
     marginRight: 10,
+  },
+  shortCodeTitle: {
+    fontSize: 16,
+    color: KevaColors.darkText,
+    marginRight: 6,
+    flexShrink: 1,
   },
   headerRow: {
     flexDirection:'row',
