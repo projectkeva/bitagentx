@@ -44,6 +44,7 @@ import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees'
 import Biometric from '../../class/biometrics';
 import { Button } from 'react-native-elements';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
 
 let BlueApp = require('../../BlueApp');
 let loc = require('../../loc');
@@ -312,6 +313,10 @@ class Namespace extends React.Component {
     const displayNameWithShortcode = namespace.shortCode
       ? `${namespace.displayName} @${namespace.shortCode}`
       : namespace.displayName;
+    const shortCodeLevel = calculateLevelFromShortcode(namespace.shortCode, {
+      currentBlockHeight: this.props.latestBlockHeight,
+    });
+    const levelLabelText = Number.isFinite(shortCodeLevel) ? `[ Lv.${shortCodeLevel} ]` : null;
     const {
       avatarCandidateUris,
       avatarCandidateRequestId,
@@ -351,6 +356,9 @@ const avatarContent = avatarSource ? (
           <View style={{ flex: 1, justifyContent: 'space-between', paddingHorizontal: 7, paddingTop: 10 }}>
             <View style={{ flex: 1 }} >
               <Text style={[styles.cardTitleText, isForSale && {color: KevaColors.okColor}]} numberOfLines={1} ellipsizeMode="tail">{displayNameWithShortcode}</Text>
+              {levelLabelText && (
+                <Text style={styles.levelLabel}>{levelLabelText}</Text>
+              )}
             </View>
             <View style={styles.actionContainer}>
               {
@@ -402,6 +410,7 @@ class MyNamespaces extends React.Component {
       createTransactionErr: null,
       inputMode: false,
       lockedFund: {},
+      latestBlockHeight: undefined,
     };
   }
 
@@ -676,6 +685,17 @@ class MyNamespaces extends React.Component {
     await BlueApp.saveAllLockedFund(lockedFund);
   }
 
+  updateLatestBlockHeight = async () => {
+    try {
+      const height = await BlueElectrum.blockchainBlock_count();
+      if (Number.isFinite(height)) {
+        this.setState({ latestBlockHeight: height });
+      }
+    } catch (err) {
+      console.warn('MyNamespaces: failed to fetch latest block height', err);
+    }
+  }
+
   fetchNamespaces = async () => {
     const { dispatch } = this.props;
     const wallets = BlueApp.getWallets();
@@ -717,6 +737,7 @@ class MyNamespaces extends React.Component {
       toastError('Cannot fetch namespaces');
       console.error(err);
     }
+    await this.updateLatestBlockHeight();
     this.isBiometricUseCapableAndEnabled = await Biometric.isBiometricUseCapableAndEnabled();
   }
 
@@ -725,11 +746,12 @@ class MyNamespaces extends React.Component {
     try {
       await BlueElectrum.ping();
       await this.fetchNamespaces();
+      await this.updateLatestBlockHeight();
     } catch (err) {
       console.error(err);
+    } finally {
       this.setState({isRefreshing: false});
     }
-    this.setState({isRefreshing: false});
   }
 
   openItemAni = () => {
@@ -827,7 +849,18 @@ class MyNamespaces extends React.Component {
               <RefreshControl onRefresh={() => this.refreshNamespaces()} refreshing={this.state.isRefreshing} />
             }
             renderRow={({data, active, key}) => {
-              return <Namespace onInfo={onInfo} onWait={onWait} refresh={this.refreshNamespaces} data={data} active={active} navigation={navigation} key={key}/>
+              return (
+                <Namespace
+                  onInfo={onInfo}
+                  onWait={onWait}
+                  refresh={this.refreshNamespaces}
+                  data={data}
+                  active={active}
+                  navigation={navigation}
+                  latestBlockHeight={this.state.latestBlockHeight}
+                  key={key}
+                />
+              );
             }}
           />
           :
@@ -1409,6 +1442,12 @@ var styles = StyleSheet.create({
     fontSize: 17,
     color: KevaColors.darkText,
     paddingHorizontal: 5,
+  },
+  levelLabel: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    paddingHorizontal: 5,
+    marginTop: 2,
   },
   cardContent: {
     backgroundColor: '#fff',
