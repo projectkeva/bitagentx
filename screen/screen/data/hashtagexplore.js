@@ -38,12 +38,47 @@ import { stringToColor, getInitials, SCREEN_WIDTH, } from "../../util";
 import Biometric from '../../class/biometrics';
 import { extractMedia, getImageGatewayURL } from './mediaManager';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
 
 const PLAY_ICON  = <MIcon name="play-arrow" size={50} color="#fff"/>;
 const IMAGE_ICON = <Icon name="ios-image" size={50} color="#fff"/>;
 const SELL_HASHTAG = '#NFTs';
 const SELL_HASHTAG_BLOCK_WINDOW = 20000;
 const SELL_HASHTAG_LOWER = SELL_HASHTAG.toLowerCase();
+const DEFAULT_SHORTCODE_COLOR = '#000000';
+
+const formatShortCodeForDisplay = shortCode => {
+  const normalized = (shortCode || '').toString().trim();
+  if (!/^\d+$/.test(normalized)) {
+    return normalized;
+  }
+  return normalized.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+};
+
+const getShortCodeColor = length => {
+  if (!Number.isFinite(length)) {
+    return DEFAULT_SHORTCODE_COLOR;
+  }
+  if (length >= 3 && length <= 5) {
+    return '#FF0000';
+  }
+  if (length === 6) {
+    return '#FF8C00';
+  }
+  if (length === 7) {
+    return '#00B7D2';
+  }
+  if (length === 8) {
+    return '#4682E4';
+  }
+  if (length === 9) {
+    return '#8E44AD';
+  }
+  if (length === 10) {
+    return '#708090';
+  }
+  return DEFAULT_SHORTCODE_COLOR;
+};
 
 const formatSalePrice = rawPrice => {
   if (rawPrice === null || typeof rawPrice === 'undefined') {
@@ -272,10 +307,21 @@ class Item extends React.Component {
     const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
     const hashtagLower = (currentHashtag || '').trim().toLowerCase();
     const isSellHashtag = hashtagLower === SELL_HASHTAG_LOWER;
+    const shortCodeText = (item.shortCode || '').toString().trim();
+    const formattedShortCode = formatShortCodeForDisplay(shortCodeText);
     let titleText = displayKey;
     let priceLabel = null;
+    const titleStyles = [isSellHashtag ? styles.shortCodeTitle : styles.keyDesc];
+    let levelLabelText = null;
     if (isSellHashtag) {
-      titleText = item.shortCode || displayKey;
+      titleText = formattedShortCode || displayKey;
+      if (shortCodeText.length > 0) {
+        titleStyles.push({ color: getShortCodeColor(shortCodeText.length) });
+        const shortCodeLevel = calculateLevelFromShortcode(shortCodeText);
+        if (Number.isFinite(shortCodeLevel)) {
+          levelLabelText = `[ Lv.${shortCodeLevel} ]`;
+        }
+      }
       const salePriceText = (item.salePriceText || '').toString().trim();
       if (salePriceText.length > 0) {
         priceLabel = (
@@ -310,7 +356,16 @@ class Item extends React.Component {
                 {avatarContent}
               </View>
               <View style={styles.headerTextContainer}>
-                <Text style={styles.keyDesc} numberOfLines={1} ellipsizeMode="tail">{titleText}</Text>
+                {isSellHashtag ? (
+                  <View style={styles.titleRow}>
+                    <Text style={titleStyles} numberOfLines={1} ellipsizeMode="tail">{titleText}</Text>
+                    {levelLabelText && (
+                      <Text style={styles.levelLabel}>{levelLabelText}</Text>
+                    )}
+                  </View>
+                ) : (
+                  <Text style={titleStyles} numberOfLines={1} ellipsizeMode="tail">{titleText}</Text>
+                )}
                 {priceLabel}
               </View>
             </View>
@@ -1044,6 +1099,12 @@ var styles = StyleSheet.create({
     color: KevaColors.darkText,
     marginRight: 10,
   },
+  shortCodeTitle: {
+    fontSize: 16,
+    color: KevaColors.darkText,
+    marginRight: 6,
+    flexShrink: 1,
+  },
   headerRow: {
     flexDirection:'row',
     alignItems:'center',
@@ -1054,6 +1115,16 @@ var styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  titleRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
+  levelLabel: {
+    marginLeft: 6,
+    fontSize: 12,
+    color: '#9CA3AF',
   },
   priceLabel: {
     fontSize: 14,
