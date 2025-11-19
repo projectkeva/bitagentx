@@ -400,6 +400,7 @@ class KeyValues extends React.Component {
       avatarCandidateRequestId: 0,
       avatarFailedUris: [],
       generatedAvatarUri: null,
+      latestBlockHeight: undefined,
     };
     this.onEndReachedCalledDuringMomentum = true;
     this.min_tx_num = -1;
@@ -561,11 +562,23 @@ class KeyValues extends React.Component {
     this.min_tx_num = history.min_tx_num;
   }
 
+  updateLatestBlockHeight = async () => {
+    try {
+      const height = await BlueElectrum.blockchainBlock_count();
+      if (this._isMounted && Number.isFinite(height)) {
+        this.setState({ latestBlockHeight: height });
+      }
+    } catch (err) {
+      console.warn('KeyValues: failed to fetch latest block height', err);
+    }
+  }
+
   refreshKeyValues = async (min_tx_num) => {
     try {
       this.setState({isRefreshing: true});
       await BlueElectrum.ping();
       await this.fetchKeyValues(min_tx_num);
+      await this.updateLatestBlockHeight();
       this.setState({isRefreshing: false});
     } catch (err) {
       this.setState({isRefreshing: false});
@@ -1201,7 +1214,9 @@ class KeyValues extends React.Component {
         displayName,
         shortCode,
       }
-      const shortCodeLevel = calculateLevelFromShortcode(shortCode);
+      const shortCodeLevel = calculateLevelFromShortcode(shortCode, {
+        currentBlockHeight: this.props.latestBlockHeight,
+      });
       const levelLabelText = Number.isFinite(shortCodeLevel) ? `[ Lv.${shortCodeLevel} ]` : null;
       listHeader = (
         <View style={styles.container}>
@@ -1313,6 +1328,7 @@ class KeyValues extends React.Component {
             contentContainerStyle={{paddingBottom: 400}}
             ListHeaderComponent={listHeader}
             data={mergeList}
+            extraData={this.state.latestBlockHeight}
             onEndReached={() => {this.loadMoreKeyValues()}}
             onEndReachedThreshold={0.5}
             onMomentumScrollBegin={() => { this.onEndReachedCalledDuringMomentum = false; }}
@@ -1329,6 +1345,7 @@ class KeyValues extends React.Component {
                 onReward={this.onReward}
                 navigation={navigation}
                 mediaInfoList={mediaInfoList}
+                latestBlockHeight={this.state.latestBlockHeight}
               />
             }
           />
