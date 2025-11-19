@@ -9,6 +9,7 @@ let BigNumber = require('bignumber.js');
 let loc = require('./loc');
 import { showStatus, hideStatus } from './util';
 let BlueApp = require('./BlueApp');
+const { setLatestKnownBlockHeight } = require('./common/shortcodeLevel');
 
 const storageKey = 'ELECTRUM_PEERS';
 const DEFAULT_PORT = 50002;
@@ -977,7 +978,11 @@ module.exports.blockchainBlock_getHeader = async function(height) {
 }
 
 module.exports.blockchainBlock_count = async function() {
-  return await mainClient.blockchainBlock_count();
+  const countValue = await mainClient.blockchainBlock_count();
+  if (Number.isFinite(Number(countValue))) {
+    setLatestKnownBlockHeight(Number(countValue));
+  }
+  return countValue;
 }
 
 module.exports.getLatestHeaderSimple = async function() {
@@ -1019,6 +1024,7 @@ module.exports.getLatestHeaderSimple = async function() {
     const normalized = normalizeLatestHeader(headerSub);
     if (Number.isFinite(normalized.height)) {
       height = normalized.height;
+      setLatestKnownBlockHeight(height);
     }
     if (Number.isFinite(normalized.timestamp)) {
       timestamp = normalized.timestamp;
@@ -1031,6 +1037,7 @@ module.exports.getLatestHeaderSimple = async function() {
       const numericCount = Number(countValue);
       if (Number.isFinite(numericCount)) {
         height = numericCount;
+        setLatestKnownBlockHeight(numericCount);
       }
     } catch (error) {
       console.warn('BlueElectrum: failed to fetch block count for latest header', error);

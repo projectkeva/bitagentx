@@ -316,7 +316,9 @@ class Item extends React.Component {
       titleText = formattedShortCode || displayKey;
       if (shortCodeText.length > 0) {
         titleStyles.push({ color: getShortCodeColor(shortCodeText.length) });
-        const shortCodeLevel = calculateLevelFromShortcode(shortCodeText);
+        const shortCodeLevel = calculateLevelFromShortcode(shortCodeText, {
+          currentBlockHeight: this.props.latestBlockHeight,
+        });
         if (Number.isFinite(shortCodeLevel)) {
           levelLabelText = `[ Lv.${shortCodeLevel} ]`;
         }
@@ -996,6 +998,7 @@ class HashtagExplore extends React.Component {
             style={styles.listStyle}
             contentContainerStyle={{paddingBottom: 400, backgroundColor: '#fff'}}
             data={mergeList}
+            extraData={this.state.latestBlockHeight}
             onRefresh={() => this.refreshKeyValues()}
             onEndReached={() => {this.loadMoreKeyValues()}}
             onEndReachedThreshold={0.1}
@@ -1012,6 +1015,7 @@ class HashtagExplore extends React.Component {
                 navigation={navigation}
                 mediaInfoList={mediaInfoList}
                 currentHashtag={hashtag}
+                latestBlockHeight={this.state.latestBlockHeight}
               />
             }
           />
