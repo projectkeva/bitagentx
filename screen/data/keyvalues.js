@@ -44,6 +44,7 @@ import { timeConverter, getInitials, stringToColor } from "../../util";
 import Biometric from '../../class/biometrics';
 import { extractMedia, getImageGatewayURL, removeMedia } from './mediaManager';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+import LinearGradient from 'react-native-linear-gradient';
 const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
 
 
@@ -303,10 +304,15 @@ const avatarContent = avatarSource ? (
 );
 
     return (
-      <View style={styles.card}>
+      <LinearGradient
+        colors={['#0b1224', '#0f162b', '#0b1224']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.card}
+      >
         <TouchableOpacity onPress={() => onShow(namespaceId, displayName, item.key, item.value, item.tx_hash, item.shares, item.likes, item.height, item.favorite)}>
-          <View style={{flex:1,paddingHorizontal:10,paddingTop:2}}>
-            <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between'}}>
+          <View style={styles.cardInner}>
+            <View style={styles.headerRow}>
               <View style={styles.feedAvatarWrapper}>
                 {shouldProbeAvatar && (
                   <Image
@@ -319,7 +325,7 @@ const avatarContent = avatarSource ? (
                 {avatarContent}
               </View>
               <Text style={styles.keyDesc} numberOfLines={1} ellipsizeMode="tail">{displayKey}</Text>
-              <View style={{flexDirection: 'row', alignItems:'center',justifyContent:'flex-start'}}>
+              <View style={styles.actionRow}>
                 {
                   canEdit &&
                   <TouchableOpacity onPress={this.onEdit}>
@@ -333,7 +339,7 @@ const avatarContent = avatarSource ? (
                   </TouchableOpacity>
                 }
                 {
-                  !canEdit && <View style={{height: 40}}/>
+                  !canEdit && <View style={styles.hiddenAction}/>
                 }
               </View>
             </View>
@@ -346,7 +352,7 @@ const avatarContent = avatarSource ? (
             {
               mediaCID && (
                 mimeType.startsWith('video') ?
-                <View style={{width: 160, height: 120, marginBottom: 5}}>
+                <View style={styles.previewVideoWrapper}>
                   <Image source={{uri: thumbnail}}
                     style={styles.previewVideo}
                   />
@@ -360,16 +366,22 @@ const avatarContent = avatarSource ? (
             }
           </View>
         </TouchableOpacity>
-        <View style={{flexDirection: 'row'}}>
-          <TouchableOpacity onPress={() => onReply(item.tx_hash)} style={{flexDirection: 'row'}}>
+        <LinearGradient
+          colors={['transparent', 'rgba(125, 211, 252, 0.7)', 'transparent']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.nftAccentLine}
+        />
+        <View style={styles.footerActions}>
+          <TouchableOpacity onPress={() => onReply(item.tx_hash)} style={styles.footerActionButton}>
             <MIcon name="chat-bubble-outline" size={22} style={styles.talkIcon} />
             {(item.replies > 0) && <Text style={styles.count}>{item.replies}</Text>}
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => onShare(item.tx_hash, item.key, item.value, item.height)} style={{flexDirection: 'row'}}>
+          <TouchableOpacity onPress={() => onShare(item.tx_hash, item.key, item.value, item.height)} style={styles.footerActionButton}>
             <MIcon name="cached" size={22} style={styles.shareIcon} />
             {(item.shares > 0) && <Text style={styles.count}>{item.shares}</Text>}
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => onReward(item.tx_hash, item.key, item.value, item.height)} style={{flexDirection: 'row'}}>
+          <TouchableOpacity onPress={() => onReward(item.tx_hash, item.key, item.value, item.height)} style={styles.footerActionButton}>
             {
               item.favorite ?
                 <MIcon name="favorite" size={22} style={[styles.shareIcon, {color: KevaColors.favorite}]} />
@@ -379,7 +391,7 @@ const avatarContent = avatarSource ? (
             {(item.likes > 0) && <Text style={styles.count}>{item.likes}</Text> }
           </TouchableOpacity>
         </View>
-      </View>
+      </LinearGradient>
     )
   }
 }
@@ -1381,52 +1393,52 @@ var styles = StyleSheet.create({
   },
   feedAvatarWrapper: {
     paddingRight: 10,
-    paddingTop: 5,
-    paddingBottom: 8,
+    paddingTop: 10,
+    paddingBottom: 12,
     justifyContent: 'center',
     alignItems: 'center',
   },
   generatedAvatarImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     resizeMode: 'cover',
   },
   generatedAvatarContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
   },
   feedGeneratedAvatarImage: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     resizeMode: 'cover',
   },
   feedGeneratedAvatarContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
   },
   fallbackAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     alignItems: 'center',
     justifyContent: 'center',
   },
   feedFallbackAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1434,14 +1446,14 @@ var styles = StyleSheet.create({
     display: 'none',
   },
   fallbackAvatarLabel: {
-    color: '#fff',
+    color: '#E0F2FE',
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   feedFallbackAvatarLabel: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    color: '#E0F2FE',
+    fontSize: 17,
+    fontWeight: '700',
   },
   avatarProbe: {
     width: 1,
@@ -1452,46 +1464,84 @@ var styles = StyleSheet.create({
   listStyle: {
     flex: 1,
     borderBottomWidth: 1,
-    borderColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
+    borderColor: 'rgba(125, 211, 252, 0.2)',
+    backgroundColor: '#050915',
   },
   card: {
-    backgroundColor:'#fff',
-    marginVertical:0,
-    borderBottomWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
+    marginVertical: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.4)',
+    backgroundColor: 'transparent',
+    shadowColor: '#7dd3fc',
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
+    overflow: 'hidden',
+  },
+  cardInner: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 12,
   },
   keyDesc: {
     flex: 1,
-    fontSize:16,
-    color: KevaColors.darkText,
+    fontSize:17,
+    color: '#E5E7EB',
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   valueDesc: {
     flex: 1,
     fontSize:15,
-    marginBottom: 10,
-    color: KevaColors.darkText
+    marginBottom: 12,
+    color: '#CBD5E1'
+  },
+  headerRow: {
+    flexDirection:'row',
+    alignItems:'center',
+    justifyContent:'space-between',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems:'center',
+    justifyContent:'flex-start',
+  },
+  hiddenAction: {
+    height: 40,
   },
   actionIcon: {
-    color: KevaColors.arrowIcon,
-    paddingHorizontal: 15,
+    color: '#93C5FD',
+    paddingHorizontal: 12,
     paddingVertical: 7
   },
   talkIcon: {
-    color: KevaColors.arrowIcon,
-    paddingLeft: 15,
-    paddingRight: 2,
-    paddingVertical: 7
+    color: '#93C5FD',
+    paddingRight: 4,
+    paddingVertical: 7,
   },
   shareIcon: {
-    color: KevaColors.arrowIcon,
-    paddingLeft: 15,
-    paddingRight: 2,
+    color: '#93C5FD',
+    paddingRight: 4,
     paddingVertical: 7
   },
   count: {
-    color: KevaColors.arrowIcon,
-    paddingVertical: 7
+    color: '#E0F2FE',
+    paddingVertical: 7,
+    fontWeight: '600',
+  },
+  footerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingBottom: 10,
+    paddingTop: 2,
+  },
+  footerActionButton: {
+    flexDirection: 'row',
+    marginRight: 4,
   },
   modal: {
     borderRadius:10,
@@ -1558,10 +1608,11 @@ var styles = StyleSheet.create({
     color: KevaColors.inactiveText
   },
   timestamp: {
-    color: KevaColors.extraLightText,
+    color: '#9CA3AF',
     fontSize: 13,
     position: 'relative',
-    top: -5,
+    top: -2,
+    letterSpacing: 0.2,
   },
   previewImage: {
     width: 90,
@@ -1573,7 +1624,14 @@ var styles = StyleSheet.create({
     width: 160,
     height: 120,
     alignSelf: 'flex-start',
-    borderRadius: 0,
+    borderRadius: 8,
+  },
+  previewVideoWrapper: {
+    width: 160,
+    height: 120,
+    marginBottom: 5,
+    borderRadius: 10,
+    overflow: 'hidden',
   },
   playIcon: {
     position: 'absolute',
@@ -1583,6 +1641,11 @@ var styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center'
+  },
+  nftAccentLine: {
+    height: 2,
+    marginHorizontal: 12,
+    borderRadius: 20,
   },
   keyContainer: {
     marginBottom: 10,
