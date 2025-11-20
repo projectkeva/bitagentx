@@ -654,6 +654,23 @@ async function ensureElectrumClientReady() {
   }
 }
 
+async function ensureElectrumConnectionAlive(timeoutMs = 5000) {
+  await ensureElectrumClientReady();
+
+  const pingPromise = mainClient.server_ping();
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Electrum ping timeout')), timeoutMs);
+  });
+
+  try {
+    await Promise.race([pingPromise, timeoutPromise]);
+  } catch (error) {
+    console.warn('BlueElectrum: ping failed, reconnecting before latest header fetch', error);
+    mainConnected = false;
+    await ensureElectrumClientReady();
+  }
+}
+
 function parseHeaderTimestampFromHex(headerHex) {
   if (typeof headerHex !== 'string') {
     return null;
@@ -986,7 +1003,7 @@ module.exports.blockchainBlock_count = async function() {
 }
 
 module.exports.getLatestHeaderSimple = async function() {
-  await ensureElectrumClientReady();
+  await ensureElectrumConnectionAlive();
 
   let host = defaultPeer.host;
   let ssl = defaultPeer.ssl || DEFAULT_PORT;
