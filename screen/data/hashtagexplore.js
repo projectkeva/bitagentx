@@ -38,6 +38,7 @@ import { stringToColor, getInitials, SCREEN_WIDTH, } from "../../util";
 import Biometric from '../../class/biometrics';
 import { extractMedia, getImageGatewayURL } from './mediaManager';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+import LinearGradient from 'react-native-linear-gradient';
 const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
 
 const PLAY_ICON  = <MIcon name="play-arrow" size={50} color="#fff"/>;
@@ -330,23 +331,24 @@ class Item extends React.Component {
         );
       }
     }
+    const avatarSizeStyle = isSellHashtag ? styles.nftAvatarSize : null;
     const avatarContent = avatarSource ? (
-      <View style={styles.generatedAvatarContainer}>
-        <Image source={avatarSource} style={styles.generatedAvatarImage} />
+      <View style={[styles.generatedAvatarContainer, avatarSizeStyle]}>
+        <Image source={avatarSource} style={[styles.generatedAvatarImage, avatarSizeStyle]} />
       </View>
     ) : (
-      <View style={[styles.fallbackAvatar, { backgroundColor: fallbackColor }]}>
-        <Text style={styles.fallbackAvatarLabel}>{fallbackInitials}</Text>
+      <View style={[styles.fallbackAvatar, avatarSizeStyle, { backgroundColor: fallbackColor }]}>
+        <Text style={[styles.fallbackAvatarLabel, isSellHashtag && styles.nftAvatarLabel]}>{fallbackInitials}</Text>
       </View>
     );
 
     const titleContent = isSellHashtag ? (
       <View style={styles.titleRow}>
-        <Text style={titleStyles} numberOfLines={1} ellipsizeMode="tail">
+        <Text style={[...titleStyles, styles.nftShortCodeTitle]} numberOfLines={1} ellipsizeMode="tail">
           {titleText}
         </Text>
         {levelLabelText && (
-          <Text style={styles.levelLabel}>{levelLabelText}</Text>
+          <Text style={[styles.levelLabel, styles.nftLevelLabel]}>{levelLabelText}</Text>
         )}
       </View>
     ) : (
@@ -355,12 +357,22 @@ class Item extends React.Component {
       </Text>
     );
 
+    const WrapperComponent = isSellHashtag ? LinearGradient : View;
+    const wrapperProps = isSellHashtag ? {
+      colors: ['#0b1224', '#0f162b', '#0b1224'],
+      start: { x: 0, y: 0 },
+      end: { x: 1, y: 1 },
+      style: [styles.card, styles.nftCard],
+    } : {
+      style: styles.card,
+    };
+
     return (
-      <View style={styles.card}>
+      <WrapperComponent {...wrapperProps}>
         <TouchableOpacity onPress={() => onShow(item)}>
-          <View style={{flex:1,paddingHorizontal:10,paddingTop:2}}>
-            <View style={styles.headerRow}>
-              <View style={styles.avatarWrapper}>
+          <View style={[styles.cardInner, isSellHashtag && styles.nftCardInner]}>
+            <View style={[styles.headerRow, isSellHashtag && styles.nftHeaderRow]}>
+              <View style={[styles.avatarWrapper, isSellHashtag && styles.nftAvatarWrapper]}>
                 {shouldProbeAvatar && (
                   <Image
                     source={{ uri: avatarCandidateUri }}
@@ -371,14 +383,26 @@ class Item extends React.Component {
                 )}
                 {avatarContent}
               </View>
-              <View style={styles.headerTextContainer}>
+              <View style={[styles.headerTextContainer, isSellHashtag && styles.nftHeaderTextContainer]}>
                 {titleContent}
-                {priceLabel}
+                {priceLabel && (
+                  <View style={styles.nftPriceWrapper}>
+                    {React.cloneElement(priceLabel, { style: [styles.priceLabel, styles.nftPriceLabel] })}
+                  </View>
+                )}
               </View>
             </View>
+            {isSellHashtag && (
+              <LinearGradient
+                colors={['transparent', 'rgba(125, 211, 252, 0.65)', 'transparent']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.nftAccentLine}
+              />
+            )}
           </View>
         </TouchableOpacity>
-      </View>
+      </WrapperComponent>
     )
   }
 }
@@ -1062,12 +1086,42 @@ var styles = StyleSheet.create({
     borderBottomWidth: THIN_BORDER,
     borderColor: KevaColors.cellBorder,
   },
+  nftCard: {
+    marginVertical: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.4)',
+    backgroundColor: 'transparent',
+    shadowColor: '#7dd3fc',
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 5,
+    overflow: 'hidden',
+    borderBottomWidth: 0,
+  },
+  cardInner: {
+    flex: 1,
+    paddingHorizontal: 10,
+    paddingTop: 2,
+    paddingBottom: 6,
+  },
+  nftCardInner: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 16,
+  },
   avatarWrapper: {
     paddingRight: 10,
     paddingTop: 5,
     paddingBottom: 8,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  nftAvatarWrapper: {
+    paddingTop: 8,
+    paddingBottom: 10,
+    paddingRight: 14,
   },
   generatedAvatarContainer: {
     width: 36,
@@ -1084,6 +1138,11 @@ var styles = StyleSheet.create({
     borderRadius: 18,
     resizeMode: 'cover',
   },
+  nftAvatarSize: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+  },
   fallbackAvatar: {
     width: 36,
     height: 36,
@@ -1095,6 +1154,11 @@ var styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  nftAvatarLabel: {
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   avatarProbe: {
     width: 1,
@@ -1114,6 +1178,11 @@ var styles = StyleSheet.create({
     marginRight: 6,
     flexShrink: 1,
   },
+  nftShortCodeTitle: {
+    fontSize: 18,
+    color: '#E0F2FE',
+    letterSpacing: 0.4,
+  },
   headerRow: {
     flexDirection:'row',
     alignItems:'center',
@@ -1125,21 +1194,43 @@ var styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  nftHeaderTextContainer: {
+    alignItems: 'flex-start',
+  },
   titleRow: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'baseline',
+  },
+  nftHeaderRow: {
+    alignItems: 'center',
   },
   levelLabel: {
     marginLeft: 6,
     fontSize: 12,
     color: '#9CA3AF',
   },
+  nftLevelLabel: {
+    color: 'rgba(125, 211, 252, 0.9)',
+  },
   priceLabel: {
     fontSize: 14,
     color: KevaColors.actionText,
     fontWeight: '600',
     marginLeft: 10,
+  },
+  nftPriceWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  nftPriceLabel: {
+    color: '#7DD3FC',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    overflow: 'hidden',
+    marginLeft: 0,
   },
   valueDesc: {
     flex: 1,
@@ -1249,6 +1340,11 @@ var styles = StyleSheet.create({
     height: 120,
     alignSelf: 'flex-start',
     borderRadius: 0,
+  },
+  nftAccentLine: {
+    height: 2,
+    marginTop: 14,
+    borderRadius: 20,
   },
   playIcon: {
     position: 'absolute',
