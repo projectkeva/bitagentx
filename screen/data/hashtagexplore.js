@@ -984,74 +984,82 @@ class HashtagExplore extends React.Component {
     const footerLoader = this.state.isLoadingMore ? <BlueLoading style={{paddingTop: 30, paddingBottom: 400}} /> : null;
 
     return (
-      <SafeAreaView style={styles.topContainer}>
-        <View style={styles.inputContainer}>
-          <TouchableOpacity onPress={this.closeItemAni}>
-            <Text style={[{color: KevaColors.actionText, fontSize: 16, textAlign: 'left'}, inputMode && {paddingRight: 5}]}>
-              {inputMode ? loc.general.cancel : ''}
-            </Text>
-          </TouchableOpacity>
-          <TextInput
-            onFocus={this.openItemAni}
-            ref={ref => this._inputRef = ref}
-            onChangeText={hashtag => this.setState({ hashtag: hashtag, searched: false })}
-            value={hashtag}
-            placeholder={loc.namespaces.search_hashtag}
-            multiline={false}
-            underlineColorAndroid='rgba(0,0,0,0)'
-            returnKeyType='search'
-            clearButtonMode='while-editing'
-            onSubmitEditing={this.onSearchHashtag}
-            style={styles.textInput}
-            returnKeyType={ 'done' }
-            clearButtonMode='while-editing'
-          />
-          {loading ?
-            <ActivityIndicator size="small" color={KevaColors.actionText} style={{ width: 42, height: 42 }} />
-            :
-            <TouchableOpacity onPress={this.onSearchHashtag} disabled={!canSearch}>
-              <Icon name={'md-search'}
-                    style={[styles.searchIcon, !canSearch && {color: KevaColors.inactiveText}]}
-                    size={25} />
+      <LinearGradient
+        colors={['#050915', '#061025', '#050915']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.screenBackground}
+      >
+        <SafeAreaView style={styles.topContainer}>
+          <View style={styles.inputContainer}>
+            <TouchableOpacity onPress={this.closeItemAni}>
+              <Text style={[{color: KevaColors.actionText, fontSize: 16, textAlign: 'left'}, inputMode && {paddingRight: 5}]}>
+                {inputMode ? loc.general.cancel : ''}
+              </Text>
             </TouchableOpacity>
-          }
-        </View>
-        {
-          (mergeList && mergeList.length > 0 ) ?
-          <FlatList
-            style={styles.listStyle}
-            contentContainerStyle={{paddingBottom: 400, backgroundColor: '#fff'}}
-            data={mergeList}
-            extraData={this.state.latestBlockHeight}
-            onRefresh={() => this.refreshKeyValues()}
-            onEndReached={() => {this.loadMoreKeyValues()}}
-            onEndReachedThreshold={0.1}
-            onMomentumScrollBegin={() => { this.onEndReachedCalledDuringMomentum = false; }}
-            refreshing={this.state.isRefreshing}
-            keyExtractor={(item, index) => item.key + index}
-            ListFooterComponent={footerLoader}
-            renderItem={({item, index}) =>
-              <Item item={item} key={index} dispatch={dispatch} onDelete={this.onDelete}
-                onShow={this.onShow}
-                onReply={this.onReply}
-                onShare={this.onShare}
-                onReward={this.onReward}
-                navigation={navigation}
-                mediaInfoList={mediaInfoList}
-                currentHashtag={hashtag}
-                latestBlockHeight={this.state.latestBlockHeight}
-              />
+            <TextInput
+              onFocus={this.openItemAni}
+              ref={ref => this._inputRef = ref}
+              onChangeText={hashtag => this.setState({ hashtag: hashtag, searched: false })}
+              value={hashtag}
+              placeholder={loc.namespaces.search_hashtag}
+              placeholderTextColor={'#94A3B8'}
+              multiline={false}
+              underlineColorAndroid='rgba(0,0,0,0)'
+              returnKeyType='search'
+              clearButtonMode='while-editing'
+              onSubmitEditing={this.onSearchHashtag}
+              style={styles.textInput}
+              returnKeyType={ 'done' }
+              clearButtonMode='while-editing'
+            />
+            {loading ?
+              <ActivityIndicator size="small" color={KevaColors.actionText} style={{ width: 42, height: 42 }} />
+              :
+              <TouchableOpacity onPress={this.onSearchHashtag} disabled={!canSearch}>
+                <Icon name={'md-search'}
+                      style={[styles.searchIcon, !canSearch && {color: KevaColors.inactiveText}]}
+                      size={25} />
+              </TouchableOpacity>
             }
-          />
-          :
-          <View style={{justifyContent: 'center', alignItems: 'center'}}>
-            <RNImage source={require('../../img/other_no_data.png')} style={{ width: SCREEN_WIDTH*0.33, height: SCREEN_WIDTH*0.33, marginTop: 50, marginBottom: 10 }} />
-            <Text style={{padding: 20, fontSize: 20, textAlign: 'center', color: KevaColors.inactiveText}}>
-              {(searched && hashtag.length > 0) ? (loc.namespaces.no_hashtag + hashtag) : loc.namespaces.hashtag_help}
-            </Text>
           </View>
-        }
-      </SafeAreaView>
+          {
+            (mergeList && mergeList.length > 0 ) ?
+            <FlatList
+              style={styles.listStyle}
+              contentContainerStyle={styles.listContent}
+              data={mergeList}
+              extraData={this.state.latestBlockHeight}
+              onRefresh={() => this.refreshKeyValues()}
+              onEndReached={() => {this.loadMoreKeyValues()}}
+              onEndReachedThreshold={0.1}
+              onMomentumScrollBegin={() => { this.onEndReachedCalledDuringMomentum = false; }}
+              refreshing={this.state.isRefreshing}
+              keyExtractor={(item, index) => item.key + index}
+              ListFooterComponent={footerLoader}
+              renderItem={({item, index}) =>
+                <Item item={item} key={index} dispatch={dispatch} onDelete={this.onDelete}
+                  onShow={this.onShow}
+                  onReply={this.onReply}
+                  onShare={this.onShare}
+                  onReward={this.onReward}
+                  navigation={navigation}
+                  mediaInfoList={mediaInfoList}
+                  currentHashtag={hashtag}
+                  latestBlockHeight={this.state.latestBlockHeight}
+                />
+              }
+            />
+            :
+            <View style={{justifyContent: 'center', alignItems: 'center'}}>
+              <RNImage source={require('../../img/other_no_data.png')} style={{ width: SCREEN_WIDTH*0.33, height: SCREEN_WIDTH*0.33, marginTop: 50, marginBottom: 10 }} />
+              <Text style={{padding: 20, fontSize: 20, textAlign: 'center', color: KevaColors.inactiveText}}>
+                {(searched && hashtag.length > 0) ? (loc.namespaces.no_hashtag + hashtag) : loc.namespaces.hashtag_help}
+              </Text>
+            </View>
+          }
+        </SafeAreaView>
+      </LinearGradient>
     );
   }
 
@@ -1068,9 +1076,12 @@ function mapStateToProps(state) {
 export default HashtagExploreScreen = connect(mapStateToProps)(HashtagExplore);
 
 var styles = StyleSheet.create({
+  screenBackground: {
+    flex: 1,
+  },
   topContainer: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
   },
   container: {
     flex:1,
@@ -1078,7 +1089,10 @@ var styles = StyleSheet.create({
   listStyle: {
     flex: 1,
     borderBottomWidth: 1,
-    borderColor: KevaColors.cellBorder,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  listContent: {
+    paddingBottom: 400,
   },
   card: {
     backgroundColor:'#fff',
@@ -1358,9 +1372,9 @@ var styles = StyleSheet.create({
   inputContainer: {
     paddingVertical: 5,
     paddingLeft: 8,
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(11, 18, 36, 0.85)',
     borderBottomWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
+    borderColor: 'rgba(125, 211, 252, 0.35)',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -1369,7 +1383,8 @@ var styles = StyleSheet.create({
   {
     flex: 1,
     borderRadius: 10,
-    backgroundColor: '#f1f3f4',
+    backgroundColor: '#0b1224',
+    color: '#E5E7EB',
     android: {
       paddingTop: 3,
       paddingBottom: 3,
