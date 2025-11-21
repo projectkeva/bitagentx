@@ -19,6 +19,7 @@ import {
   Image,
   InteractionManager,
 } from 'react-native';
+import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/Ionicons';
 import MCIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {
@@ -326,68 +327,88 @@ class Namespace extends React.Component {
 
     const avatarCandidateUri = selectAvatarCandidateUri(avatarCandidateUris, avatarFailedUris, generatedAvatarUri);
     const shouldProbeAvatar = !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
-const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
+    const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
 
-const avatarContent = avatarSource ? (
-  <View style={styles.generatedAvatarContainer}>
-    <Image source={avatarSource} style={styles.generatedAvatarImage} />
-  </View>
-) : (
-  <View style={[styles.fallbackAvatar, { backgroundColor: colorAvatar }]}>
-    <Text style={styles.fallbackAvatarLabel}>{titleAvatar}</Text>
-  </View>
-);
-
+    const avatarContent = avatarSource ? (
+      <View style={styles.generatedAvatarContainer}>
+        <Image source={avatarSource} style={styles.generatedAvatarImage} />
+      </View>
+    ) : (
+      <View style={[styles.fallbackAvatar, { backgroundColor: colorAvatar }]}>
+        <Text style={styles.fallbackAvatarLabel}>{titleAvatar}</Text>
+      </View>
+    );
 
     return (
-      <Animated.View style={this._style}>
-        <View style={styles.cardTitle} >
-          <View style={styles.avatarWrapper}>
-            {shouldProbeAvatar && (
-              <Image
-                source={{ uri: avatarCandidateUri }}
-                style={styles.avatarProbe}
-                onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
-                onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
-              />
-            )}
-            {avatarContent}
+      <Animated.View style={[this._style, styles.cardContainer]}>
+        <LinearGradient
+          colors={['#0b1224', '#0f162b', '#0b1224']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.neonCard}
+        >
+          <View style={styles.cardInner}>
+            <View style={styles.headerRow}>
+              <View style={[styles.avatarWrapper, styles.neonAvatarWrapper]}>
+                {shouldProbeAvatar && (
+                  <Image
+                    source={{ uri: avatarCandidateUri }}
+                    style={styles.avatarProbe}
+                    onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
+                    onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
+                  />
+                )}
+                {avatarContent}
+              </View>
+              <View style={styles.titleArea}>
+                <View style={styles.titleBlock}>
+                  <Text
+                    style={[styles.cardTitleText, isForSale && styles.saleTitle]}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {displayNameWithShortcode}
+                  </Text>
+                  {levelLabelText && (
+                    <Text style={styles.levelLabel}>{levelLabelText}</Text>
+                  )}
+                </View>
+                <View style={styles.actionContainer}>
+                  {
+                    !namespace.shortCode &&
+                    <TouchableOpacity onPress={this.onWait}>
+                      <Icon name="ios-hourglass" size={20} style={[styles.actionIcon, styles.warnAction]} />
+                    </TouchableOpacity>
+                  }
+                  <TouchableOpacity onPress={this.onInfo}>
+                    <Icon name="ios-information-circle-outline" size={20} style={styles.actionIcon} />
+                  </TouchableOpacity>
+                  { canDelete &&
+                  <TouchableOpacity onPress={() => onDelete(namespace.id || namespace.namespaceId)}>
+                    <Icon name="ios-remove-circle-outline" size={20} style={styles.actionIcon} />
+                  </TouchableOpacity>
+                  }
+                  { canTransfer &&
+                  <TouchableOpacity onPress={() => this.onTransfer(namespace)}>
+                    <Icon name="ios-log-out" size={20} style={styles.actionIcon} />
+                  </TouchableOpacity>
+                  }
+                </View>
+              </View>
+              <TouchableOpacity onPress={this.onKey}>
+                <View style={styles.arrowWrapper}>
+                  <Icon name="ios-arrow-forward" size={24} color={KevaColors.actionText} style={styles.arrowIcon} />
+                </View>
+              </TouchableOpacity>
+            </View>
+            <LinearGradient
+              colors={['transparent', 'rgba(125, 211, 252, 0.65)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.accentLine}
+            />
           </View>
-          <View style={{ flex: 1, justifyContent: 'space-between', paddingHorizontal: 7, paddingTop: 10 }}>
-            <View style={{ flex: 1 }} >
-              <Text style={[styles.cardTitleText, isForSale && {color: KevaColors.okColor}]} numberOfLines={1} ellipsizeMode="tail">{displayNameWithShortcode}</Text>
-              {levelLabelText && (
-                <Text style={styles.levelLabel}>{levelLabelText}</Text>
-              )}
-            </View>
-            <View style={styles.actionContainer}>
-              {
-                !namespace.shortCode &&
-                <TouchableOpacity onPress={this.onWait}>
-                  <Icon name="ios-hourglass" size={20} style={[styles.actionIcon, {color: KevaColors.warnColor}]} />
-                </TouchableOpacity>
-              }
-              <TouchableOpacity onPress={this.onInfo}>
-                <Icon name="ios-information-circle-outline" size={20} style={styles.actionIcon} />
-              </TouchableOpacity>
-              { canDelete &&
-              <TouchableOpacity onPress={() => onDelete(namespace.id || namespace.namespaceId)}>
-                <Icon name="ios-remove-circle-outline" size={20} style={styles.actionIcon} />
-              </TouchableOpacity>
-              }
-              { canTransfer &&
-              <TouchableOpacity onPress={() => this.onTransfer(namespace)}>
-                <Icon name="ios-log-out" size={20} style={styles.actionIcon} />
-              </TouchableOpacity>
-              }
-            </View>
-          </View>
-          <TouchableOpacity onPress={this.onKey}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Icon name="ios-arrow-forward" size={24} color={KevaColors.actionText} style={{ padding: 12 }} />
-            </View>
-          </TouchableOpacity>
-        </View>
+        </LinearGradient>
       </Animated.View>
     )
   }
@@ -1356,24 +1377,24 @@ var styles = StyleSheet.create({
     alignItems: 'center',
   },
   generatedAvatarImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     resizeMode: 'cover',
   },
   generatedAvatarContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
   },
   fallbackAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1382,14 +1403,52 @@ var styles = StyleSheet.create({
   },
   fallbackAvatarLabel: {
     color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: '700',
   },
   avatarProbe: {
     width: 1,
     height: 1,
     position: 'absolute',
     opacity: 0,
+  },
+  cardContainer: {
+    marginHorizontal: 10,
+    marginTop: 10,
+  },
+  neonCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.4)',
+    shadowColor: '#7dd3fc',
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+    overflow: 'hidden',
+  },
+  cardInner: {
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  neonAvatarWrapper: {
+    paddingVertical: 6,
+    paddingRight: 12,
+  },
+  titleArea: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  titleBlock: {
+    flex: 1,
+    paddingRight: 6,
   },
   topContainer: {
     flex: 1,
@@ -1439,15 +1498,19 @@ var styles = StyleSheet.create({
     marginTop: 14,
   },
   cardTitleText: {
-    fontSize: 17,
-    color: KevaColors.darkText,
-    paddingHorizontal: 5,
+    fontSize: 19,
+    color: '#E0F2FE',
+    paddingHorizontal: 6,
+    letterSpacing: 0.3,
+  },
+  saleTitle: {
+    color: '#7DD3FC',
   },
   levelLabel: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    paddingHorizontal: 5,
-    marginTop: 2,
+    fontSize: 13,
+    color: 'rgba(125, 211, 252, 0.9)',
+    paddingHorizontal: 6,
+    marginTop: 4,
   },
   cardContent: {
     backgroundColor: '#fff',
@@ -1462,13 +1525,29 @@ var styles = StyleSheet.create({
   actionContainer: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    marginHorizontal: 20,
-    marginTop: 5
+    marginHorizontal: 12,
+    marginTop: 8
   },
   actionIcon: {
-    color: KevaColors.actionText,
-    paddingHorizontal: 14,
+    color: '#A5B4FC',
+    paddingHorizontal: 10,
     paddingVertical: 10
+  },
+  warnAction: {
+    color: KevaColors.warnColor,
+  },
+  arrowWrapper: {
+    paddingLeft: 6,
+    paddingRight: 2,
+    paddingVertical: 4,
+  },
+  arrowIcon: {
+    padding: 10,
+  },
+  accentLine: {
+    height: 2,
+    marginTop: 12,
+    borderRadius: 20,
   },
   modal: {
     height: 300,
