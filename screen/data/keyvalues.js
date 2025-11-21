@@ -1317,52 +1317,59 @@ class KeyValues extends React.Component {
 
     const footerLoader = this.state.isLoadingMore ? <BlueLoading style={{paddingTop: 30, paddingBottom: 400}} /> : null;
     return (
-      <View style={styles.container}>
-        <ActionSheet
-           ref={ref => this._actionDelete = ref}
-           title={'Delete this key?'}
-           options={[loc.general.delete, loc.general.cancel]}
-           cancelButtonIndex={1}
-           destructiveButtonIndex={0}
-           onPress={this.onDeleteConfirm}
-        />
-        {this.getDeleteModal()}
-        {
-          (list.length == 0) &&
-          <Text style={{paddingTop: 20, alignSelf: 'center', color: KevaColors.okColor, fontSize: 16}}>
-            {loc.namespaces.scanning_block} {/* this.state.fetched + ' / ' + this.state.totalToFetch */} ...
-          </Text>
-        }
-        {
-          mergeList &&
-          <FlatList
-            style={styles.listStyle}
-            contentContainerStyle={{paddingBottom: 400}}
-            ListHeaderComponent={listHeader}
-            data={mergeList}
-            extraData={this.state.latestBlockHeight}
-            onEndReached={() => {this.loadMoreKeyValues()}}
-            onEndReachedThreshold={0.5}
-            onMomentumScrollBegin={() => { this.onEndReachedCalledDuringMomentum = false; }}
-            onRefresh={() => this.refreshKeyValues(-1)}
-            refreshing={this.state.isRefreshing}
-            keyExtractor={(item, index) => item.key + index}
-            ListFooterComponent={footerLoader}
-            renderItem={({item, index}) =>
-              <Item item={item} key={index} dispatch={dispatch} onDelete={this.onDelete}
-                onShow={this.onShow} namespaceId={namespaceId}
-                displayName={displayName}
-                onReply={this.onReply}
-                onShare={this.onShare}
-                onReward={this.onReward}
-                navigation={navigation}
-                mediaInfoList={mediaInfoList}
-                latestBlockHeight={this.state.latestBlockHeight}
-              />
-            }
+      <LinearGradient
+        colors={['#050915', '#061025', '#050915']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.screenBackground}
+      >
+        <View style={styles.container}>
+          <ActionSheet
+             ref={ref => this._actionDelete = ref}
+             title={'Delete this key?'}
+             options={[loc.general.delete, loc.general.cancel]}
+             cancelButtonIndex={1}
+             destructiveButtonIndex={0}
+             onPress={this.onDeleteConfirm}
           />
-        }
-      </View>
+          {this.getDeleteModal()}
+          {
+            (list.length == 0) &&
+            <Text style={{paddingTop: 20, alignSelf: 'center', color: KevaColors.okColor, fontSize: 16}}>
+              {loc.namespaces.scanning_block} {/* this.state.fetched + ' / ' + this.state.totalToFetch */} ...
+            </Text>
+          }
+          {
+            mergeList &&
+            <FlatList
+              style={styles.listStyle}
+              contentContainerStyle={{paddingBottom: 400}}
+              ListHeaderComponent={listHeader}
+              data={mergeList}
+              extraData={this.state.latestBlockHeight}
+              onEndReached={() => {this.loadMoreKeyValues()}}
+              onEndReachedThreshold={0.5}
+              onMomentumScrollBegin={() => { this.onEndReachedCalledDuringMomentum = false; }}
+              onRefresh={() => this.refreshKeyValues(-1)}
+              refreshing={this.state.isRefreshing}
+              keyExtractor={(item, index) => item.key + index}
+              ListFooterComponent={footerLoader}
+              renderItem={({item, index}) =>
+                <Item item={item} key={index} dispatch={dispatch} onDelete={this.onDelete}
+                  onShow={this.onShow} namespaceId={namespaceId}
+                  displayName={displayName}
+                  onReply={this.onReply}
+                  onShare={this.onShare}
+                  onReward={this.onReward}
+                  navigation={navigation}
+                  mediaInfoList={mediaInfoList}
+                  latestBlockHeight={this.state.latestBlockHeight}
+                />
+              }
+            />
+          }
+        </View>
+      </LinearGradient>
     );
   }
 
@@ -1381,8 +1388,12 @@ function mapStateToProps(state) {
 export default KeyValuesScreen = connect(mapStateToProps)(KeyValues);
 
 var styles = StyleSheet.create({
+  screenBackground: {
+    flex: 1,
+  },
   container: {
     flex:1,
+    backgroundColor: 'transparent',
   },
   avatarWrapper: {
     marginRight: 20,
