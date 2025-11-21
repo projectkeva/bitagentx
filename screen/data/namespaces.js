@@ -1318,43 +1318,43 @@ class Namespaces extends React.Component {
       fontSize: 16,
     });
     return (
-      <SafeAreaView style={styles.topContainer}>
-        {this.getNSModal()}
-        {this.getPendingModal()}
-        <TabView
-          navigationState={this.state}
-          renderScene={({ route }) => {
-            switch (route.key) {
-              case 'first':
-                return <MyNamespaces dispatch={dispatch} navigation={navigation} namespaceList={namespaceList} onInfo={this.onNSInfo} onWait={this.onWait}/>;
-              case 'second':
-                return <OtherNamespaces dispatch={dispatch} navigation={navigation} otherNamespaceList={otherNamespaceList} onInfo={this.onNSInfo} />;
+      <LinearGradient
+        colors={['#050915', '#061025', '#050915']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.screenBackground}
+      >
+        <SafeAreaView style={styles.topContainer}>
+          {this.getNSModal()}
+          {this.getPendingModal()}
+          <TabView
+            navigationState={this.state}
+            renderScene={({ route }) => {
+              switch (route.key) {
+                case 'first':
+                  return <MyNamespaces dispatch={dispatch} navigation={navigation} namespaceList={namespaceList} onInfo={this.onNSInfo} onWait={this.onWait}/>;
+                case 'second':
+                  return <OtherNamespaces dispatch={dispatch} navigation={navigation} otherNamespaceList={otherNamespaceList} onInfo={this.onNSInfo} />;
+              }
+            }}
+            onIndexChange={index => this.setState({ index })}
+            initialLayout={{ width: Dimensions.get('window').width }}
+            renderTabBar={props =>
+              <TabBar
+                {...props}
+                renderLabel={({ route, focused }) => (
+                  <Text style={labelStyle(focused)}>
+                    {route.title}
+                  </Text>
+                )}
+                indicatorStyle={{ backgroundColor: KevaColors.actionText }}
+                labelStyle={{ backgroundColor: 'transparent', color: KevaColors.inactiveText }}
+                style={styles.tabBar}
+              />
             }
-          }}
-          onIndexChange={index => this.setState({ index })}
-          initialLayout={{ width: Dimensions.get('window').width }}
-          renderTabBar={props =>
-            <TabBar
-              {...props}
-              renderLabel={({ route, focused }) => (
-                <Text style={labelStyle(focused)}>
-                  {route.title}
-                </Text>
-              )}
-              indicatorStyle={{ backgroundColor: KevaColors.actionText }}
-              labelStyle={{ backgroundColor: '#fff', color: KevaColors.inactiveText }}
-              style={{
-                backgroundColor: '#fff', shadowOpacity: 0, shadowOffset: { height: 0, width: 0 },
-                shadowColor: 'transparent',
-                shadowOpacity: 0,
-                elevation: 0,
-                borderBottomWidth: THIN_BORDER,
-                borderBottomColor: KevaColors.actionText,
-              }}
-            />
-          }
-        />
-      </SafeAreaView>
+          />
+        </SafeAreaView>
+      </LinearGradient>
     );
   }
 
@@ -1371,6 +1371,9 @@ function mapStateToProps(state) {
 export default NamespacesScreen = connect(mapStateToProps)(Namespaces)
 
 var styles = StyleSheet.create({
+  screenBackground: {
+    flex: 1,
+  },
   avatarWrapper: {
     padding: 5,
     justifyContent: 'center',
@@ -1452,11 +1455,11 @@ var styles = StyleSheet.create({
   },
   topContainer: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
   },
   container: {
     flex: 1,
-    backgroundColor: KevaColors.background,
+    backgroundColor: 'transparent',
   },
   sectionWrap: {
     marginBottom: 0
@@ -1532,6 +1535,15 @@ var styles = StyleSheet.create({
     color: '#A5B4FC',
     paddingHorizontal: 10,
     paddingVertical: 10
+  },
+  tabBar: {
+    backgroundColor: 'transparent',
+    shadowOpacity: 0,
+    shadowOffset: { height: 0, width: 0 },
+    shadowColor: 'transparent',
+    elevation: 0,
+    borderBottomWidth: THIN_BORDER,
+    borderBottomColor: 'rgba(125, 211, 252, 0.55)',
   },
   warnAction: {
     color: KevaColors.warnColor,
