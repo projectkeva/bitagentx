@@ -40,6 +40,7 @@ import { extractMedia, getImageGatewayURL } from './mediaManager';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
 import LinearGradient from 'react-native-linear-gradient';
 const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
+const createHash = require('create-hash');
 
 const PLAY_ICON  = <MIcon name="play-arrow" size={50} color="#fff"/>;
 const IMAGE_ICON = <Icon name="ios-image" size={50} color="#fff"/>;
@@ -47,6 +48,32 @@ const SELL_HASHTAG = '#NFTs';
 const SELL_HASHTAG_BLOCK_WINDOW = 20000;
 const SELL_HASHTAG_LOWER = SELL_HASHTAG.toLowerCase();
 const DEFAULT_SHORTCODE_COLOR = '#000000';
+
+const sha256Bytes = message => Buffer.from(createHash('sha256').update(message).digest());
+
+const attrSeedBytes = (id, attrName) => {
+  const seed0 = sha256Bytes(`${id}projectkeva`);
+  const attrBytes = Buffer.from(`:${attrName}`);
+  return Buffer.from(createHash('sha256').update(Buffer.concat([seed0, attrBytes])).digest());
+};
+
+const attrIntInRange = (seedBytes, min, max) => {
+  const hi = seedBytes.readUInt32BE(0);
+  const lo = seedBytes.readUInt32BE(4);
+  const v = (hi ^ lo) >>> 0;
+  const span = max - min + 1;
+  return min + (v % span);
+};
+
+const computeAlphaValue = id => {
+  try {
+    const seedBytes = attrSeedBytes(id, 'alpha');
+    return attrIntInRange(seedBytes, -99, 99);
+  } catch (err) {
+    console.warn(err);
+    return null;
+  }
+};
 const formatShortCodeForDisplay = shortCode => {
   const normalized = (shortCode || '').toString().trim();
   if (!/^\d+$/.test(normalized)) {
@@ -313,6 +340,7 @@ class Item extends React.Component {
     let priceLabel = null;
     const titleStyles = [isSellHashtag ? styles.shortCodeTitle : styles.keyDesc];
     let levelLabelText = null;
+    const alphaValue = shortCodeText.length > 0 ? computeAlphaValue(shortCodeText) : null;
     if (isSellHashtag) {
       titleText = formattedShortCode || displayKey;
       if (shortCodeText.length > 0) {
@@ -321,7 +349,10 @@ class Item extends React.Component {
           currentBlockHeight: this.props.latestBlockHeight,
         });
         if (Number.isFinite(shortCodeLevel)) {
-          levelLabelText = `[ Lv.${shortCodeLevel} ]`;
+          const alphaLabel = Number.isFinite(alphaValue)
+            ? ` · α${alphaValue > 0 ? `+${alphaValue}` : alphaValue}`
+            : '';
+          levelLabelText = `[ Lv.${shortCodeLevel}${alphaLabel} ]`;
         }
       }
       const salePriceText = (item.salePriceText || '').toString().trim();
