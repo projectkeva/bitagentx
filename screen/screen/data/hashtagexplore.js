@@ -86,30 +86,82 @@ const blendChannel = (from, to, ratio) => {
   return Math.round(from + (to - from) * t);
 };
 
-const blendToColor = (from, to, ratio) => {
-  const r = blendChannel(from.r, to.r, ratio);
-  const g = blendChannel(from.g, to.g, ratio);
-  const b = blendChannel(from.b, to.b, ratio);
-  return `rgb(${r}, ${g}, ${b})`;
+const alphaTextPalettes = {
+  lightBackground: {
+    primaryColor: '#0b1224',
+    secondaryColor: '#1f2937',
+    accentColor: '#0f172a',
+    underlineColor: 'rgba(0, 0, 0, 0.35)',
+  },
+  darkBackground: {
+    primaryColor: '#E8F5FF',
+    secondaryColor: '#D1E8FF',
+    accentColor: '#7DD3FC',
+    underlineColor: 'rgba(11, 18, 36, 0.75)',
+  },
+};
+
+const buildAlphaColorComponents = clampedValue => {
+  if (clampedValue === 0) {
+    return { r: 255, g: 255, b: 255 };
+  }
+
+  const intensity = Math.abs(clampedValue) / 99;
+  const white = { r: 255, g: 255, b: 255 };
+  if (clampedValue < 0) {
+    const deepGreen = { r: 12, g: 176, b: 96 };
+    return {
+      r: blendChannel(white.r, deepGreen.r, intensity),
+      g: blendChannel(white.g, deepGreen.g, intensity),
+      b: blendChannel(white.b, deepGreen.b, intensity),
+    };
+  }
+
+  const vividBlue = { r: 24, g: 128, b: 255 };
+  return {
+    r: blendChannel(white.r, vividBlue.r, intensity),
+    g: blendChannel(white.g, vividBlue.g, intensity),
+    b: blendChannel(white.b, vividBlue.b, intensity),
+  };
+};
+
+const toRgbString = ({ r, g, b }) => `rgb(${r}, ${g}, ${b})`;
+
+const getRelativeLuminance = ({ r, g, b }) => {
+  const normalize = v => {
+    const channel = v / 255;
+    return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+  };
+  const R = normalize(r);
+  const G = normalize(g);
+  const B = normalize(b);
+  return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+};
+
+const getAlphaColorDetails = alphaValue => {
+  const clamped = clampAlpha(alphaValue);
+  if (clamped === null) {
+    return {
+      backgroundColor: null,
+      luminance: null,
+      textPalette: alphaTextPalettes.darkBackground,
+    };
+  }
+
+  const components = buildAlphaColorComponents(clamped);
+  const backgroundColor = toRgbString(components);
+  const luminance = getRelativeLuminance(components);
+  const isLightBackground = luminance >= 0.68;
+  return {
+    backgroundColor,
+    luminance,
+    textPalette: isLightBackground ? alphaTextPalettes.lightBackground : alphaTextPalettes.darkBackground,
+  };
 };
 
 const getAlphaBackgroundColor = alphaValue => {
-  const clamped = clampAlpha(alphaValue);
-  if (clamped === null) {
-    return null;
-  }
-  if (clamped === 0) {
-    return '#ffffff';
-  }
-
-  const intensity = Math.abs(clamped) / 99;
-  const white = { r: 255, g: 255, b: 255 };
-  if (clamped < 0) {
-    const deepGreen = { r: 12, g: 176, b: 96 };
-    return blendToColor(white, deepGreen, intensity);
-  }
-  const vividBlue = { r: 24, g: 128, b: 255 };
-  return blendToColor(white, vividBlue, intensity);
+  const { backgroundColor } = getAlphaColorDetails(alphaValue);
+  return backgroundColor;
 };
 
 const formatShortCodeForDisplay = shortCode => {
@@ -379,11 +431,18 @@ class Item extends React.Component {
     const titleStyles = [isSellHashtag ? styles.shortCodeTitle : styles.keyDesc];
     let levelLabelText = null;
     const alphaValue = shortCodeText.length > 0 ? computeAlphaValue(shortCodeText) : null;
-    const alphaBackgroundColor = getAlphaBackgroundColor(alphaValue);
+    const { backgroundColor: alphaBackgroundColor, textPalette: alphaTextPalette } = getAlphaColorDetails(alphaValue);
+    const underlineStyle = isSellHashtag ? {
+      textDecorationLine: 'underline',
+      textDecorationColor: alphaTextPalette.underlineColor,
+    } : null;
     if (isSellHashtag) {
       titleText = formattedShortCode || displayKey;
       if (shortCodeText.length > 0) {
-        titleStyles.push({ color: getShortCodeColor(shortCodeText.length) });
+        titleStyles.push({ color: alphaTextPalette.primaryColor });
+        if (underlineStyle) {
+          titleStyles.push(underlineStyle);
+        }
         const shortCodeLevel = calculateLevelFromShortcode(shortCodeText, {
           currentBlockHeight: this.props.latestBlockHeight,
         });
@@ -392,6 +451,12 @@ class Item extends React.Component {
             ? `[ α${alphaValue > 0 ? `+${alphaValue}` : alphaValue} ]`
             : '';
           levelLabelText = `[ Lv.${shortCodeLevel} ]${alphaLabel ? ` ${alphaLabel}` : ''}`;
+        }
+      }
+      if (!titleStyles.some(style => style && style.color)) {
+        titleStyles.push({ color: alphaTextPalette.primaryColor });
+        if (underlineStyle) {
+          titleStyles.push(underlineStyle);
         }
       }
       const salePriceText = (item.salePriceText || '').toString().trim();
@@ -438,15 +503,27 @@ class Item extends React.Component {
               <View style={styles.headerTextContainer}>
                 {isSellHashtag ? (
                   <View style={styles.titleRow}>
-                    <Text style={titleStyles} numberOfLines={1} ellipsizeMode="tail">{titleText}</Text>
+                    <Text
+                      style={[...titleStyles, { color: alphaTextPalette.primaryColor }, underlineStyle]}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {titleText}
+                    </Text>
                     {levelLabelText && (
-                      <Text style={styles.levelLabel}>{levelLabelText}</Text>
+                      <Text
+                        style={[styles.levelLabel, { color: alphaTextPalette.secondaryColor }, underlineStyle]}
+                      >
+                        {levelLabelText}
+                      </Text>
                     )}
                   </View>
                 ) : (
                   <Text style={titleStyles} numberOfLines={1} ellipsizeMode="tail">{titleText}</Text>
                 )}
-                {priceLabel}
+                {priceLabel && React.cloneElement(priceLabel, {
+                  style: [styles.priceLabel, { color: alphaTextPalette.accentColor }, underlineStyle],
+                })}
               </View>
             </View>
           </View>
