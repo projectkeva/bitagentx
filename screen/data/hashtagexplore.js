@@ -74,6 +74,44 @@ const computeAlphaValue = id => {
     return null;
   }
 };
+
+const clampAlpha = value => {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return Math.max(-99, Math.min(99, value));
+};
+
+const blendChannel = (from, to, ratio) => {
+  const t = Math.max(0, Math.min(1, ratio));
+  return Math.round(from + (to - from) * t);
+};
+
+const blendToColor = (from, to, ratio) => {
+  const r = blendChannel(from.r, to.r, ratio);
+  const g = blendChannel(from.g, to.g, ratio);
+  const b = blendChannel(from.b, to.b, ratio);
+  return `rgb(${r}, ${g}, ${b})`;
+};
+
+const getAlphaBackgroundColor = alphaValue => {
+  const clamped = clampAlpha(alphaValue);
+  if (clamped === null) {
+    return null;
+  }
+  if (clamped === 0) {
+    return '#ffffff';
+  }
+
+  const intensity = Math.abs(clamped) / 99;
+  const white = { r: 255, g: 255, b: 255 };
+  if (clamped < 0) {
+    const deepGreen = { r: 12, g: 176, b: 96 };
+    return blendToColor(white, deepGreen, intensity);
+  }
+  const vividBlue = { r: 24, g: 128, b: 255 };
+  return blendToColor(white, vividBlue, intensity);
+};
 const formatShortCodeForDisplay = shortCode => {
   const normalized = (shortCode || '').toString().trim();
   if (!/^\d+$/.test(normalized)) {
@@ -373,6 +411,8 @@ class Item extends React.Component {
       </View>
     );
 
+    const alphaBackgroundColor = getAlphaBackgroundColor(alphaValue);
+
     const titleContent = isSellHashtag ? (
       <View style={styles.titleRow}>
         <Text style={[...titleStyles, styles.nftShortCodeTitle]} numberOfLines={1} ellipsizeMode="tail">
@@ -390,7 +430,9 @@ class Item extends React.Component {
 
     const WrapperComponent = isSellHashtag ? LinearGradient : View;
     const wrapperProps = isSellHashtag ? {
-      colors: ['#0b1224', '#0f162b', '#0b1224'],
+      colors: alphaBackgroundColor
+        ? [alphaBackgroundColor, alphaBackgroundColor, alphaBackgroundColor]
+        : ['#0b1224', '#0f162b', '#0b1224'],
       start: { x: 0, y: 0 },
       end: { x: 1, y: 1 },
       style: [styles.card, styles.nftCard],

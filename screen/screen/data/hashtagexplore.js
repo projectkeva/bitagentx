@@ -74,6 +74,44 @@ const computeAlphaValue = id => {
   }
 };
 
+const clampAlpha = value => {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return Math.max(-99, Math.min(99, value));
+};
+
+const blendChannel = (from, to, ratio) => {
+  const t = Math.max(0, Math.min(1, ratio));
+  return Math.round(from + (to - from) * t);
+};
+
+const blendToColor = (from, to, ratio) => {
+  const r = blendChannel(from.r, to.r, ratio);
+  const g = blendChannel(from.g, to.g, ratio);
+  const b = blendChannel(from.b, to.b, ratio);
+  return `rgb(${r}, ${g}, ${b})`;
+};
+
+const getAlphaBackgroundColor = alphaValue => {
+  const clamped = clampAlpha(alphaValue);
+  if (clamped === null) {
+    return null;
+  }
+  if (clamped === 0) {
+    return '#ffffff';
+  }
+
+  const intensity = Math.abs(clamped) / 99;
+  const white = { r: 255, g: 255, b: 255 };
+  if (clamped < 0) {
+    const deepGreen = { r: 12, g: 176, b: 96 };
+    return blendToColor(white, deepGreen, intensity);
+  }
+  const vividBlue = { r: 24, g: 128, b: 255 };
+  return blendToColor(white, vividBlue, intensity);
+};
+
 const formatShortCodeForDisplay = shortCode => {
   const normalized = (shortCode || '').toString().trim();
   if (!/^\d+$/.test(normalized)) {
@@ -341,6 +379,7 @@ class Item extends React.Component {
     const titleStyles = [isSellHashtag ? styles.shortCodeTitle : styles.keyDesc];
     let levelLabelText = null;
     const alphaValue = shortCodeText.length > 0 ? computeAlphaValue(shortCodeText) : null;
+    const alphaBackgroundColor = getAlphaBackgroundColor(alphaValue);
     if (isSellHashtag) {
       titleText = formattedShortCode || displayKey;
       if (shortCodeText.length > 0) {
@@ -372,8 +411,16 @@ class Item extends React.Component {
       </View>
     );
 
+    const cardStyles = [styles.card];
+    if (isSellHashtag) {
+      cardStyles.push(styles.nftCard);
+      if (alphaBackgroundColor) {
+        cardStyles.push({ backgroundColor: alphaBackgroundColor });
+      }
+    }
+
     return (
-      <View style={styles.card}>
+      <View style={cardStyles}>
         <TouchableOpacity onPress={() => onShow(item)}>
           <View style={{flex:1,paddingHorizontal:10,paddingTop:2}}>
             <View style={styles.headerRow}>
@@ -1087,6 +1134,12 @@ var styles = StyleSheet.create({
     marginVertical:0,
     borderBottomWidth: THIN_BORDER,
     borderColor: KevaColors.cellBorder,
+  },
+  nftCard: {
+    marginVertical: 10,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderBottomWidth: 0,
   },
   avatarWrapper: {
     paddingRight: 10,
