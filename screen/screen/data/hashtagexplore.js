@@ -350,9 +350,9 @@ class Item extends React.Component {
         });
         if (Number.isFinite(shortCodeLevel)) {
           const alphaLabel = Number.isFinite(alphaValue)
-            ? ` · α${alphaValue > 0 ? `+${alphaValue}` : alphaValue}`
+            ? `[ α${alphaValue > 0 ? `+${alphaValue}` : alphaValue} ]`
             : '';
-          levelLabelText = `[ Lv.${shortCodeLevel}${alphaLabel} ]`;
+          levelLabelText = `[ Lv.${shortCodeLevel} ]${alphaLabel ? ` ${alphaLabel}` : ''}`;
         }
       }
       const salePriceText = (item.salePriceText || '').toString().trim();
