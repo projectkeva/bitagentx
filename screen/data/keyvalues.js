@@ -74,6 +74,91 @@ const computeAlphaValue = id => {
   }
 };
 
+const clampAlpha = value => {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return Math.max(-99, Math.min(99, value));
+};
+
+const blendChannel = (from, to, ratio) => {
+  const t = Math.max(0, Math.min(1, ratio));
+  return Math.round(from + (to - from) * t);
+};
+
+const alphaTextPalettes = {
+  lightBackground: {
+    primaryColor: '#0b1224',
+    secondaryColor: '#1f2937',
+    accentColor: '#0f172a',
+    underlineColor: 'rgba(0, 0, 0, 0.35)',
+  },
+  darkBackground: {
+    primaryColor: '#E8F5FF',
+    secondaryColor: '#D1E8FF',
+    accentColor: '#7DD3FC',
+    underlineColor: 'rgba(11, 18, 36, 0.75)',
+  },
+};
+
+const buildAlphaColorComponents = clampedValue => {
+  if (clampedValue === 0) {
+    return { r: 255, g: 255, b: 255 };
+  }
+
+  const intensity = Math.abs(clampedValue) / 99;
+  const white = { r: 255, g: 255, b: 255 };
+  if (clampedValue < 0) {
+    const deepGreen = { r: 12, g: 176, b: 96 };
+    return {
+      r: blendChannel(white.r, deepGreen.r, intensity),
+      g: blendChannel(white.g, deepGreen.g, intensity),
+      b: blendChannel(white.b, deepGreen.b, intensity),
+    };
+  }
+
+  const vividBlue = { r: 24, g: 128, b: 255 };
+  return {
+    r: blendChannel(white.r, vividBlue.r, intensity),
+    g: blendChannel(white.g, vividBlue.g, intensity),
+    b: blendChannel(white.b, vividBlue.b, intensity),
+  };
+};
+
+const toRgbString = ({ r, g, b }) => `rgb(${r}, ${g}, ${b})`;
+
+const getRelativeLuminance = ({ r, g, b }) => {
+  const normalize = v => {
+    const channel = v / 255;
+    return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+  };
+  const R = normalize(r);
+  const G = normalize(g);
+  const B = normalize(b);
+  return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+};
+
+const getAlphaColorDetails = alphaValue => {
+  const clamped = clampAlpha(alphaValue);
+  if (clamped === null) {
+    return {
+      backgroundColor: null,
+      luminance: null,
+      textPalette: alphaTextPalettes.darkBackground,
+    };
+  }
+
+  const components = buildAlphaColorComponents(clamped);
+  const backgroundColor = toRgbString(components);
+  const luminance = getRelativeLuminance(components);
+  const isLightBackground = luminance >= 0.68;
+  return {
+    backgroundColor,
+    luminance,
+    textPalette: isLightBackground ? alphaTextPalettes.lightBackground : alphaTextPalettes.darkBackground,
+  };
+};
+
 
 const PLAY_ICON  = <MIcon name="play-arrow" size={50} color="#fff"/>;
 
@@ -1257,6 +1342,11 @@ class KeyValues extends React.Component {
         currentBlockHeight: this.props.latestBlockHeight,
       });
       const alphaValue = shortCode ? computeAlphaValue(shortCode) : null;
+      const { backgroundColor: alphaBackgroundColor, textPalette: alphaTextPalette } = getAlphaColorDetails(alphaValue);
+      const underlineStyle = {
+        textDecorationLine: 'underline',
+        textDecorationColor: alphaTextPalette.underlineColor,
+      };
       const alphaLabelText = Number.isFinite(alphaValue)
         ? `[ α${alphaValue > 0 ? `+${alphaValue}` : alphaValue} ]`
         : null;
@@ -1265,7 +1355,7 @@ class KeyValues extends React.Component {
         : null;
       listHeader = (
         <View style={styles.container}>
-          <View style={styles.keyContainer}>
+          <View style={[styles.keyContainer, alphaBackgroundColor ? { backgroundColor: alphaBackgroundColor, borderColor: alphaBackgroundColor } : null]}>
             <View style={styles.avatarWrapper}>
               {shouldProbeAvatar && (
                 <Image
@@ -1279,17 +1369,21 @@ class KeyValues extends React.Component {
             </View>
             <View style={{paddingRight: 10, flexShrink: 1}}>
               <View style={{flexDirection: 'row', marginBottom: 5}}>
-                <Text style={styles.sender} numberOfLines={1} ellipsizeMode="tail">
+                <Text
+                  style={[styles.sender, { color: alphaTextPalette.primaryColor }, underlineStyle]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
                   {displayName + ' '}
                 </Text>
                 <TouchableOpacity onPress={() => this.copyString(shortCode)}>
-                  <Text style={styles.shortCode}>
+                  <Text style={[styles.shortCode, { color: alphaTextPalette.accentColor }, underlineStyle]}>
                     {`@${shortCode}`}
                   </Text>
                 </TouchableOpacity>
               </View>
               {levelLabelText && (
-                <Text style={styles.levelLabel}>{levelLabelText}</Text>
+                <Text style={[styles.levelLabel, { color: alphaTextPalette.secondaryColor }, underlineStyle]}>{levelLabelText}</Text>
               )}
               {
                 isOther ?
