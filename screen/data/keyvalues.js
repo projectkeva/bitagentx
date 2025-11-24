@@ -46,6 +46,33 @@ import { extractMedia, getImageGatewayURL, removeMedia } from './mediaManager';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
 import LinearGradient from 'react-native-linear-gradient';
 const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
+const createHash = require('create-hash');
+
+const sha256Bytes = message => Buffer.from(createHash('sha256').update(message).digest());
+
+const attrSeedBytes = (id, attrName) => {
+  const seed0 = sha256Bytes(`${id}projectkeva`);
+  const attrBytes = Buffer.from(`:${attrName}`);
+  return Buffer.from(createHash('sha256').update(Buffer.concat([seed0, attrBytes])).digest());
+};
+
+const attrIntInRange = (seedBytes, min, max) => {
+  const hi = seedBytes.readUInt32BE(0);
+  const lo = seedBytes.readUInt32BE(4);
+  const v = (hi ^ lo) >>> 0;
+  const span = max - min + 1;
+  return min + (v % span);
+};
+
+const computeAlphaValue = id => {
+  try {
+    const seedBytes = attrSeedBytes(id, 'alpha');
+    return attrIntInRange(seedBytes, -99, 99);
+  } catch (err) {
+    console.warn(err);
+    return null;
+  }
+};
 
 
 const PLAY_ICON  = <MIcon name="play-arrow" size={50} color="#fff"/>;
@@ -1229,7 +1256,13 @@ class KeyValues extends React.Component {
       const shortCodeLevel = calculateLevelFromShortcode(shortCode, {
         currentBlockHeight: this.props.latestBlockHeight,
       });
-      const levelLabelText = Number.isFinite(shortCodeLevel) ? `[ Lv.${shortCodeLevel} ]` : null;
+      const alphaValue = shortCode ? computeAlphaValue(shortCode) : null;
+      const alphaLabelText = Number.isFinite(alphaValue)
+        ? `[ α${alphaValue > 0 ? `+${alphaValue}` : alphaValue} ]`
+        : null;
+      const levelLabelText = Number.isFinite(shortCodeLevel)
+        ? `[ Lv.${shortCodeLevel} ]${alphaLabelText ? ` ${alphaLabelText}` : ''}`
+        : null;
       listHeader = (
         <View style={styles.container}>
           <View style={styles.keyContainer}>
