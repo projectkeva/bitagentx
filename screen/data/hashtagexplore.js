@@ -541,7 +541,7 @@ class Item extends React.Component {
                       style: [
                         styles.priceLabel,
                         styles.nftPriceLabel,
-                        { color: alphaTextPalette.accentColor },
+                        { color: alphaTextPalettes.lightBackground.primaryColor },
                         underlineStyle,
                       ],
                     })}

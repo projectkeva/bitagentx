@@ -522,7 +522,11 @@ class Item extends React.Component {
                   <Text style={titleStyles} numberOfLines={1} ellipsizeMode="tail">{titleText}</Text>
                 )}
                 {priceLabel && React.cloneElement(priceLabel, {
-                  style: [styles.priceLabel, { color: alphaTextPalette.accentColor }, underlineStyle],
+                  style: [
+                    styles.priceLabel,
+                    { color: alphaTextPalettes.lightBackground.primaryColor },
+                    underlineStyle,
+                  ],
                 })}
               </View>
             </View>
