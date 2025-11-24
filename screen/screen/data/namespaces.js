@@ -43,6 +43,8 @@ import { HDSegwitP2SHWallet,  } from '../../class';
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 import Biometric from '../../class/biometrics';
 import { Avatar, Button } from 'react-native-elements';
+const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
+const createHash = require('create-hash');
 
 let BlueApp = require('../../BlueApp');
 let loc = require('../../loc');
@@ -69,6 +71,32 @@ const COPY_ICON = (<Icon name="ios-copy" size={22} color={KevaColors.extraLightT
 
 let _g_cleanLockedFund;
 let _g_checkLockedFund;
+
+const sha256Bytes = message => Buffer.from(createHash('sha256').update(message).digest());
+
+const attrSeedBytes = (id, attrName) => {
+  const seed0 = sha256Bytes(`${id}projectkeva`);
+  const attrBytes = Buffer.from(`:${attrName}`);
+  return Buffer.from(createHash('sha256').update(Buffer.concat([seed0, attrBytes])).digest());
+};
+
+const attrIntInRange = (seedBytes, min, max) => {
+  const hi = seedBytes.readUInt32BE(0);
+  const lo = seedBytes.readUInt32BE(4);
+  const v = (hi ^ lo) >>> 0;
+  const span = max - min + 1;
+  return min + (v % span);
+};
+
+const computeAlphaValue = id => {
+  try {
+    const seedBytes = attrSeedBytes(id, 'alpha');
+    return attrIntInRange(seedBytes, -99, 99);
+  } catch (err) {
+    console.warn(err);
+    return null;
+  }
+};
 
 class Namespace extends React.Component {
 
@@ -181,6 +209,14 @@ class Namespace extends React.Component {
     const displayNameWithShortcode = namespace.shortCode
       ? `${namespace.displayName} @${namespace.shortCode}`
       : namespace.displayName;
+    const shortCodeLevel = calculateLevelFromShortcode(namespace.shortCode);
+    const alphaValue = namespace.shortCode ? computeAlphaValue(namespace.shortCode) : null;
+    const alphaLabelText = Number.isFinite(alphaValue)
+      ? `[ α${alphaValue > 0 ? `+${alphaValue}` : alphaValue} ]`
+      : '';
+    const levelLabelText = Number.isFinite(shortCodeLevel)
+      ? `[ Lv.${shortCodeLevel} ]${alphaLabelText ? ` ${alphaLabelText}` : ''}`
+      : null;
 
     return (
       <Animated.View style={this._style}>
@@ -191,6 +227,9 @@ class Namespace extends React.Component {
           <View style={{ flex: 1, justifyContent: 'space-between', paddingHorizontal: 7, paddingTop: 10 }}>
             <View style={{ flex: 1 }} >
               <Text style={[styles.cardTitleText, isForSale && {color: KevaColors.okColor}]} numberOfLines={1} ellipsizeMode="tail">{displayNameWithShortcode}</Text>
+              {levelLabelText && (
+                <Text style={styles.levelLabel}>{levelLabelText}</Text>
+              )}
             </View>
             <View style={styles.actionContainer}>
               {
@@ -1208,6 +1247,12 @@ var styles = StyleSheet.create({
     fontSize: 17,
     color: KevaColors.darkText,
     paddingHorizontal: 5,
+  },
+  levelLabel: {
+    fontSize: 13,
+    color: KevaColors.inactiveText,
+    paddingHorizontal: 5,
+    marginTop: 4,
   },
   cardContent: {
     backgroundColor: '#fff',
