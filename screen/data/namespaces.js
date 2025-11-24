@@ -46,6 +46,7 @@ import Biometric from '../../class/biometrics';
 import { Button } from 'react-native-elements';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
 const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
+const createHash = require('create-hash');
 
 let BlueApp = require('../../BlueApp');
 let loc = require('../../loc');
@@ -72,6 +73,32 @@ const COPY_ICON = (<Icon name="ios-copy" size={22} color={KevaColors.extraLightT
 
 let _g_cleanLockedFund;
 let _g_checkLockedFund;
+
+const sha256Bytes = message => Buffer.from(createHash('sha256').update(message).digest());
+
+const attrSeedBytes = (id, attrName) => {
+  const seed0 = sha256Bytes(`${id}projectkeva`);
+  const attrBytes = Buffer.from(`:${attrName}`);
+  return Buffer.from(createHash('sha256').update(Buffer.concat([seed0, attrBytes])).digest());
+};
+
+const attrIntInRange = (seedBytes, min, max) => {
+  const hi = seedBytes.readUInt32BE(0);
+  const lo = seedBytes.readUInt32BE(4);
+  const v = (hi ^ lo) >>> 0;
+  const span = max - min + 1;
+  return min + (v % span);
+};
+
+const computeAlphaValue = id => {
+  try {
+    const seedBytes = attrSeedBytes(id, 'alpha');
+    return attrIntInRange(seedBytes, -99, 99);
+  } catch (err) {
+    console.warn(err);
+    return null;
+  }
+};
 
 const selectAvatarCandidateUri = (candidateUris = [], failedUris = [], generatedUri = null) => {
   if (generatedUri) return null; 
@@ -317,7 +344,13 @@ class Namespace extends React.Component {
     const shortCodeLevel = calculateLevelFromShortcode(namespace.shortCode, {
       currentBlockHeight: this.props.latestBlockHeight,
     });
-    const levelLabelText = Number.isFinite(shortCodeLevel) ? `[ Lv.${shortCodeLevel} ]` : null;
+    const alphaValue = namespace.shortCode ? computeAlphaValue(namespace.shortCode) : null;
+    const alphaLabelText = Number.isFinite(alphaValue)
+      ? `[ α${alphaValue > 0 ? `+${alphaValue}` : alphaValue} ]`
+      : '';
+    const levelLabelText = Number.isFinite(shortCodeLevel)
+      ? `[ Lv.${shortCodeLevel} ]${alphaLabelText ? ` ${alphaLabelText}` : ''}`
+      : null;
     const {
       avatarCandidateUris,
       avatarCandidateRequestId,
