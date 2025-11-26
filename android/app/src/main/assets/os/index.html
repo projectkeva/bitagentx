@@ -166,6 +166,7 @@ window.addEventListener('load', updateDesktopScale);
       <div class="icon" data-app="id"><img src="theme/retro/icons/id.png"/><span>Agents ID</span></div>
       <div class="icon" data-app="getagents"><img src="theme/retro/icons/getagents.gif"/><span>Get Agents</span></div>
       <div class="icon" data-app="alpha"><img src="theme/retro/icons/alpha.png"/><span>Alpha</span></div>
+      <div class="icon" data-app="setting"><img src="theme/retro/icons/getagents.gif"/><span>Setting</span></div>
       <div class="icon" data-app="blog"><img src="theme/retro/icons/blog.png"/><span>Blog</span></div>
       <div class="icon" data-app="pool"><img src="theme/retro/icons/pool.png"/><span>Pool</span></div>
       <div class="icon" data-app="exchange"><img src="theme/retro/icons/exchange.png"/><span>Exchange</span></div>
@@ -215,25 +216,36 @@ window.addEventListener('load', updateDesktopScale);
   </div>
 </div>
 
+<div class="notepad-window" id="settingsWindow">
+  <div class="title-bar"><span>Setting</span><button class="close-btn">×</button></div>
+  <div class="content">
+    <p style="margin-top:0;">选择要在桌面显示的网站图标：</p>
+    <div class="start-menu" style="position:static;box-shadow:none;display:block;width:auto;background:#111;">
+      <form id="settingsForm">
+        <label><input type="checkbox" data-app="blog" data-visibility-toggle> Blog</label>
+        <label><input type="checkbox" data-app="pool" data-visibility-toggle> Pool</label>
+        <label><input type="checkbox" data-app="exchange" data-visibility-toggle> Exchange</label>
+        <label><input type="checkbox" data-app="bitcoin" data-visibility-toggle> Bitcoin</label>
+        <label><input type="checkbox" data-app="dogecoin" data-visibility-toggle> Dogecoin</label>
+        <label><input type="checkbox" data-app="ethereum" data-visibility-toggle> Ethereum</label>
+        <label><input type="checkbox" data-app="chia" data-visibility-toggle> Chia</label>
+        <label><input type="checkbox" data-app="monero" data-visibility-toggle> Monero</label>
+        <label><input type="checkbox" data-app="kevacoin" data-visibility-toggle> Kevacoin</label>
+        <label><input type="checkbox" data-app="ravencoin" data-visibility-toggle> Ravencoin</label>
+      </form>
+    </div>
+  </div>
+</div>
+
     <div class="start-menu" id="startMenu" aria-hidden="true">
       <form>
-        <label><input type="checkbox" data-app="keva" checked> Node</label>
-        <label><input type="checkbox" data-app="id" checked> Agents ID</label>
-        <label><input type="checkbox" data-app="getagents" checked> Get Agents</label>
-        <label><input type="checkbox" data-app="alpha" checked> Alpha</label>
-        <label><input type="checkbox" data-app="readme" checked> Read mee！</label>
-        <label><input type="checkbox" data-app="download" checked> Download</label>
-        <label><input type="checkbox" data-app="wallet" checked> Wallet</label>
-        <label><input type="checkbox" data-app="pool"> Pool</label>
-        <label><input type="checkbox" data-app="exchange"> Exchange</label>
-        <label><input type="checkbox" data-app="blog"> Blog</label>
-        <label><input type="checkbox" data-app="bitcoin"> Bitcoin</label>
-        <label><input type="checkbox" data-app="dogecoin"> Dogecoin</label>
-        <label><input type="checkbox" data-app="ethereum"> Ethereum</label>
-        <label><input type="checkbox" data-app="chia"> Chia</label>
-        <label><input type="checkbox" data-app="monero"> Monero</label>
-        <label><input type="checkbox" data-app="kevacoin"> Kevacoin</label>
-        <label><input type="checkbox" data-app="ravencoin"> Ravencoin</label>
+        <label><input type="checkbox" data-app="keva" data-visibility-toggle checked> Node</label>
+        <label><input type="checkbox" data-app="id" data-visibility-toggle checked> Agents ID</label>
+        <label><input type="checkbox" data-app="getagents" data-visibility-toggle checked> Get Agents</label>
+        <label><input type="checkbox" data-app="alpha" data-visibility-toggle checked> Alpha</label>
+        <label><input type="checkbox" data-app="readme" data-visibility-toggle checked> Read mee！</label>
+        <label><input type="checkbox" data-app="download" data-visibility-toggle checked> Download</label>
+        <label><input type="checkbox" data-app="wallet" data-visibility-toggle checked> Wallet</label>
       </form>
     </div>
   </div>
@@ -291,6 +303,8 @@ document.querySelectorAll('.icon').forEach(icon=>{
       document.getElementById('agentsWindow').style.display='block';
     } else if(app==='alpha'){
       document.getElementById('alphaWindow').style.display='block';
+    } else if(app==='setting'){
+      document.getElementById('settingsWindow').style.display='block';
     } else if(app==='getagents'){
       if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
         window.ReactNativeWebView.postMessage('open_getagents');
@@ -315,43 +329,38 @@ document.querySelectorAll('.icon').forEach(icon=>{
   const menu=document.getElementById('startMenu');
   function close(){menu.style.display='none';menu.setAttribute('aria-hidden','true');}
   function open(){menu.style.display='block';menu.setAttribute('aria-hidden','false');}
-  function initializeIcons(){
-    const icons=document.querySelectorAll('.icon');
-    const checkboxes=document.querySelectorAll('#startMenu input[type="checkbox"]');
-    checkboxes.forEach(checkbox=>{
-      const app=checkbox.dataset.app;
-      const icon=document.querySelector(`.icon[data-app="${app}"]`);
-      if(!icon)return;
-      const saved=localStorage.getItem('desktop-visible-'+app);
-      if(saved!==null){checkbox.checked=saved==='1';}
-      icon.style.display=checkbox.checked?'':'none';
-      checkbox.addEventListener('change',()=>{
-        const visible=checkbox.checked;
-        icon.style.display=visible?'':'none';
-        localStorage.setItem('desktop-visible-'+app,visible?'1':'0');
-      });
-    });
-icons.forEach(icon=>{
-  const app = icon.dataset.app;
-  const saved = localStorage.getItem('desktop-visible-' + app);
-  const checkbox = document.querySelector(`#startMenu input[data-app="${app}"]`);
-
-  if (saved === null) {
-    const isChecked = checkbox && checkbox.checked;
-    localStorage.setItem('desktop-visible-' + app, isChecked ? '1' : '0');
-    icon.style.display = isChecked ? '' : 'none';
-  }
-});
-
-  }
   btn.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();menu.style.display==='block'?close():open();});
   menu.addEventListener('click',e=>{e.stopPropagation();});
   document.addEventListener('click',close);
 window.addEventListener('load', () => {
   document.querySelectorAll('.icon').forEach(icon => icon.style.visibility = 'visible');
 });
+})();
 
-  initializeIcons();
+// === 桌面可见性设置（Start 菜单 + Setting 窗口） ===
+(function(){
+  const checkboxes=document.querySelectorAll('[data-visibility-toggle]');
+  function sync(app,visible,source){
+    const icon=document.querySelector(`.icon[data-app="${app}"]`);
+    if(icon){
+      icon.style.display=visible?'':'none';
+    }
+    localStorage.setItem('desktop-visible-'+app,visible?'1':'0');
+    checkboxes.forEach(cb=>{
+      if(cb.dataset.app===app && cb!==source){
+        cb.checked=visible;
+      }
+    });
+  }
+
+  checkboxes.forEach(cb=>{
+    const app=cb.dataset.app;
+    const saved=localStorage.getItem('desktop-visible-'+app);
+    const visible=saved!==null ? saved==='1' : cb.checked;
+    cb.checked=visible;
+    sync(app,visible,cb);
+    cb.addEventListener('change',()=>sync(app,cb.checked,cb));
+  });
 })();
 
 // === 语言切换 ===
