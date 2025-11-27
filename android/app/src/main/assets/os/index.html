@@ -151,14 +151,91 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
   padding: 14px 16px;
 }
 
-#settingsWindow .start-menu form {
-  display: grid;
-  row-gap: 6px;
-}
+  #settingsWindow .start-menu form {
+    display: grid;
+    row-gap: 6px;
+  }
 
-#settingsWindow .start-menu label {
-  padding: 4px 8px;
-}
+  #settingsWindow .start-menu label {
+    padding: 4px 8px;
+  }
+
+  .custom-links-section {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #262626;
+  }
+
+  .custom-links-section h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+  }
+
+  .custom-link-form {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+
+  .custom-link-form input[type="text"],
+  .custom-link-form input[type="url"] {
+    flex: 1 1 200px;
+    background: #0d0d0d;
+    border: 1px solid #333;
+    color: #fff;
+    padding: 6px 8px;
+    border-radius: 4px;
+  }
+
+  .custom-link-form button {
+    padding: 6px 12px;
+    background: #3a8ff7;
+    color: #fff;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .custom-links-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .custom-link-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 8px;
+    background: #0d0d0d;
+    border: 1px solid #1c1c1c;
+    border-radius: 4px;
+  }
+
+  .custom-link-row .custom-link-url {
+    font-size: 12px;
+    color: #ccc;
+    word-break: break-all;
+  }
+
+  .custom-link-row button {
+    background: #c0392b;
+    color: #fff;
+    border: 0;
+    border-radius: 4px;
+    padding: 6px 8px;
+    cursor: pointer;
+  }
+
+  .custom-link-empty {
+    color: #ccc;
+    font-size: 12px;
+    margin: 4px 0 0;
+  }
 
 @media (max-width: 768px) {
   #settingsWindow {
@@ -257,24 +334,33 @@ window.addEventListener('load', updateDesktopScale);
 
 <div class="notepad-window" id="settingsWindow">
   <div class="title-bar"><span>Setting</span><button class="close-btn">×</button></div>
-  <div class="content">
-    <p style="margin-top:0;">Choose which website icons appear on the desktop:</p>
-    <div class="start-menu" style="position:static;box-shadow:none;display:block;width:auto;background:#111;">
-      <form id="settingsForm">
-        <label><input type="checkbox" data-app="blog" data-visibility-toggle> Blog</label>
+    <div class="content">
+      <p style="margin-top:0;">Choose which website icons appear on the desktop:</p>
+      <div class="start-menu" style="position:static;box-shadow:none;display:block;width:auto;background:#111;">
+        <form id="settingsForm">
+          <label><input type="checkbox" data-app="blog" data-visibility-toggle> Blog</label>
         <label><input type="checkbox" data-app="pool" data-visibility-toggle> Pool</label>
         <label><input type="checkbox" data-app="exchange" data-visibility-toggle> Exchange</label>
         <label><input type="checkbox" data-app="bitcoin" data-visibility-toggle> Bitcoin</label>
         <label><input type="checkbox" data-app="dogecoin" data-visibility-toggle> Dogecoin</label>
         <label><input type="checkbox" data-app="ethereum" data-visibility-toggle> Ethereum</label>
         <label><input type="checkbox" data-app="chia" data-visibility-toggle> Chia</label>
-        <label><input type="checkbox" data-app="monero" data-visibility-toggle> Monero</label>
-        <label><input type="checkbox" data-app="kevacoin" data-visibility-toggle> Kevacoin</label>
-        <label><input type="checkbox" data-app="ravencoin" data-visibility-toggle> Ravencoin</label>
-      </form>
+          <label><input type="checkbox" data-app="monero" data-visibility-toggle> Monero</label>
+          <label><input type="checkbox" data-app="kevacoin" data-visibility-toggle> Kevacoin</label>
+          <label><input type="checkbox" data-app="ravencoin" data-visibility-toggle> Ravencoin</label>
+        </form>
+        <div class="custom-links-section">
+          <h4>Custom websites</h4>
+          <form id="customLinkForm" class="custom-link-form">
+            <input id="customNameInput" type="text" placeholder="Name" required>
+            <input id="customUrlInput" type="url" placeholder="https://example.com" required>
+            <button type="submit">Add</button>
+          </form>
+          <div id="customLinksList" class="custom-links-list"></div>
+        </div>
+      </div>
     </div>
   </div>
-</div>
 
     <div class="start-menu" id="startMenu" aria-hidden="true">
       <form>
@@ -319,10 +405,14 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
   btn.addEventListener('click',()=>btn.closest('.notepad-window').style.display='none');
 });
 
-// === 图标点击逻辑 ===
-document.querySelectorAll('.icon').forEach(icon=>{
-  icon.addEventListener('click',()=>{
+  const desktopIcons=document.getElementById('icons');
+
+  // === 桌面图标点击逻辑（含自定义网址） ===
+  desktopIcons.addEventListener('click',e=>{
+    const icon=e.target.closest('.icon');
+    if(!icon)return;
     const app=icon.dataset.app;
+    const url=icon.dataset.url;
     const links={
       kevacoin:'https://kevacoin.org',
       pool:'https://miningpoolstats.stream/kevacoin',
@@ -334,33 +424,52 @@ document.querySelectorAll('.icon').forEach(icon=>{
       ethereum:'https://ethereum.org',
       monero:'https://www.getmonero.org'
     };
+
     if(app==='readme'){
       document.getElementById('readmeWindow').style.display='block';
-    } else if(app==='download'){
+      return;
+    }
+    if(app==='download'){
       document.getElementById('downloadWindow').style.display='block';
-    } else if(app==='id'){
+      return;
+    }
+    if(app==='id'){
       document.getElementById('agentsWindow').style.display='block';
-    } else if(app==='alpha'){
+      return;
+    }
+    if(app==='alpha'){
       document.getElementById('alphaWindow').style.display='block';
-    } else if(app==='setting'){
+      return;
+    }
+    if(app==='setting'){
       document.getElementById('settingsWindow').style.display='block';
-    } else if(app==='getagents'){
+      return;
+    }
+    if(app==='getagents'){
       if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
         window.ReactNativeWebView.postMessage('open_getagents');
       }else{
         alert('Get Agents is only available inside the Kevacoin app.');
       }
-    } else if(app==='wallet'){
+      return;
+    }
+    if(app==='wallet'){
       if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
         window.ReactNativeWebView.postMessage('open_wallet');
       } else {
         alert('Wallets are only available inside the Kevacoin app.');
       }
-    } else if(links[app]){
+      return;
+    }
+
+    if(url){
+      window.open(url,'_blank');
+      return;
+    }
+    if(links[app]){
       window.open(links[app],'_blank');
     }
   });
-});
 
 // === Start 菜单 ===
 (function(){
@@ -377,30 +486,125 @@ window.addEventListener('load', () => {
 })();
 
 // === 桌面可见性设置（Start 菜单 + Setting 窗口） ===
-(function(){
-  const checkboxes=document.querySelectorAll('[data-visibility-toggle]');
-  function sync(app,visible,source){
-    const icon=document.querySelector(`.icon[data-app="${app}"]`);
-    if(icon){
-      icon.style.display=visible?'':'none';
-    }
-    localStorage.setItem('desktop-visible-'+app,visible?'1':'0');
-    checkboxes.forEach(cb=>{
-      if(cb.dataset.app===app && cb!==source){
-        cb.checked=visible;
-      }
-    });
-  }
+  (function(){
+    const customKey='desktop-custom-sites';
 
-  checkboxes.forEach(cb=>{
-    const app=cb.dataset.app;
-    const saved=localStorage.getItem('desktop-visible-'+app);
-    const visible=saved!==null ? saved==='1' : cb.checked;
-    cb.checked=visible;
-    sync(app,visible,cb);
-    cb.addEventListener('change',()=>sync(app,cb.checked,cb));
-  });
-})();
+    function normalizeUrl(url){
+      if(!/^https?:\/\//i.test(url)){
+        return 'https://'+url;
+      }
+      return url;
+    }
+
+    function loadCustomSites(){
+      try{
+        const raw=localStorage.getItem(customKey);
+        if(!raw)return [];
+        const parsed=JSON.parse(raw);
+        if(Array.isArray(parsed))return parsed;
+      }catch(e){console.warn('Failed to load custom sites',e);}
+      return [];
+    }
+
+    function saveCustomSites(list){
+      localStorage.setItem(customKey,JSON.stringify(list));
+    }
+
+    function renderCustomIcons(list){
+      document.querySelectorAll('.icon[data-custom="true"]').forEach(el=>el.remove());
+      list.forEach(item=>{
+        const icon=document.createElement('div');
+        icon.className='icon';
+        icon.dataset.app=item.id;
+        icon.dataset.url=item.url;
+        icon.dataset.custom='true';
+        icon.innerHTML=`<img src="theme/retro/icons/www.png"/><span>${item.name}</span>`;
+        desktopIcons.appendChild(icon);
+      });
+    }
+
+    function refreshVisibilityBindings(){
+      document.querySelectorAll('[data-visibility-toggle]').forEach(cb=>{
+        if(cb._bound)return;
+        cb._bound=true;
+        const app=cb.dataset.app;
+        const saved=localStorage.getItem('desktop-visible-'+app);
+        const visible=saved!==null ? saved==='1' : cb.checked;
+        cb.checked=visible;
+        syncVisibility(app,visible,cb);
+        cb.addEventListener('change',()=>syncVisibility(app,cb.checked,cb));
+      });
+    }
+
+    function syncVisibility(app,visible,source){
+      const icon=desktopIcons.querySelector(`.icon[data-app="${app}"]`);
+      if(icon){
+        icon.style.display=visible?'':'none';
+      }
+      localStorage.setItem('desktop-visible-'+app,visible?'1':'0');
+      document.querySelectorAll(`[data-visibility-toggle][data-app="${app}"]`).forEach(cb=>{
+        if(cb!==source)cb.checked=visible;
+      });
+    }
+
+    function renderCustomList(list){
+      const container=document.getElementById('customLinksList');
+      container.innerHTML='';
+      if(!list.length){
+        const empty=document.createElement('div');
+        empty.className='custom-link-empty';
+        empty.textContent='No custom websites yet.';
+        container.appendChild(empty);
+        return;
+      }
+
+      list.forEach(item=>{
+        const row=document.createElement('div');
+        row.className='custom-link-row';
+        row.innerHTML=`
+          <label><input type="checkbox" data-app="${item.id}" data-visibility-toggle> ${item.name}</label>
+          <div class="custom-link-url">${item.url}</div>
+          <button type="button" data-remove="${item.id}">Delete</button>
+        `;
+
+        row.querySelector('button[data-remove]').addEventListener('click',()=>{
+          const next=list.filter(site=>site.id!==item.id);
+          saveCustomSites(next);
+          localStorage.removeItem('desktop-visible-'+item.id);
+          renderCustomIcons(next);
+          renderCustomList(next);
+          refreshVisibilityBindings();
+        });
+
+        container.appendChild(row);
+      });
+    }
+
+    const customSites=loadCustomSites();
+    renderCustomIcons(customSites);
+    renderCustomList(customSites);
+
+    const form=document.getElementById('customLinkForm');
+    const nameInput=document.getElementById('customNameInput');
+    const urlInput=document.getElementById('customUrlInput');
+    form.addEventListener('submit',e=>{
+      e.preventDefault();
+      const name=nameInput.value.trim();
+      const url=urlInput.value.trim();
+      if(!name||!url)return;
+      const sites=loadCustomSites();
+      const newSite={id:`custom-${Date.now()}`,name, url:normalizeUrl(url)};
+      const next=[...sites,newSite];
+      saveCustomSites(next);
+      renderCustomIcons(next);
+      renderCustomList(next);
+      refreshVisibilityBindings();
+      nameInput.value='';
+      urlInput.value='';
+    });
+
+    refreshVisibilityBindings();
+  })();
 
 // === 语言切换 ===
 (function(){
