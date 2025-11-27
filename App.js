@@ -49,11 +49,11 @@ export default class App extends React.Component {
   bootExitTimeout = null;
   bootSequenceIndex = 0;
   bootSequenceMessages = [
-    '启动序列就绪，准备加载组件…',
-    '正在校验存储状态，确保数据安全…',
-    '检查钱包索引并建立会话…',
-    '载入链上数据缓存…',
-    '同步节点与账户信息…',
+    'Agent manifest loaded // staging subsystems…',
+    'Validating local storage integrity…',
+    'Indexing wallets and establishing session…',
+    'Priming on-chain cache…',
+    'Syncing nodes and account telemetry…',
   ];
 
   appendBootLine = message => {
@@ -63,7 +63,7 @@ export default class App extends React.Component {
   };
 
   startBootTicker = () => {
-    this.appendBootLine('启动 Kevacoin 桌面组件…');
+    this.appendBootLine('AGENT ID // Kevacoin runtime initializing…');
     this.bootTicker = setInterval(() => {
       if (this.bootSequenceIndex < this.bootSequenceMessages.length) {
         this.appendBootLine(this.bootSequenceMessages[this.bootSequenceIndex]);
@@ -88,17 +88,17 @@ export default class App extends React.Component {
     DeviceEventEmitter.addListener('quickActionShortcut', this.walletQuickActions);
 
     this.startBootTicker();
-    this.appendBootLine('正在解锁应用并加载资源…');
+    this.appendBootLine('Unlocking vault and loading assets…');
 
     try {
       await BlueApp.startAndDecrypt();
-      this.appendBootLine('本地钱包数据加载完成');
+      this.appendBootLine('Wallet payload loaded from disk');
     } catch (error) {
       console.warn('Failed to load wallets from disk', error);
-      this.appendBootLine('加载钱包数据遇到问题，正在尝试继续启动');
+      this.appendBootLine('Encountered an issue loading wallets // continuing startup');
     }
 
-    this.appendBootLine('界面初始化完成，准备进入应用');
+    this.appendBootLine('UI surface ready // handing off control');
     this.stopBootTicker();
     this.bootExitTimeout = setTimeout(() => this.setState({ isBooting: false }), 800);
 
@@ -290,7 +290,7 @@ export default class App extends React.Component {
     return (
       <View pointerEvents="auto" style={styles.bootOverlay}>
         <View style={styles.bootCard}>
-          <Text style={styles.bootTitle}>系统启动</Text>
+          <Text style={styles.bootTitle}>AGENT BOOT LOG</Text>
           <View style={styles.bootLogContainer}>
             {this.state.bootStatusLines.map((line, index) => (
               <Text key={line.id} style={[styles.bootLine, index === lastIndex && styles.bootLineActive]}>
@@ -298,7 +298,7 @@ export default class App extends React.Component {
               </Text>
             ))}
           </View>
-          <Text style={styles.bootHint}>正在准备，请稍候…</Text>
+          <Text style={styles.bootHint}>Booting services // please stand by</Text>
         </View>
       </View>
     );
