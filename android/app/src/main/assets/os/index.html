@@ -136,8 +136,9 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
 }
 
 #settingsWindow {
-  width: min(90vw, 640px);
-  max-height: 80vh;
+  width: min(92vw, 660px);
+  height: min(72vh, calc(100vh - 90px));
+  min-height: 360px;
   left: 50%;
   top: 55px;
   transform: translate(-50%, 0);
@@ -145,20 +146,30 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
 }
 
 #settingsWindow .content {
-  max-height: calc(80vh - 48px);
+  height: calc(100% - 44px);
   overflow: auto;
-  padding: 16px;
+  padding: 14px 16px;
+}
+
+#settingsWindow .start-menu form {
+  display: grid;
+  row-gap: 6px;
+}
+
+#settingsWindow .start-menu label {
+  padding: 4px 8px;
 }
 
 @media (max-width: 768px) {
   #settingsWindow {
     width: 95vw;
-    max-height: 78vh;
+    height: min(78vh, calc(100vh - 70px));
+    min-height: 300px;
     top: 45px;
   }
 
   #settingsWindow .content {
-    max-height: calc(78vh - 48px);
+    height: calc(100% - 42px);
     padding: 12px;
   }
 }
@@ -247,7 +258,7 @@ window.addEventListener('load', updateDesktopScale);
 <div class="notepad-window" id="settingsWindow">
   <div class="title-bar"><span>Setting</span><button class="close-btn">×</button></div>
   <div class="content">
-    <p style="margin-top:0;">选择要在桌面显示的网站图标：</p>
+    <p style="margin-top:0;">Choose which website icons appear on the desktop:</p>
     <div class="start-menu" style="position:static;box-shadow:none;display:block;width:auto;background:#111;">
       <form id="settingsForm">
         <label><input type="checkbox" data-app="blog" data-visibility-toggle> Blog</label>
