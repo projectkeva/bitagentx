@@ -40,6 +40,7 @@ export default class App extends React.Component {
       clipboardContentModalAddressType: bitcoinModalString,
       clipboardContent: '',
       bootStatusLines: [],
+      bootPhase: 'log',
       isBooting: true,
       store: configureStore(),
     };
@@ -100,6 +101,7 @@ export default class App extends React.Component {
 
     this.appendBootLine('UI surface ready // handing off control');
     this.stopBootTicker();
+    this.setState({ bootPhase: 'blackout' });
     this.bootExitTimeout = setTimeout(() => this.setState({ isBooting: false }), 800);
 
     this._handleAppStateChange(undefined);
@@ -285,6 +287,10 @@ export default class App extends React.Component {
       return null;
     }
 
+    if (this.state.bootPhase === 'blackout') {
+      return <View pointerEvents="auto" style={[styles.bootOverlay, styles.bootOverlayBlackout]} />;
+    }
+
     const lastIndex = this.state.bootStatusLines.length - 1;
 
     return (
@@ -350,19 +356,17 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(12, 37, 80, 0.92)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },
+  bootOverlayBlackout: {
+    backgroundColor: 'black',
+  },
   bootCard: {
     width: '100%',
     maxWidth: 420,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 16,
     padding: 20,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
-    borderWidth: 1,
   },
   bootTitle: {
     color: '#f5f7fb',
