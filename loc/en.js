@@ -76,6 +76,7 @@ module.exports = {
     update_profile: 'Profile Updated',
     created: 'Namespace Created',
     namespace_not_found: 'Cannot find namespace',
+    transfer: 'Transfer',
     ns_transfer_explain: 'Transfer to the Other Wallet',
     ns_transfer_notes: 'Notes',
     sell_nft: 'Sell as NFT',
