@@ -32,25 +32,35 @@ export default function AgentChat({ navigation }) {
   const storageKey = useMemo(() => (namespaceId ? `agent_chat_${namespaceId}` : null), [namespaceId]);
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
-  const listRef = useRef(null);
-  const initialMessageText = 'Initiating the super agent network…';
+  const listRef = useRef(null);  const didSeedInitialMessage = useRef(false);
+
+  const persistMessages = async nextMessages => {
+    if (!storageKey) {
+      return;
+    }
+    try {
+      await AsyncStorage.setItem(storageKey, JSON.stringify(nextMessages));
+    } catch (error) {
+      console.warn('AgentChat: failed to persist chat history', error);
+    }
+  };
+
+  useEffect(() => {
+    navigation.setParams({ title: agentLabel });
+  }, [agentLabel, navigation]);
 
   useEffect(() => {
     const handleBackPress = () => {
       if (navigation && typeof navigation.goBack === 'function') {
-        navigation.goBack(null);
+        navigation.goBack();
         return true;
       }
       return false;
     };
 
-    BackHandler.addEventListener('hardwareBackPress', handleBackPress);
-    return () => BackHandler.removeEventListener('hardwareBackPress', handleBackPress);
+    const subscription = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
+    return () => subscription.remove();
   }, [navigation]);
-
-  useEffect(() => {
-    navigation.setParams({ title: agentLabel });
-  }, [agentLabel, navigation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,20 +74,26 @@ export default function AgentChat({ navigation }) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
             setMessages(parsed);
-            return;
+            didSeedInitialMessage.current = parsed.some(item => item?.sender === 'agent');
+            if (parsed.length > 0 || didSeedInitialMessage.current) {
+              return;
+            }
           }
         }
-        if (cancelled) {
-          return;
+
+        if (!cancelled && !didSeedInitialMessage.current) {
+          const seededMessages = [
+            {
+              id: `seed_${Date.now()}`,
+              text: 'Initiating the super agent network…',
+              timestamp: Date.now(),
+              sender: 'agent',
+            },
+          ];
+          setMessages(seededMessages);
+          didSeedInitialMessage.current = true;
+          await persistMessages(seededMessages);
         }
-        const initialMessage = {
-          id: `${Date.now()}_agent_seed`,
-          text: initialMessageText,
-          timestamp: Date.now(),
-          sender: 'agent',
-        };
-        setMessages([initialMessage]);
-        await AsyncStorage.setItem(storageKey, JSON.stringify([initialMessage]));
       } catch (error) {
         console.warn('AgentChat: failed to load chat history', error);
       }
@@ -87,17 +103,6 @@ export default function AgentChat({ navigation }) {
       cancelled = true;
     };
   }, [storageKey]);
-
-  const persistMessages = async nextMessages => {
-    if (!storageKey) {
-      return;
-    }
-    try {
-      await AsyncStorage.setItem(storageKey, JSON.stringify(nextMessages));
-    } catch (error) {
-      console.warn('AgentChat: failed to persist chat history', error);
-    }
-  };
 
   const handleSend = async () => {
     const trimmed = inputValue.trim();
@@ -120,16 +125,13 @@ export default function AgentChat({ navigation }) {
     });
   };
 
-  const renderItem = ({ item }) => {
-    const isAgent = item.sender === 'agent';
-    return (
-      <View style={isAgent ? styles.agentRow : styles.messageRow}>
-        <View style={isAgent ? styles.agentBubble : styles.messageBubble}>
-          <Text style={styles.messageText}>{item.text}</Text>
-          {Number.isFinite(item.timestamp) && (
-            <Text style={styles.messageTime}>{formatTime(item.timestamp)}</Text>
-          )}
-        </View>
+  const renderItem = ({ item }) => (
+    <View style={[styles.messageRow, item.sender === 'agent' ? styles.agentRow : styles.userRow]}>
+      <View style={[styles.messageBubble, item.sender === 'agent' ? styles.agentBubble : styles.userBubble]}>
+        <Text style={styles.messageText}>{item.text}</Text>
+        {Number.isFinite(item.timestamp) && (
+          <Text style={styles.messageTime}>{formatTime(item.timestamp)}</Text>
+        )}
       </View>
     );
   };
@@ -158,13 +160,13 @@ export default function AgentChat({ navigation }) {
             data={messages}
             keyExtractor={item => item.id}
             renderItem={renderItem}
-            ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
-            contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
-            onScrollBeginDrag={Keyboard.dismiss}
-          />
-        </View>
+              ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
+              contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
+              onScrollBeginDrag={Keyboard.dismiss}
+            />
+          </View>
 
         <View style={styles.inputBar}>
           <TextInput
@@ -240,12 +242,13 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   agentRow: {
-    marginBottom: 12,
     alignItems: 'flex-start',
+  },
+  userRow: {
+    alignItems: 'flex-end',
   },
   messageBubble: {
     maxWidth: '85%',
-    backgroundColor: 'rgba(125, 211, 252, 0.15)',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -253,13 +256,10 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(125, 211, 252, 0.35)',
   },
   agentBubble: {
-    maxWidth: '85%',
-    backgroundColor: 'rgba(66, 153, 225, 0.2)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(125, 211, 252, 0.35)',
+    backgroundColor: 'rgba(125, 211, 252, 0.08)',
+  },
+  userBubble: {
+    backgroundColor: 'rgba(125, 211, 252, 0.15)',
   },
   messageText: {
     color: '#e7fff9',
