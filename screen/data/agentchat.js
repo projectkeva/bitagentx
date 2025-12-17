@@ -32,8 +32,7 @@ export default function AgentChat({ navigation }) {
   const storageKey = useMemo(() => (namespaceId ? `agent_chat_${namespaceId}` : null), [namespaceId]);
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
-  const listRef = useRef(null);
-  const didSeedInitialMessage = useRef(false);
+  const listRef = useRef(null);  const didSeedInitialMessage = useRef(false);
 
   const persistMessages = async nextMessages => {
     if (!storageKey) {
@@ -134,8 +133,16 @@ export default function AgentChat({ navigation }) {
           <Text style={styles.messageTime}>{formatTime(item.timestamp)}</Text>
         )}
       </View>
-    </View>
-  );
+    );
+  };
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (listRef.current && typeof listRef.current.scrollToEnd === 'function') {
+        listRef.current.scrollToEnd({ animated: true });
+      }
+    });
+  }, [messages.length]);
 
   return (
     <SafeBlueArea>
