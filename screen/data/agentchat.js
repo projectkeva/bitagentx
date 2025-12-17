@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
+  TouchableWithoutFeedback,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -110,45 +112,46 @@ export default function AgentChat({ navigation }) {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.select({ ios: 88, android: 0 })}
       >
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.agentName}>{displayName}</Text>
-            <Text style={styles.agentId}>{shortCode ? `@${shortCode}` : namespaceId}</Text>
-          </View>
-        </View>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+          <View style={styles.inner}>
+            <View style={styles.header}>
+              <View>
+                <Text style={styles.agentName}>{displayName}</Text>
+                <Text style={styles.agentId}>{shortCode ? `@${shortCode}` : namespaceId}</Text>
+              </View>
+            </View>
 
-        <View style={styles.messagesWrapper}>
-          <FlatList
-            ref={listRef}
-            data={messages}
-            keyExtractor={item => item.id}
-            renderItem={renderItem}
-            ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
-            contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
-          />
-        </View>
+            <View style={styles.messagesWrapper}>
+              <FlatList
+                ref={listRef}
+                data={messages}
+                keyExtractor={item => item.id}
+                renderItem={renderItem}
+                ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
+                contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
+                keyboardShouldPersistTaps="always"
+                keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
+              />
+            </View>
 
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.select({ ios: 88, android: 0 })}
-        >
-          <View style={styles.inputBar}>
-            <TextInput
-              value={inputValue}
-              onChangeText={setInputValue}
-              placeholder="Type a message"
-              placeholderTextColor="rgba(255,255,255,0.6)"
-              style={styles.input}
-              multiline
-              editable
-            />
-            <TouchableOpacity style={styles.sendButton} onPress={handleSend} activeOpacity={0.8}>
-              <Text style={styles.sendButtonText}>Send</Text>
-            </TouchableOpacity>
+            <View style={styles.inputBar}>
+              <TextInput
+                value={inputValue}
+                onChangeText={setInputValue}
+                placeholder="Type a message"
+                placeholderTextColor="rgba(255,255,255,0.6)"
+                style={styles.input}
+                multiline
+                editable
+                returnKeyType="send"
+                onSubmitEditing={handleSend}
+              />
+              <TouchableOpacity style={styles.sendButton} onPress={handleSend} activeOpacity={0.8}>
+                <Text style={styles.sendButtonText}>Send</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </KeyboardAvoidingView>
+        </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -172,6 +175,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0b0f18',
+  },
+  inner: {
+    flex: 1,
   },
   header: {
     paddingHorizontal: 20,
