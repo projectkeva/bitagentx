@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BackHandler,
   FlatList,
   Keyboard,
   Platform,
@@ -32,6 +33,20 @@ export default function AgentChat({ navigation }) {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const listRef = useRef(null);
+  const initialMessageText = 'Initiating the super agent network…';
+
+  useEffect(() => {
+    const handleBackPress = () => {
+      if (navigation && typeof navigation.goBack === 'function') {
+        navigation.goBack(null);
+        return true;
+      }
+      return false;
+    };
+
+    BackHandler.addEventListener('hardwareBackPress', handleBackPress);
+    return () => BackHandler.removeEventListener('hardwareBackPress', handleBackPress);
+  }, [navigation]);
 
   useEffect(() => {
     navigation.setParams({ title: agentLabel });
@@ -49,8 +64,20 @@ export default function AgentChat({ navigation }) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
             setMessages(parsed);
+            return;
           }
         }
+        if (cancelled) {
+          return;
+        }
+        const initialMessage = {
+          id: `${Date.now()}_agent_seed`,
+          text: initialMessageText,
+          timestamp: Date.now(),
+          sender: 'agent',
+        };
+        setMessages([initialMessage]);
+        await AsyncStorage.setItem(storageKey, JSON.stringify([initialMessage]));
       } catch (error) {
         console.warn('AgentChat: failed to load chat history', error);
       }
@@ -81,6 +108,7 @@ export default function AgentChat({ navigation }) {
       id: `${Date.now()}`,
       text: trimmed,
       timestamp: Date.now(),
+      sender: 'user',
     });
     setMessages(next);
     setInputValue('');
@@ -92,16 +120,27 @@ export default function AgentChat({ navigation }) {
     });
   };
 
-  const renderItem = ({ item }) => (
-    <View style={styles.messageRow}>
-      <View style={styles.messageBubble}>
-        <Text style={styles.messageText}>{item.text}</Text>
-        {Number.isFinite(item.timestamp) && (
-          <Text style={styles.messageTime}>{formatTime(item.timestamp)}</Text>
-        )}
+  const renderItem = ({ item }) => {
+    const isAgent = item.sender === 'agent';
+    return (
+      <View style={isAgent ? styles.agentRow : styles.messageRow}>
+        <View style={isAgent ? styles.agentBubble : styles.messageBubble}>
+          <Text style={styles.messageText}>{item.text}</Text>
+          {Number.isFinite(item.timestamp) && (
+            <Text style={styles.messageTime}>{formatTime(item.timestamp)}</Text>
+          )}
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (listRef.current && typeof listRef.current.scrollToEnd === 'function') {
+        listRef.current.scrollToEnd({ animated: true });
+      }
+    });
+  }, [messages.length]);
 
   return (
     <SafeBlueArea>
@@ -200,9 +239,22 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     alignItems: 'flex-end',
   },
+  agentRow: {
+    marginBottom: 12,
+    alignItems: 'flex-start',
+  },
   messageBubble: {
     maxWidth: '85%',
     backgroundColor: 'rgba(125, 211, 252, 0.15)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(125, 211, 252, 0.35)',
+  },
+  agentBubble: {
+    maxWidth: '85%',
+    backgroundColor: 'rgba(66, 153, 225, 0.2)',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
