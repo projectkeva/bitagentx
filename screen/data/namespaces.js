@@ -421,12 +421,13 @@ class Namespace extends React.Component {
                     <Icon name="ios-remove-circle-outline" size={20} style={styles.actionIcon} />
                   </TouchableOpacity>
                   }
-                  { canTransfer &&
-                  <TouchableOpacity onPress={() => this.onTransfer(namespace)}>
-                    <Icon name="ios-log-out" size={20} style={styles.actionIcon} />
-                  </TouchableOpacity>
-                  }
                 </View>
+                { canTransfer && (
+                  <TouchableOpacity style={styles.transferButtonRow} onPress={() => this.onTransfer(namespace)}>
+                    <Icon name="ios-log-out" size={18} style={styles.transferIcon} />
+                    <Text style={styles.transferLabel}>{loc.namespaces.transfer}</Text>
+                  </TouchableOpacity>
+                )}
               </View>
               <TouchableOpacity onPress={this.onKey}>
                 <View style={styles.arrowWrapper}>
@@ -1168,6 +1169,18 @@ class Namespaces extends React.Component {
     });
   }
 
+  openTransfer = (namespace) => {
+    const { navigation } = this.props;
+    if (!navigation || !namespace) {
+      return;
+    }
+    this.setState({ isModalVisible: false });
+    navigation.push('TransferNamespace', {
+      namespaceId: namespace.id || namespace.namespaceId,
+      walletId: namespace.walletId,
+    });
+  }
+
   onWait = (namespaceId, displayName, refresh) => {
     this.setState({
       pendingDisplayName: displayName,
@@ -1249,6 +1262,14 @@ class Namespaces extends React.Component {
               <Text style={contentStyle}>{loc.general.unconfirmed}</Text>
             }
           </View>
+          {nsData.walletId && (
+            <KevaButton
+              type='secondary'
+              caption={loc.namespaces.transfer}
+              style={styles.transferAction}
+              onPress={() => this.openTransfer(nsData)}
+            />
+          )}
         </View>
       </Modal>
     )
@@ -1569,6 +1590,24 @@ var styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 10
   },
+  transferButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginHorizontal: 12,
+    marginTop: 4,
+  },
+  transferIcon: {
+    color: '#7DD3FC',
+    paddingHorizontal: 6,
+    paddingVertical: 6,
+  },
+  transferLabel: {
+    color: '#7DD3FC',
+    fontSize: 14,
+    fontWeight: '600',
+    paddingRight: 6,
+  },
   tabBar: {
     backgroundColor: 'transparent',
     shadowOpacity: 0,
@@ -1726,6 +1765,10 @@ var styles = StyleSheet.create({
   modalErr: {
     fontSize: 16,
     marginTop: 20,
+  },
+  transferAction: {
+    marginTop: 18,
+    alignSelf: 'flex-start',
   },
   emptyMessage: {
     fontSize: 18,

@@ -76,6 +76,7 @@ module.exports = {
     update_profile: '更新简介',
     created: '命名空间创建',
     namespace_not_found: '找不到命名空间',
+    transfer: '转移',
     ns_transfer_explain: '转移到另一个钱包',
     ns_transfer_notes: '备注',
     sell_nft: '出售NFT',
