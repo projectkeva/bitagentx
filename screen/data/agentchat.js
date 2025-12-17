@@ -5,7 +5,6 @@ import {
   KeyboardAvoidingView,
   BackHandler,
   Platform,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
@@ -13,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-community/async-storage';
+import { BlueNavigationStyle, SafeBlueArea } from '../../BlueComponents';
 import KevaColors from '../../common/KevaColors';
 
 function formatTime(timestamp) {
@@ -119,72 +119,68 @@ export default function AgentChat({ navigation }) {
   );
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.select({ ios: 88, android: 0 })}
-        pointerEvents="box-none"
-      >
-        <View style={styles.inner}>
-          <View style={styles.header}>
-            <View>
-              <Text style={styles.agentName}>{displayName}</Text>
-              <Text style={styles.agentId}>{shortCode ? `@${shortCode}` : namespaceId}</Text>
+    <SafeBlueArea>
+      <View style={styles.safeArea}>
+        <KeyboardAvoidingView
+          style={styles.container}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.select({ ios: 88, android: 0 })}
+        >
+          <View style={styles.inner}>
+            <View style={styles.header}>
+              <View>
+                <Text style={styles.agentName}>{displayName}</Text>
+                <Text style={styles.agentId}>{shortCode ? `@${shortCode}` : namespaceId}</Text>
+              </View>
+            </View>
+
+            <View style={styles.messagesWrapper}>
+              <FlatList
+                ref={listRef}
+                data={messages}
+                keyExtractor={item => item.id}
+                renderItem={renderItem}
+                ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
+                contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
+                onScrollBeginDrag={Keyboard.dismiss}
+              />
+            </View>
+
+            <View style={styles.inputBar}>
+              <TextInput
+                value={inputValue}
+                onChangeText={setInputValue}
+                placeholder="Type a message"
+                placeholderTextColor="rgba(255,255,255,0.6)"
+                style={styles.input}
+                multiline
+                editable
+                returnKeyType="send"
+                onSubmitEditing={handleSend}
+                onFocus={() => {
+                  requestAnimationFrame(() => {
+                    if (listRef.current && typeof listRef.current.scrollToEnd === 'function') {
+                      listRef.current.scrollToEnd({ animated: true });
+                    }
+                  });
+                }}
+              />
+              <TouchableOpacity style={styles.sendButton} onPress={handleSend} activeOpacity={0.8}>
+                <Text style={styles.sendButtonText}>Send</Text>
+              </TouchableOpacity>
             </View>
           </View>
-
-          <View style={styles.messagesWrapper}>
-            <FlatList
-              ref={listRef}
-              data={messages}
-              keyExtractor={item => item.id}
-              renderItem={renderItem}
-              ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
-              contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
-              onScrollBeginDrag={Keyboard.dismiss}
-            />
-          </View>
-
-          <View style={styles.inputBar}>
-            <TextInput
-              value={inputValue}
-              onChangeText={setInputValue}
-              placeholder="Type a message"
-              placeholderTextColor="rgba(255,255,255,0.6)"
-              style={styles.input}
-              multiline
-              editable
-              returnKeyType="send"
-              onSubmitEditing={handleSend}
-              onFocus={() => {
-                requestAnimationFrame(() => {
-                  if (listRef.current && typeof listRef.current.scrollToEnd === 'function') {
-                    listRef.current.scrollToEnd({ animated: true });
-                  }
-                });
-              }}
-            />
-            <TouchableOpacity style={styles.sendButton} onPress={handleSend} activeOpacity={0.8}>
-              <Text style={styles.sendButtonText}>Send</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+        </KeyboardAvoidingView>
+      </View>
+    </SafeBlueArea>
   );
 }
 
 AgentChat.navigationOptions = ({ navigation }) => ({
+  ...BlueNavigationStyle(navigation, false),
   title: navigation.getParam('title', 'Agent Chat'),
-  headerStyle: {
-    backgroundColor: '#040608',
-    borderBottomWidth: 0,
-    elevation: 0,
-  },
-  headerTintColor: '#e7fff9',
 });
 
 const styles = StyleSheet.create({
