@@ -332,6 +332,19 @@ class Namespace extends React.Component {
     });
   }
 
+  onChat = () => {
+    const { data, navigation } = this.props;
+    if (!navigation || typeof navigation.push !== 'function') {
+      return;
+    }
+    const namespaceId = data.id || data.namespaceId;
+    navigation.push('AgentChat', {
+      namespaceId,
+      displayName: data.displayName,
+      shortCode: data.shortCode,
+    });
+  }
+
   render() {
     const namespace = this.props.data;
     const {canDelete, onDelete} = this.props;
@@ -401,9 +414,14 @@ class Namespace extends React.Component {
                   >
                     {displayNameWithShortcode}
                   </Text>
-                  {levelLabelText && (
-                    <Text style={styles.levelLabel}>{levelLabelText}</Text>
-                  )}
+                  <View style={styles.levelRow}>
+                    {levelLabelText && (
+                      <Text style={styles.levelLabel}>{levelLabelText}</Text>
+                    )}
+                    <TouchableOpacity style={styles.chatButton} onPress={this.onChat}>
+                      <Text style={styles.chatButtonText}>Chat</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
                 <View style={styles.actionContainer}>
                   {
@@ -1556,11 +1574,30 @@ var styles = StyleSheet.create({
   saleTitle: {
     color: '#7DD3FC',
   },
+  levelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
   levelLabel: {
     fontSize: 13,
     color: 'rgba(125, 211, 252, 0.9)',
     paddingHorizontal: 6,
-    marginTop: 4,
+  },
+  chatButton: {
+    marginLeft: 6,
+    backgroundColor: 'rgba(125, 211, 252, 0.15)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(125, 211, 252, 0.6)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  chatButtonText: {
+    color: '#E0F2FE',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.2,
   },
   cardContent: {
     backgroundColor: '#fff',
