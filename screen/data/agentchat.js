@@ -3,6 +3,7 @@ import {
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
+  BackHandler,
   Platform,
   SafeAreaView,
   StyleSheet,
@@ -37,6 +38,19 @@ export default function AgentChat({ navigation }) {
   useEffect(() => {
     navigation.setParams({ title: agentLabel });
   }, [agentLabel, navigation]);
+
+  useEffect(() => {
+    const handleHardwareBack = () => {
+      if (navigation.canGoBack()) {
+        navigation.goBack();
+        return true;
+      }
+      return false;
+    };
+
+    const backListener = BackHandler.addEventListener('hardwareBackPress', handleHardwareBack);
+    return () => backListener.remove();
+  }, [navigation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,8 +122,9 @@ export default function AgentChat({ navigation }) {
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.select({ ios: 88, android: 0 })}
+        pointerEvents="box-none"
       >
         <View style={styles.inner}>
           <View style={styles.header}>
