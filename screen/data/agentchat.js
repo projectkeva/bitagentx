@@ -3,6 +3,7 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
@@ -103,43 +104,53 @@ export default function AgentChat({ navigation }) {
   );
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.select({ ios: 88, android: 0 })}
-    >
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.agentName}>{displayName}</Text>
-          <Text style={styles.agentId}>{shortCode ? `@${shortCode}` : namespaceId}</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.select({ ios: 88, android: 0 })}
+      >
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.agentName}>{displayName}</Text>
+            <Text style={styles.agentId}>{shortCode ? `@${shortCode}` : namespaceId}</Text>
+          </View>
         </View>
-      </View>
 
-      <View style={styles.messagesWrapper}>
-        <FlatList
-          ref={listRef}
-          data={messages}
-          keyExtractor={item => item.id}
-          renderItem={renderItem}
-          ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
-          contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
-        />
-      </View>
+        <View style={styles.messagesWrapper}>
+          <FlatList
+            ref={listRef}
+            data={messages}
+            keyExtractor={item => item.id}
+            renderItem={renderItem}
+            ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
+            contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
+          />
+        </View>
 
-      <View style={styles.inputBar}>
-        <TextInput
-          value={inputValue}
-          onChangeText={setInputValue}
-          placeholder="Type a message"
-          placeholderTextColor="rgba(255,255,255,0.6)"
-          style={styles.input}
-          multiline
-        />
-        <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
-          <Text style={styles.sendButtonText}>Send</Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.select({ ios: 88, android: 0 })}
+        >
+          <View style={styles.inputBar}>
+            <TextInput
+              value={inputValue}
+              onChangeText={setInputValue}
+              placeholder="Type a message"
+              placeholderTextColor="rgba(255,255,255,0.6)"
+              style={styles.input}
+              multiline
+              editable
+            />
+            <TouchableOpacity style={styles.sendButton} onPress={handleSend} activeOpacity={0.8}>
+              <Text style={styles.sendButtonText}>Send</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -154,6 +165,10 @@ AgentChat.navigationOptions = ({ navigation }) => ({
 });
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#0b0f18',
+  },
   container: {
     flex: 1,
     backgroundColor: '#0b0f18',
