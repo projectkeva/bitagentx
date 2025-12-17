@@ -54,6 +54,7 @@ import GetAgents from './screen/data/geta';
 import KeyValues from './screen/data/keyvalues';
 import AddKeyValue from './screen/data/addkeyvalue';
 import EditProfile from './screen/data/editprofile';
+import AgentChat from './screen/data/agentchat';
 import SellNFT from './screen/data/sellnft';
 import BuyNFT from './screen/data/buynft';
 import OfferNFT from './screen/data/offernft';
@@ -414,6 +415,9 @@ const HomeStackNavigator = createStackNavigator({
   },
   HashtagKeyValues: {
     screen: HashtagKeyValues,
+  },
+  AgentChat: {
+    screen: AgentChat,
   },
   TransferNamespace: {
     screen: TransferNamespace,
