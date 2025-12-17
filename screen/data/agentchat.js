@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BackHandler,
   FlatList,
   Keyboard,
   Platform,
@@ -32,10 +33,35 @@ export default function AgentChat({ navigation }) {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const listRef = useRef(null);
+  const didSeedInitialMessage = useRef(false);
+
+  const persistMessages = async nextMessages => {
+    if (!storageKey) {
+      return;
+    }
+    try {
+      await AsyncStorage.setItem(storageKey, JSON.stringify(nextMessages));
+    } catch (error) {
+      console.warn('AgentChat: failed to persist chat history', error);
+    }
+  };
 
   useEffect(() => {
     navigation.setParams({ title: agentLabel });
   }, [agentLabel, navigation]);
+
+  useEffect(() => {
+    const handleBackPress = () => {
+      if (navigation && typeof navigation.goBack === 'function') {
+        navigation.goBack();
+        return true;
+      }
+      return false;
+    };
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
+    return () => subscription.remove();
+  }, [navigation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,7 +75,25 @@ export default function AgentChat({ navigation }) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
             setMessages(parsed);
+            didSeedInitialMessage.current = parsed.some(item => item?.sender === 'agent');
+            if (parsed.length > 0 || didSeedInitialMessage.current) {
+              return;
+            }
           }
+        }
+
+        if (!cancelled && !didSeedInitialMessage.current) {
+          const seededMessages = [
+            {
+              id: `seed_${Date.now()}`,
+              text: 'Initiating the super agent network…',
+              timestamp: Date.now(),
+              sender: 'agent',
+            },
+          ];
+          setMessages(seededMessages);
+          didSeedInitialMessage.current = true;
+          await persistMessages(seededMessages);
         }
       } catch (error) {
         console.warn('AgentChat: failed to load chat history', error);
@@ -61,17 +105,6 @@ export default function AgentChat({ navigation }) {
     };
   }, [storageKey]);
 
-  const persistMessages = async nextMessages => {
-    if (!storageKey) {
-      return;
-    }
-    try {
-      await AsyncStorage.setItem(storageKey, JSON.stringify(nextMessages));
-    } catch (error) {
-      console.warn('AgentChat: failed to persist chat history', error);
-    }
-  };
-
   const handleSend = async () => {
     const trimmed = inputValue.trim();
     if (!trimmed) {
@@ -81,6 +114,7 @@ export default function AgentChat({ navigation }) {
       id: `${Date.now()}`,
       text: trimmed,
       timestamp: Date.now(),
+      sender: 'user',
     });
     setMessages(next);
     setInputValue('');
@@ -93,8 +127,8 @@ export default function AgentChat({ navigation }) {
   };
 
   const renderItem = ({ item }) => (
-    <View style={styles.messageRow}>
-      <View style={styles.messageBubble}>
+    <View style={[styles.messageRow, item.sender === 'agent' ? styles.agentRow : styles.userRow]}>
+      <View style={[styles.messageBubble, item.sender === 'agent' ? styles.agentBubble : styles.userBubble]}>
         <Text style={styles.messageText}>{item.text}</Text>
         {Number.isFinite(item.timestamp) && (
           <Text style={styles.messageTime}>{formatTime(item.timestamp)}</Text>
@@ -119,13 +153,13 @@ export default function AgentChat({ navigation }) {
             data={messages}
             keyExtractor={item => item.id}
             renderItem={renderItem}
-            ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
-            contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
-            onScrollBeginDrag={Keyboard.dismiss}
-          />
-        </View>
+              ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
+              contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
+              onScrollBeginDrag={Keyboard.dismiss}
+            />
+          </View>
 
         <View style={styles.inputBar}>
           <TextInput
@@ -200,14 +234,25 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     alignItems: 'flex-end',
   },
+  agentRow: {
+    alignItems: 'flex-start',
+  },
+  userRow: {
+    alignItems: 'flex-end',
+  },
   messageBubble: {
     maxWidth: '85%',
-    backgroundColor: 'rgba(125, 211, 252, 0.15)',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderWidth: 1,
     borderColor: 'rgba(125, 211, 252, 0.35)',
+  },
+  agentBubble: {
+    backgroundColor: 'rgba(125, 211, 252, 0.08)',
+  },
+  userBubble: {
+    backgroundColor: 'rgba(125, 211, 252, 0.15)',
   },
   messageText: {
     color: '#e7fff9',
