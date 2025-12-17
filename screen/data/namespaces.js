@@ -336,7 +336,6 @@ class Namespace extends React.Component {
     const namespace = this.props.data;
     const {canDelete, onDelete} = this.props;
     const {titleAvatar, colorAvatar} = this.getAvatar(namespace.displayName);
-    const canTransfer = !canDelete;
     const isForSale = !!namespace.price;
     const displayNameWithShortcode = namespace.shortCode
       ? `${namespace.displayName} @${namespace.shortCode}`
@@ -422,12 +421,6 @@ class Namespace extends React.Component {
                   </TouchableOpacity>
                   }
                 </View>
-                { canTransfer && (
-                  <TouchableOpacity style={styles.transferButtonRow} onPress={() => this.onTransfer(namespace)}>
-                    <Icon name="ios-log-out" size={18} style={styles.transferIcon} />
-                    <Text style={styles.transferLabel}>{loc.namespaces.transfer}</Text>
-                  </TouchableOpacity>
-                )}
               </View>
               <TouchableOpacity onPress={this.onKey}>
                 <View style={styles.arrowWrapper}>
@@ -1589,24 +1582,6 @@ var styles = StyleSheet.create({
     color: '#A5B4FC',
     paddingHorizontal: 10,
     paddingVertical: 10
-  },
-  transferButtonRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    marginHorizontal: 12,
-    marginTop: 4,
-  },
-  transferIcon: {
-    color: '#7DD3FC',
-    paddingHorizontal: 6,
-    paddingVertical: 6,
-  },
-  transferLabel: {
-    color: '#7DD3FC',
-    fontSize: 14,
-    fontWeight: '600',
-    paddingRight: 6,
   },
   tabBar: {
     backgroundColor: 'transparent',
