@@ -1,443 +1,330 @@
 import React from 'react';
 import {
-  Text,
   View,
-  Image,
+  Text,
+  TextInput,
+  FlatList,
+  SafeAreaView,
   TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
-import Toast from 'react-native-root-toast';
+import RNFS from 'react-native-fs';
 const StyleSheet = require('../../PlatformStyleSheet');
-const KevaButton = require('../../common/KevaButton');
 const KevaColors = require('../../common/KevaColors');
-const utils = require('../../util');
-import {
-  BlueNavigationStyle,
-  BlueLoading,
-  BlueBigCheckmark,
-} from '../../BlueComponents';
-const loc = require('../../loc');
-let BlueApp = require('../../BlueApp');
-let BlueElectrum = require('../../BlueElectrum');
-import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
+import { BlueNavigationStyle } from '../../BlueComponents';
 
-import { connect } from 'react-redux'
-import { updateKeyValue } from '../../class/keva-ops';
-import FloatTextInput from '../../common/FloatTextInput';
-import StepModal from "../../common/StepModalWizard";
-import Biometric from '../../class/biometrics';
-import Icon from 'react-native-vector-icons/MaterialIcons';
-import ImagePicker from 'react-native-image-crop-picker';
-import ImageResizer from 'react-native-image-resizer';
-import * as mime from 'react-native-mime-types';
-import { stat } from 'react-native-fs';
+const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
+const INTRO_MESSAGE = 'Initiating the super agent network…';
 
-import { getServerInfo, uploadMedia, publishMedia } from './keva_ipfs'
-
-const CLOSE_ICON    = <Icon name="close" size={27} color={KevaColors.actionText}/>;
-const LIBRARY_ICON  = <Icon name="insert-photo" size={27} color={KevaColors.actionText}/>;
-const IMAGE_SIZE = 2400;
-const MAX_FILE_SIZE = 30000000;
-
-class AddKeyValue extends React.Component {
-
-  constructor() {
-    super();
+class AgentChat extends React.Component {
+  constructor(props) {
+    super(props);
     this.state = {
-      loaded: false,
-      changes: false,
-      saving: false,
-      key: '',
-      value: '',
-      showKeyValueModal: false,
-      valueOnly: false,
-      createTransactionErr: null,
-      imagePreview: null,
+      allMessages: [],
+      messages: [],
+      inputValue: '',
     };
   }
 
-  static navigationOptions = ({ navigation }) => ({
-    ...BlueNavigationStyle(),
-    title: '',
-    tabBarVisible: false,
-    headerRight: () => (
-      <TouchableOpacity
-        style={{ marginHorizontal: 16, minWidth: 150, justifyContent: 'center', alignItems: 'flex-end' }}
-        onPress={navigation.state.params.onPress}
-      >
-        <Text style={{color: KevaColors.actionText, fontSize: 16}}>{loc.namespaces.submit}</Text>
-      </TouchableOpacity>
-    ),
+  static navigationOptions = ({ navigation }) => {
+    const params = navigation.state?.params || {};
+    const displayName = params.displayName || 'Agent';
+    const shortCode = params.shortCode ? `@${params.shortCode}` : '';
+
+    return {
+      ...BlueNavigationStyle(),
+      title: '',
+      headerTitle: () => (
+        <View style={styles.headerTitleContainer}>
+          <Text style={styles.headerTitle}>{displayName}</Text>
+          {!!shortCode && <Text style={styles.headerSubtitle}>{shortCode}</Text>}
+        </View>
+      ),
+    };
+  };
+
+  componentDidMount() {
+    this._isMounted = true;
+    this.initializeChat();
+  }
+
+  componentWillUnmount() {
+    this._isMounted = false;
+  }
+
+  initializeChat = async () => {
+    const { namespaceId } = this.props.navigation.state.params || {};
+    await this.ensureStorage();
+    const history = await this.readHistory(namespaceId);
+    if (!this._isMounted) {
+      return;
+    }
+    this.setState(
+      {
+        allMessages: history,
+        messages: history.slice(-10),
+      },
+      () => this.ensureIntroMessage(),
+    );
+  };
+
+  ensureStorage = async () => {
+    try {
+      const exists = await RNFS.exists(CHAT_DIR);
+      if (!exists) {
+        await RNFS.mkdir(CHAT_DIR);
+      }
+    } catch (error) {
+      console.warn('Failed to prepare chat storage', error);
+    }
+  };
+
+  getChatFilePath = namespaceId => `${CHAT_DIR}/${namespaceId || 'default'}.json`;
+
+  readHistory = async namespaceId => {
+    const path = this.getChatFilePath(namespaceId);
+    try {
+      const fileExists = await RNFS.exists(path);
+      if (!fileExists) {
+        await RNFS.writeFile(path, '[]', 'utf8');
+        return [];
+      }
+      const content = await RNFS.readFile(path, 'utf8');
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch (error) {
+      console.warn('Failed to read chat history', error);
+    }
+    return [];
+  };
+
+  persistMessages = async messages => {
+    const { namespaceId } = this.props.navigation.state.params || {};
+    const path = this.getChatFilePath(namespaceId);
+    try {
+      await RNFS.writeFile(path, JSON.stringify(messages), 'utf8');
+    } catch (error) {
+      console.warn('Failed to save chat history', error);
+    }
+  };
+
+  buildMessage = (text, sender = 'user') => ({
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    text,
+    sender,
+    timestamp: Date.now(),
   });
 
-  async componentDidMount() {
-    const {namespaceId, walletId, key, value} = this.props.navigation.state.params;
-    if (key && key.length > 0 && value && value.length > 0) {
-      this.setState({
-        key,
-        value,
-        valueOnly: true
-      });
-    }
-    this.props.navigation.setParams({
-      onPress: this.onSave
-    });
-    this.isBiometricUseCapableAndEnabled = await Biometric.isBiometricUseCapableAndEnabled();
-  }
+  appendMessage = message => {
+    this.setState(
+      prevState => {
+        const allMessages = [...prevState.allMessages, message];
+        return {
+          allMessages,
+          messages: allMessages.slice(-10),
+        };
+      },
+      () => this.persistMessages(this.state.allMessages),
+    );
+  };
 
-  onSave = async () => {
-    const {namespaceId, walletId} = this.props.navigation.state.params;
-    let {key, value, imagePreview} = this.state;
-    if (key.length == 0 || value.length == 0) {
-      Toast.show('Key and value must be set');
+  ensureIntroMessage = () => {
+    const lastMessage = this.state.allMessages[this.state.allMessages.length - 1];
+    if (lastMessage && lastMessage.text === INTRO_MESSAGE && lastMessage.sender === 'agent') {
       return;
     }
-    const wallets = BlueApp.getWallets();
-    this.wallet = wallets.find(w => w.getID() == walletId);
-    if (!this.wallet) {
-      Toast.show('Cannot find wallet');
+    const intro = this.buildMessage(INTRO_MESSAGE, 'agent');
+    this.appendMessage(intro);
+  };
+
+  handleSend = () => {
+    const text = this.state.inputValue.trim();
+    if (!text) {
       return;
     }
+    const userMessage = this.buildMessage(text, 'user');
+    this.appendMessage(userMessage);
+    this.setState({ inputValue: '' });
+    this.handleTriggers(text);
+  };
 
-    this.setState({
-      showKeyValueModal: true,
-      currentPage: 0,
-      showSkip: true,
-      broadcastErr: null,
-      isBroadcasting: false,
-      fee: 0,
-      createTransactionErr: null,
-    }, () => {
-      setTimeout(async () => {
-        try {
-          // Check if there is an image to upload.
-          let serverIPFS = null;
-          let CID;
-          if (imagePreview) {
-            serverIPFS = await getServerInfo();
-            const result = await uploadMedia(imagePreview)
-            CID = result.CID;
-            const mimeType = mime.lookup(imagePreview)
-            // Added the image CID at the end of the value.
-            value = value + `{{${CID}|${mimeType}}}`;
-          }
-
-          await BlueElectrum.ping();
-          const { tx, fee } = await updateKeyValue(this.wallet, FALLBACK_DATA_PER_BYTE_FEE, namespaceId, key, value, serverIPFS);
-          let feeKVA = fee / 100000000;
-          if (serverIPFS) {
-            feeKVA += parseInt(serverIPFS.min_payment);
-          }
-          this.setState({ showKeyValueModal: true, currentPage: 1, fee: feeKVA, serverIPFS });
-          this.namespaceTx = tx;
-        } catch (err) {
-          console.warn(err);
-          this.setState({createTransactionErr: err.message});
-        }
-      }, 800);
-    });
-  }
-
-  KeyValueCreationFinish = () => {
-    return this.setState({showKeyValueModal: false});
-  }
-
-  KeyValueCreationCancel = () => {
-    return this.setState({showKeyValueModal: false});
-  }
-
-  KeyValueCreationNext = () => {
-    return this.setState({
-      currentPage: this.state.currentPage + 1
-    });
-  }
-
-  getKeyValueModal = () => {
-    if (!this.state.showKeyValueModal) {
-      return null;
+  handleTriggers = text => {
+    const normalized = text.trim().toUpperCase();
+    if (normalized.includes('D-CARD')) {
+      this.replyFromAgent('Reading D-CARD ok');
     }
+  };
 
-    let createNSPage = (
-      <View style={styles.modalNS}>
-        {
-          this.state.createTransactionErr ?
-            <>
-              <Text style={[styles.modalText, {color: KevaColors.errColor, fontWeight: 'bold'}]}>{"Error"}</Text>
-              <Text style={styles.modalErr}>{this.state.createTransactionErr}</Text>
-              <KevaButton
-                type='secondary'
-                style={{margin:10, marginTop: 30}}
-                caption={'Cancel'}
-                onPress={async () => {
-                  this.setState({showKeyValueModal: false, createTransactionErr: null});
-                }}
-              />
-            </>
-          :
-            <>
-              <Text style={[styles.modalText, {alignSelf: 'center', color: KevaColors.darkText}]}>{loc.namespaces.creating_tx}</Text>
-              <Text style={styles.waitText}>{loc.namespaces.please_wait}</Text>
-              <BlueLoading style={{paddingTop: 30}}/>
-            </>
-        }
-      </View>
-    );
+  replyFromAgent = text => {
+    const reply = this.buildMessage(text, 'agent');
+    this.appendMessage(reply);
+  };
 
-    let confirmPage = (
-      <View style={styles.modalNS}>
-        <Text style={styles.modalText}>{"Transaction fee:  "}
-          <Text style={styles.modalFee}>{this.state.fee + ' KVA'}</Text>
-        </Text>
-        <KevaButton
-          type='secondary'
-          style={{margin:10, marginTop: 40}}
-          caption={loc.namespaces.confirm}
-          onPress={async () => {
-            this.setState({currentPage: 2, isBroadcasting: true});
-            try {
-              await BlueElectrum.ping();
-              await BlueElectrum.waitTillConnected();
-              if (this.isBiometricUseCapableAndEnabled) {
-                if (!(await Biometric.unlockWithBiometrics())) {
-                  this.setState({isBroadcasting: false});
-                  return;
-                }
-              }
-              let result = await BlueElectrum.broadcast(this.namespaceTx);
-              if (result.code) {
-                // Error.
-                return this.setState({
-                  isBroadcasting: false,
-                  broadcastErr: result.message,
-                });
-              }
-              await BlueApp.saveToDisk();
-              // Pin the media to IPFS.
-              if (this.state.serverIPFS) {
-                console.log('tx to publish: ' + result)
-                await publishMedia(result);
-              }
-              this.setState({isBroadcasting: false, showSkip: false});
-            } catch (err) {
-              this.setState({isBroadcasting: false, broadcastErr: err.message});
-              console.warn(err);
-            }
-          }}
-        />
-      </View>
-    );
-
-    let broadcastPage;
-    if (this.state.isBroadcasting) {
-      broadcastPage = (
-        <View style={styles.modalNS}>
-          <Text style={styles.modalText}>{"Broadcasting Transaction ..."}</Text>
-          <BlueLoading style={{paddingTop: 30}}/>
-        </View>
-      );
-    } else if (this.state.broadcastErr) {
-      broadcastPage = (
-        <View style={styles.modalNS}>
-          <Text style={[styles.modalText, {color: KevaColors.errColor, fontWeight: 'bold'}]}>{"Error"}</Text>
-          <Text style={styles.modalErr}>{this.state.broadcastErr}</Text>
-          <KevaButton
-            type='secondary'
-            style={{margin:10, marginTop: 30}}
-            caption={'Cancel'}
-            onPress={async () => {
-              this.setState({showKeyValueModal: false});
-            }}
-          />
-        </View>
-      );
-    } else {
-      broadcastPage = (
-        <View style={styles.modalNS}>
-          <BlueBigCheckmark style={{marginHorizontal: 50}}/>
-          <KevaButton
-            type='secondary'
-            style={{margin:10, marginTop: 30}}
-            caption={'Done'}
-            onPress={async () => {
-              this.setState({
-                showKeyValueModal: false,
-                nsName: '',
-              });
-              this.props.navigation.goBack();
-            }}
-          />
-        </View>
-      );
-    }
-
+  renderMessage = ({ item }) => {
+    const isUser = item.sender === 'user';
     return (
-      <View>
-        <StepModal
-          showNext={false}
-          showSkip={this.state.showSkip}
-          currentPage={this.state.currentPage}
-          stepComponents={[createNSPage, confirmPage, broadcastPage]}
-          onFinish={this.KeyValueCreationFinish}
-          onNext={this.KeyValueCreationNext}
-          onCancel={this.KeyValueCreationCancel}/>
+      <View style={[styles.messageRow, isUser ? styles.userRow : styles.agentRow]}>
+        <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}>
+          <Text style={[styles.messageText, isUser ? styles.userText : styles.agentText]}>{item.text}</Text>
+        </View>
       </View>
     );
-  }
-
-  onImageDone = async (response) => {
-    if (response.didCancel) {
-      return;
-    }
-
-    let image = response.path;
-    try {
-      const mimeType = mime.lookup(image);
-      if (mimeType.startsWith('image')) {
-        // Resize image if it is too big.
-        if (response.width > IMAGE_SIZE || response.height > IMAGE_SIZE) {
-          let resizedImage = await ImageResizer.createResizedImage(image, IMAGE_SIZE, IMAGE_SIZE, 'JPEG', 90);
-          image = resizedImage.uri;
-        }
-      }
-      //const size = await utils.getImageSize(image);
-      const statResult = await stat(image);
-      console.log('file size: ' + statResult.size);
-      if (statResult.size > MAX_FILE_SIZE) {
-        utils.toastError(loc.general.video_too_big);
-        return;
-      }
-      this.setState({imagePreview: image});
-    } catch (err) {
-      console.warn(err);
-    }
-  }
-
-  onImage = () => {
-    ImagePicker.openPicker({
-    }).then(image => {
-      this.onImageDone(image)
-    });
-  }
-
-  onRemoveImage = () => {
-    this.setState({imagePreview: null});
-  }
+  };
 
   render() {
-    let {navigation, dispatch} = this.props;
     return (
-      <View style={styles.container}>
-        {this.getKeyValueModal()}
-        <View style={styles.inputKey}>
-          <FloatTextInput
-            editable={!this.state.valueOnly}
-            noBorder
-            autoCorrect={false}
-            value={this.state.key}
-            underlineColorAndroid='rgba(0,0,0,0)'
-            style={{fontSize:15}}
-            placeholder={loc.namespaces.title}
-            clearButtonMode="while-editing"
-            onChangeTextValue={key => {this.setState({key})}}
-          />
-          {
-            this.state.imagePreview ?
-            <View>
-              <TouchableOpacity onPress={this.onRemoveImage} style={styles.closePicture}>
-                <Icon name="close" size={27} color={KevaColors.actionText}/>
-              </TouchableOpacity>
-              <Image source={{uri: this.state.imagePreview}} style={{width: 56, height: 56 }} resizeMode="contain" />
-            </View>
-            :
-            <TouchableOpacity onPress={this.onImage}>
-              <View elevation={1} style={styles.iconBtn}>
-                {LIBRARY_ICON}
-              </View>
+      <SafeAreaView style={styles.container}>
+        <KeyboardAvoidingView
+          style={styles.container}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        >
+          <View style={styles.chatContainer}>
+            <FlatList
+              ref={ref => {
+                this.listRef = ref;
+              }}
+              data={this.state.messages}
+              keyExtractor={item => item.id}
+              renderItem={this.renderMessage}
+              contentContainerStyle={this.state.messages.length === 0 ? styles.emptyContainer : styles.listContent}
+              ListEmptyComponent={() => (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyText}>Start a conversation with this agent.</Text>
+                </View>
+              )}
+              onContentSizeChange={() => this.listRef && this.listRef.scrollToEnd({ animated: true })}
+              onLayout={() => this.listRef && this.listRef.scrollToEnd({ animated: false })}
+              keyboardShouldPersistTaps="handled"
+            />
+          </View>
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              value={this.state.inputValue}
+              placeholder="Type a message"
+              placeholderTextColor="#6f7587"
+              onChangeText={text => this.setState({ inputValue: text })}
+              onSubmitEditing={this.handleSend}
+              returnKeyType="send"
+            />
+            <TouchableOpacity style={styles.sendButton} onPress={this.handleSend}>
+              <Text style={styles.sendButtonText}>Send</Text>
             </TouchableOpacity>
-          }
-        </View>
-        <View style={styles.inputValue}>
-          <FloatTextInput
-            multiline={true}
-            noBorder
-            autoCorrect={false}
-            value={this.state.value}
-            underlineColorAndroid='rgba(0,0,0,0)'
-            style={{fontSize:15}}
-            placeholder={loc.namespaces.content}
-            clearButtonMode="while-editing"
-            onChangeTextValue={value => {this.setState({value})}}
-          />
-        </View>
-      </View>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     );
   }
-
 }
 
-function mapStateToProps(state) {
-  return {
-    keyValueList: state.keyValueList,
-  }
-}
+export default AgentChat;
 
-export default AddKeyValueScreen = connect(mapStateToProps)(AddKeyValue);
-
-var styles = StyleSheet.create({
+const styles = StyleSheet.create({
   container: {
-    flex:1,
-    backgroundColor: KevaColors.background,
+    flex: 1,
+    backgroundColor: '#0b1224',
   },
-  inputKey: {
-    height:56,
-    marginTop: 10,
-    marginBottom: 10,
-    borderWidth: utils.THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
-    paddingHorizontal: 10,
+  headerTitleContainer: {
+    flexDirection: 'column',
+  },
+  headerTitle: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  headerSubtitle: {
+    color: '#9ca4b3',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  chatContainer: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  listContent: {
+    paddingBottom: 12,
+  },
+  messageRow: {
     flexDirection: 'row',
+    marginBottom: 12,
+  },
+  userRow: {
+    justifyContent: 'flex-end',
+  },
+  agentRow: {
     justifyContent: 'flex-start',
+  },
+  messageBubble: {
+    maxWidth: '78%',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  userBubble: {
+    backgroundColor: KevaColors.actionText,
+    borderBottomRightRadius: 2,
+  },
+  agentBubble: {
+    backgroundColor: '#11182d',
+    borderBottomLeftRadius: 2,
+    borderWidth: 1,
+    borderColor: '#1f2a44',
+  },
+  messageText: {
+    fontSize: 15,
+    lineHeight: 20,
+  },
+  userText: {
+    color: '#ffffff',
+  },
+  agentText: {
+    color: '#d2d7e0',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  emptyState: {
     alignItems: 'center',
   },
-  inputValue: {
-    height:215,
-    borderWidth: utils.THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
-    paddingHorizontal: 10,
+  emptyText: {
+    color: '#6f7587',
+    fontSize: 14,
   },
-  modalNS: {
-    height: 300,
-    alignSelf: 'center',
-    justifyContent: 'flex-start',
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#1f2a44',
+    backgroundColor: '#0b1224',
   },
-  modalText: {
-    fontSize: 18,
-    color: KevaColors.lightText,
+  input: {
+    flex: 1,
+    height: 44,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#24304a',
+    borderRadius: 12,
+    color: '#ffffff',
+    backgroundColor: '#0f162b',
   },
-  waitText: {
-    fontSize: 16,
-    color: KevaColors.lightText,
-    paddingTop: 10,
-    alignSelf: 'center',
+  sendButton: {
+    marginLeft: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: KevaColors.actionText,
   },
-  modalFee: {
-    fontSize: 18,
-    color: KevaColors.statusColor,
-  },
-  modalErr: {
-    fontSize: 16,
-    marginTop: 20,
-  },
-  iconBtn: {
-    alignSelf: 'flex-end',
-    marginVertical: 5,
-    marginRight: 15,
-  },
-  closePicture: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    zIndex: 100,
+  sendButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '600',
   },
 });
