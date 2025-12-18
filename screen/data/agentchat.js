@@ -1,18 +1,25 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
   FlatList,
   Keyboard,
+  KeyboardAvoidingView,
   Platform,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-community/async-storage';
 import { BlueNavigationStyle, SafeBlueArea } from '../../BlueComponents';
 import KevaColors from '../../common/KevaColors';
+
+const DEFAULT_AGENT_MESSAGE = 'Initiating the super agent network…';
+const KEYWORD_RESPONSES = {
+  help: 'reading help docs',
+};
 
 function formatTime(timestamp) {
   if (!Number.isFinite(timestamp)) {
@@ -32,18 +39,68 @@ export default function AgentChat({ navigation }) {
   const storageKey = useMemo(() => (namespaceId ? `agent_chat_${namespaceId}` : null), [namespaceId]);
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
-  const listRef = useRef(null);  const didSeedInitialMessage = useRef(false);
+  const listRef = useRef(null);
 
-  const persistMessages = async nextMessages => {
-    if (!storageKey) {
-      return;
+  const persistMessages = useCallback(
+    async nextMessages => {
+      if (!storageKey) {
+        return;
+      }
+      try {
+        await AsyncStorage.setItem(storageKey, JSON.stringify(nextMessages));
+      } catch (error) {
+        console.warn('AgentChat: failed to persist chat history', error);
+      }
+    },
+    [storageKey],
+  );
+
+  const createMessage = useCallback((text, sender, explicitTimestamp) => {
+    const timestamp = Number.isFinite(explicitTimestamp) ? explicitTimestamp : Date.now();
+    return {
+      id: `${sender}_${timestamp}_${Math.random().toString(36).slice(2, 8)}`,
+      text,
+      timestamp,
+      sender,
+    };
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    if (listRef.current && typeof listRef.current.scrollToEnd === 'function') {
+      listRef.current.scrollToEnd({ animated: true });
     }
-    try {
-      await AsyncStorage.setItem(storageKey, JSON.stringify(nextMessages));
-    } catch (error) {
-      console.warn('AgentChat: failed to persist chat history', error);
-    }
-  };
+  }, []);
+
+  const ensureSeededHistory = useCallback(
+    existing => {
+      if (existing.some(item => item?.text === DEFAULT_AGENT_MESSAGE)) {
+        return existing;
+      }
+      const earliestTimestamp = existing.reduce((min, item) => {
+        if (Number.isFinite(item?.timestamp) && item.timestamp < min) {
+          return item.timestamp;
+        }
+        return min;
+      }, Infinity);
+      const seedTimestamp = Number.isFinite(earliestTimestamp) ? earliestTimestamp - 1 : Date.now();
+      const seededMessage = createMessage(DEFAULT_AGENT_MESSAGE, 'agent', seedTimestamp);
+      return [seededMessage, ...existing];
+    },
+    [createMessage],
+  );
+
+  const appendMessages = useCallback(
+    newEntries => {
+      const incoming = Array.isArray(newEntries) ? newEntries : [newEntries];
+      setMessages(prev => {
+        const updated = prev.concat(incoming);
+        persistMessages(updated);
+        return updated;
+      });
+      requestAnimationFrame(scrollToBottom);
+    },
+    [persistMessages, scrollToBottom],
+  );
 
   useEffect(() => {
     navigation.setParams({ title: agentLabel });
@@ -51,8 +108,11 @@ export default function AgentChat({ navigation }) {
 
   useEffect(() => {
     const handleBackPress = () => {
-      if (navigation && typeof navigation.goBack === 'function') {
-        navigation.goBack();
+      if (!navigation?.isFocused || !navigation.isFocused()) {
+        return false;
+      }
+      if (navigation && typeof navigation.canGoBack === 'function' && navigation.canGoBack()) {
+        navigation.goBack(null);
         return true;
       }
       return false;
@@ -70,30 +130,24 @@ export default function AgentChat({ navigation }) {
       }
       try {
         const raw = await AsyncStorage.getItem(storageKey);
-        if (raw && !cancelled) {
+        if (raw) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
-            setMessages(parsed);
-            didSeedInitialMessage.current = parsed.some(item => item?.sender === 'agent');
-            if (parsed.length > 0 || didSeedInitialMessage.current) {
+            const seeded = ensureSeededHistory(parsed);
+            if (cancelled) {
               return;
             }
+            setMessages(seeded);
+            await persistMessages(seeded);
+            return;
           }
         }
-
-        if (!cancelled && !didSeedInitialMessage.current) {
-          const seededMessages = [
-            {
-              id: `seed_${Date.now()}`,
-              text: 'Initiating the super agent network…',
-              timestamp: Date.now(),
-              sender: 'agent',
-            },
-          ];
-          setMessages(seededMessages);
-          didSeedInitialMessage.current = true;
-          await persistMessages(seededMessages);
+        if (cancelled) {
+          return;
         }
+        const seededMessages = [createMessage(DEFAULT_AGENT_MESSAGE, 'agent')];
+        setMessages(seededMessages);
+        await persistMessages(seededMessages);
       } catch (error) {
         console.warn('AgentChat: failed to load chat history', error);
       }
@@ -102,27 +156,27 @@ export default function AgentChat({ navigation }) {
     return () => {
       cancelled = true;
     };
-  }, [storageKey]);
+  }, [createMessage, ensureSeededHistory, persistMessages, storageKey]);
+
+  const detectKeywordResponse = useCallback(text => {
+    const normalized = text.trim().toLowerCase();
+    const matched = Object.entries(KEYWORD_RESPONSES).find(([keyword]) => normalized.includes(keyword));
+    return matched ? matched[1] : null;
+  }, []);
 
   const handleSend = async () => {
     const trimmed = inputValue.trim();
     if (!trimmed) {
       return;
     }
-    const next = messages.concat({
-      id: `${Date.now()}`,
-      text: trimmed,
-      timestamp: Date.now(),
-      sender: 'user',
-    });
-    setMessages(next);
+    const timestamp = Date.now();
+    const nextMessages = [createMessage(trimmed, 'user', timestamp)];
+    const keywordResponse = detectKeywordResponse(trimmed);
+    if (keywordResponse) {
+      nextMessages.push(createMessage(keywordResponse, 'agent', timestamp + 1));
+    }
+    appendMessages(nextMessages);
     setInputValue('');
-    await persistMessages(next);
-    requestAnimationFrame(() => {
-      if (listRef.current && typeof listRef.current.scrollToEnd === 'function') {
-        listRef.current.scrollToEnd({ animated: true });
-      }
-    });
   };
 
   const renderItem = ({ item }) => (
@@ -137,61 +191,61 @@ export default function AgentChat({ navigation }) {
   };
 
   useEffect(() => {
-    requestAnimationFrame(() => {
-      if (listRef.current && typeof listRef.current.scrollToEnd === 'function') {
-        listRef.current.scrollToEnd({ animated: true });
-      }
-    });
-  }, [messages.length]);
+    requestAnimationFrame(scrollToBottom);
+  }, [messages.length, scrollToBottom]);
 
   return (
-    <SafeBlueArea>
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.agentName}>{displayName}</Text>
-            <Text style={styles.agentId}>{shortCode ? `@${shortCode}` : namespaceId}</Text>
-          </View>
-        </View>
+    <SafeBlueArea style={styles.safeArea}>
+      <KeyboardAvoidingView
+        behavior={Platform.select({ ios: 'padding', android: undefined })}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+        style={styles.container}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+          <View style={styles.container}>
+            <View style={styles.header}>
+              <View>
+                <Text style={styles.agentName}>{displayName}</Text>
+                <Text style={styles.agentId}>{shortCode ? `@${shortCode}` : namespaceId}</Text>
+              </View>
+            </View>
 
-        <View style={styles.messagesWrapper}>
-          <FlatList
-            ref={listRef}
-            data={messages}
-            keyExtractor={item => item.id}
-            renderItem={renderItem}
-              ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
-              contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
-              onScrollBeginDrag={Keyboard.dismiss}
-            />
-          </View>
+            <View style={styles.messagesWrapper}>
+              <FlatList
+                ref={listRef}
+                data={messages}
+                keyExtractor={item => item.id}
+                renderItem={renderItem}
+                ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
+                contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
+                onScrollBeginDrag={Keyboard.dismiss}
+              />
+            </View>
 
-        <View style={styles.inputBar}>
-          <TextInput
-            value={inputValue}
-            onChangeText={setInputValue}
-            placeholder="Type a message"
-            placeholderTextColor="rgba(255,255,255,0.6)"
-            style={styles.input}
-            multiline
-            editable
-            returnKeyType="send"
-            onSubmitEditing={handleSend}
-            onFocus={() => {
-              requestAnimationFrame(() => {
-                if (listRef.current && typeof listRef.current.scrollToEnd === 'function') {
-                  listRef.current.scrollToEnd({ animated: true });
-                }
-              });
-            }}
-          />
-          <TouchableOpacity style={styles.sendButton} onPress={handleSend} activeOpacity={0.8}>
-            <Text style={styles.sendButtonText}>Send</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+            <View style={styles.inputBar}>
+              <TextInput
+                value={inputValue}
+                onChangeText={setInputValue}
+                placeholder="Type a message"
+                placeholderTextColor="rgba(255,255,255,0.6)"
+                style={styles.input}
+                multiline
+                editable
+                returnKeyType="send"
+                onSubmitEditing={handleSend}
+                onFocus={() => {
+                  requestAnimationFrame(scrollToBottom);
+                }}
+              />
+              <TouchableOpacity style={styles.sendButton} onPress={handleSend} activeOpacity={0.8}>
+                <Text style={styles.sendButtonText}>Send</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </SafeBlueArea>
   );
 }
@@ -202,6 +256,9 @@ AgentChat.navigationOptions = ({ navigation }) => ({
 });
 
 const styles = StyleSheet.create({
+  safeArea: {
+    backgroundColor: '#0b0f18',
+  },
   container: {
     flex: 1,
     backgroundColor: '#0b0f18',
@@ -297,6 +354,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     color: '#e7fff9',
     fontSize: 14,
+    textAlignVertical: 'top',
   },
   sendButton: {
     marginLeft: 10,
