@@ -187,8 +187,8 @@ export default function AgentChat({ navigation }) {
           <Text style={styles.messageTime}>{formatTime(item.timestamp)}</Text>
         )}
       </View>
-    );
-  };
+    </View>
+  );
 
   useEffect(() => {
     requestAnimationFrame(scrollToBottom);
