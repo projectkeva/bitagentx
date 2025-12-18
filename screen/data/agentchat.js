@@ -9,17 +9,16 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-community/async-storage';
 import { BlueNavigationStyle, SafeBlueArea } from '../../BlueComponents';
 import KevaColors from '../../common/KevaColors';
-const utils = require('../../util');
 
 const DEFAULT_AGENT_MESSAGE = 'Initiating the super agent network…';
 const KEYWORD_RESPONSES = {
   help: 'reading help docs',
-  'd-card': 'D-CARD Read OK',
 };
 
 function formatTime(timestamp) {
@@ -202,48 +201,50 @@ export default function AgentChat({ navigation }) {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
         style={styles.container}
       >
-        <View style={styles.container}>
-          <View style={styles.headerCard}>
-            <View>
-              <Text style={styles.agentName}>{displayName}</Text>
-              <Text style={styles.agentId}>{shortCode ? `@${shortCode}` : namespaceId}</Text>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+          <View style={styles.container}>
+            <View style={styles.header}>
+              <View>
+                <Text style={styles.agentName}>{displayName}</Text>
+                <Text style={styles.agentId}>{shortCode ? `@${shortCode}` : namespaceId}</Text>
+              </View>
+            </View>
+
+            <View style={styles.messagesWrapper}>
+              <FlatList
+                ref={listRef}
+                data={messages}
+                keyExtractor={item => item.id}
+                renderItem={renderItem}
+                ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
+                contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
+                onScrollBeginDrag={Keyboard.dismiss}
+              />
+            </View>
+
+            <View style={styles.inputBar}>
+              <TextInput
+                value={inputValue}
+                onChangeText={setInputValue}
+                placeholder="Type a message"
+                placeholderTextColor="rgba(255,255,255,0.6)"
+                style={styles.input}
+                multiline
+                editable
+                returnKeyType="send"
+                onSubmitEditing={handleSend}
+                onFocus={() => {
+                  requestAnimationFrame(scrollToBottom);
+                }}
+              />
+              <TouchableOpacity style={styles.sendButton} onPress={handleSend} activeOpacity={0.8}>
+                <Text style={styles.sendButtonText}>Send</Text>
+              </TouchableOpacity>
             </View>
           </View>
-
-          <View style={styles.messagesWrapper}>
-            <FlatList
-              ref={listRef}
-              data={messages}
-              keyExtractor={item => item.id}
-              renderItem={renderItem}
-              ListEmptyComponent={<Text style={styles.emptyState}>Start a conversation with this agent.</Text>}
-              contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.messagesContent}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode={Platform.select({ ios: 'interactive', android: 'on-drag' })}
-              onScrollBeginDrag={Keyboard.dismiss}
-            />
-          </View>
-
-          <View style={styles.inputBar}>
-            <TextInput
-              value={inputValue}
-              onChangeText={setInputValue}
-              placeholder="Type a message"
-              placeholderTextColor={KevaColors.lightText}
-              style={styles.input}
-              multiline
-              editable
-              returnKeyType="send"
-              onSubmitEditing={handleSend}
-              onFocus={() => {
-                requestAnimationFrame(scrollToBottom);
-              }}
-            />
-            <TouchableOpacity style={styles.sendButton} onPress={handleSend} activeOpacity={0.8}>
-              <Text style={styles.sendButtonText}>Send</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
     </SafeBlueArea>
   );
@@ -256,37 +257,37 @@ AgentChat.navigationOptions = ({ navigation }) => ({
 
 const styles = StyleSheet.create({
   safeArea: {
-    backgroundColor: KevaColors.background,
+    backgroundColor: '#0b0f18',
   },
   container: {
     flex: 1,
-    backgroundColor: KevaColors.background,
+    backgroundColor: '#0b0f18',
   },
-  headerCard: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+  header: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
+    borderBottomColor: 'rgba(125, 211, 252, 0.25)',
+    backgroundColor: '#0f1624',
   },
   agentName: {
-    fontSize: 17,
-    color: KevaColors.darkText,
+    fontSize: 18,
+    color: '#e7fff9',
     fontWeight: '700',
+    letterSpacing: 0.3,
   },
   agentId: {
     marginTop: 4,
-    color: KevaColors.lightText,
+    color: '#9fb3c8',
     fontSize: 13,
   },
   messagesWrapper: {
     flex: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: '#fff',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
   messagesContent: {
-    paddingBottom: 30,
+    paddingBottom: 20,
   },
   emptyContent: {
     flex: 1,
@@ -305,66 +306,65 @@ const styles = StyleSheet.create({
   },
   messageBubble: {
     maxWidth: '85%',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderWidth: utils.THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(125, 211, 252, 0.35)',
   },
   agentBubble: {
-    backgroundColor: '#f6f8fb',
+    backgroundColor: 'rgba(125, 211, 252, 0.08)',
   },
   userBubble: {
-    backgroundColor: '#f0f4ff',
+    backgroundColor: 'rgba(125, 211, 252, 0.15)',
   },
   messageText: {
-    color: KevaColors.darkText,
-    fontSize: 14,
-    lineHeight: 19,
+    color: '#e7fff9',
+    fontSize: 15,
+    lineHeight: 20,
   },
   messageTime: {
     marginTop: 6,
     fontSize: 11,
-    color: KevaColors.lightText,
+    color: '#9fb3c8',
     alignSelf: 'flex-end',
   },
   emptyState: {
-    color: KevaColors.lightText,
+    color: '#9fb3c8',
     fontSize: 14,
     textAlign: 'center',
   },
   inputBar: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 12,
+    alignItems: 'flex-end',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderTopWidth: 1,
-    borderTopColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
+    borderTopColor: 'rgba(125, 211, 252, 0.25)',
+    backgroundColor: '#0f1624',
   },
   input: {
     flex: 1,
-    minHeight: 40,
-    maxHeight: 120,
-    borderRadius: 8,
-    borderWidth: utils.THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    color: KevaColors.darkText,
+    minHeight: 44,
+    maxHeight: 140,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(125, 211, 252, 0.35)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#e7fff9',
     fontSize: 14,
     textAlignVertical: 'top',
-    backgroundColor: '#fff',
   },
   sendButton: {
     marginLeft: 10,
     backgroundColor: KevaColors.actionText,
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
   sendButtonText: {
-    color: '#fff',
+    color: '#0b0f18',
     fontWeight: '700',
     fontSize: 14,
   },
