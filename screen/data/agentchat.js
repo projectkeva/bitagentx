@@ -3,12 +3,14 @@ import {
   View,
   Text,
   TextInput,
+  Image,
   FlatList,
   SafeAreaView,
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { Icon } from 'react-native-elements';
 import RNFS from 'react-native-fs';
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
@@ -31,15 +33,20 @@ class AgentChat extends React.Component {
     const params = navigation.state?.params || {};
     const displayName = params.displayName || 'Agent';
     const shortCode = params.shortCode ? `@${params.shortCode}` : '';
+    const title = shortCode ? `${displayName}${shortCode}` : displayName;
 
     return {
       ...BlueNavigationStyle(),
       title: '',
-      headerTitle: () => (
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>{displayName}</Text>
-          {!!shortCode && <Text style={styles.headerSubtitle}>{shortCode}</Text>}
-        </View>
+      headerTitle: () => <Text style={styles.headerTitle}>{title}</Text>,
+      headerRight: () => (
+        <TouchableOpacity
+          accessibilityLabel="Open chat settings"
+          style={styles.headerAction}
+          onPress={() => navigation.state?.params?.onOpenSettings?.()}
+        >
+          <Icon name="more-horizontal" type="feather" color="#ffffff" size={20} />
+        </TouchableOpacity>
       ),
     };
   };
@@ -163,14 +170,76 @@ class AgentChat extends React.Component {
     this.appendMessage(reply);
   };
 
-  renderMessage = ({ item }) => {
+  shouldShowTimestamp = index => {
+    const { messages } = this.state;
+    const current = messages[index];
+    if (!current) {
+      return false;
+    }
+    if (index === 0) {
+      return true;
+    }
+    const prev = messages[index - 1];
+    return current.timestamp - prev.timestamp > 30 * 60 * 1000;
+  };
+
+  formatTimestamp = timestamp => {
+    const date = new Date(timestamp);
+    const now = new Date();
+
+    const pad = num => (num < 10 ? `0${num}` : `${num}`);
+    const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+
+    const isSameDay =
+      date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate();
+
+    const yesterday = new Date();
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday =
+      date.getFullYear() === yesterday.getFullYear() &&
+      date.getMonth() === yesterday.getMonth() &&
+      date.getDate() === yesterday.getDate();
+
+    if (isSameDay) {
+      return time;
+    }
+    if (isYesterday) {
+      return `Yesterday ${time}`;
+    }
+    return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${time}`;
+  };
+
+  renderAvatar = sender => {
+    const isUser = sender === 'user';
+    const source = isUser ? require('../../img/icon.png') : require('../../img/bluebeast.png');
+    return (
+      <View style={[styles.avatarWrapper, isUser ? styles.userAvatarWrapper : styles.agentAvatarWrapper]}>
+        <Image source={source} style={styles.avatarImage} resizeMode="cover" />
+      </View>
+    );
+  };
+
+  renderMessage = ({ item, index }) => {
     const isUser = item.sender === 'user';
     return (
-      <View style={[styles.messageRow, isUser ? styles.userRow : styles.agentRow]}>
-        <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}>
-          <Text style={[styles.messageText, isUser ? styles.userText : styles.agentText]}>{item.text}</Text>
+      <>
+        {this.shouldShowTimestamp(index) && (
+          <View style={styles.timestampContainer}>
+            <Text style={styles.timestampText}>{this.formatTimestamp(item.timestamp)}</Text>
+          </View>
+        )}
+        <View style={[styles.messageRow, isUser ? styles.userRow : styles.agentRow]}>
+          {!isUser && this.renderAvatar('agent')}
+          <View style={[styles.bubbleColumn, isUser ? styles.userBubbleColumn : styles.agentBubbleColumn]}>
+            <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}>
+              <Text style={[styles.messageText, isUser ? styles.userText : styles.agentText]}>{item.text}</Text>
+            </View>
+          </View>
+          {isUser && this.renderAvatar('user')}
         </View>
-      </View>
+      </>
     );
   };
 
@@ -226,20 +295,15 @@ export default AgentChat;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0b1224',
-  },
-  headerTitleContainer: {
-    flexDirection: 'column',
+    backgroundColor: '#0a0d15',
   },
   headerTitle: {
     color: '#ffffff',
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '700',
   },
-  headerSubtitle: {
-    color: '#9ca4b3',
-    fontSize: 12,
-    marginTop: 2,
+  headerAction: {
+    paddingHorizontal: 16,
   },
   chatContainer: {
     flex: 1,
@@ -252,6 +316,7 @@ const styles = StyleSheet.create({
   messageRow: {
     flexDirection: 'row',
     marginBottom: 12,
+    alignItems: 'flex-end',
   },
   userRow: {
     justifyContent: 'flex-end',
@@ -259,18 +324,26 @@ const styles = StyleSheet.create({
   agentRow: {
     justifyContent: 'flex-start',
   },
+  bubbleColumn: {
+    maxWidth: '76%',
+  },
+  userBubbleColumn: {
+    marginLeft: 12,
+  },
+  agentBubbleColumn: {
+    marginRight: 12,
+  },
   messageBubble: {
-    maxWidth: '78%',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
   },
   userBubble: {
-    backgroundColor: KevaColors.actionText,
+    backgroundColor: '#1fcd51',
     borderBottomRightRadius: 2,
   },
   agentBubble: {
-    backgroundColor: '#11182d',
+    backgroundColor: '#101726',
     borderBottomLeftRadius: 2,
     borderWidth: 1,
     borderColor: '#1f2a44',
@@ -284,6 +357,33 @@ const styles = StyleSheet.create({
   },
   agentText: {
     color: '#d2d7e0',
+  },
+  timestampContainer: {
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  timestampText: {
+    color: '#6f7587',
+    fontSize: 13,
+  },
+  avatarWrapper: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#1a2336',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  agentAvatarWrapper: {
+    borderWidth: 1,
+    borderColor: '#24304a',
+  },
+  userAvatarWrapper: {
+    borderWidth: 1,
+    borderColor: '#1fcd51',
   },
   emptyContainer: {
     flex: 1,
