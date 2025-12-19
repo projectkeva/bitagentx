@@ -12,10 +12,12 @@ import {
 } from 'react-native';
 import { Icon } from 'react-native-elements';
 import RNFS from 'react-native-fs';
+import { connect } from 'react-redux';
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
+import { getInitials, stringToColor } from '../../util';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const INTRO_MESSAGE = 'Initiating the super agent network…';
@@ -217,9 +219,50 @@ class AgentChat extends React.Component {
     return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${time}`;
   };
 
+  getUserAvatar = () => {
+    const { namespaceList } = this.props;
+    const firstId = namespaceList?.order?.[0];
+    const namespace = firstId ? namespaceList?.namespaces?.[firstId] : null;
+    if (!namespace) {
+      return null;
+    }
+    const avatarUri = buildHeadAssetUri(namespace.shortCode);
+    if (avatarUri) {
+      return { type: 'image', uri: avatarUri };
+    }
+    const displayName = namespace.displayName || ' ';
+    return {
+      type: 'fallback',
+      initials: getInitials(displayName),
+      color: stringToColor(displayName),
+    };
+  };
+
   renderAvatar = sender => {
     const isUser = sender === 'user';
     if (isUser) {
+      const userAvatar = this.getUserAvatar();
+      if (userAvatar?.type === 'image') {
+        return (
+          <View style={[styles.avatarWrapper, styles.userAvatarWrapper]}>
+            <Image source={{ uri: userAvatar.uri }} style={styles.avatarImage} resizeMode="cover" />
+          </View>
+        );
+      }
+      if (userAvatar?.type === 'fallback') {
+        return (
+          <View
+            style={[
+              styles.avatarWrapper,
+              styles.userAvatarWrapper,
+              styles.userAvatarFallback,
+              { backgroundColor: userAvatar.color },
+            ]}
+          >
+            <Text style={styles.userAvatarText}>{userAvatar.initials}</Text>
+          </View>
+        );
+      }
       return (
         <View style={[styles.avatarWrapper, styles.userAvatarWrapper, styles.userAvatarBlank]} />
       );
@@ -304,7 +347,11 @@ class AgentChat extends React.Component {
   }
 }
 
-export default AgentChat;
+const mapStateToProps = state => ({
+  namespaceList: state.namespaceList,
+});
+
+export default connect(mapStateToProps)(AgentChat);
 
 const styles = StyleSheet.create({
   container: {
@@ -401,6 +448,15 @@ const styles = StyleSheet.create({
   },
   userAvatarBlank: {
     backgroundColor: '#000000',
+  },
+  userAvatarFallback: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  userAvatarText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
   },
   emptyContainer: {
     flex: 1,
