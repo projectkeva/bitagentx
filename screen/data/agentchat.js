@@ -389,10 +389,10 @@ const styles = StyleSheet.create({
     maxWidth: '76%',
   },
   userBubbleColumn: {
-    marginLeft: 12,
+    marginRight: 12,
   },
   agentBubbleColumn: {
-    marginRight: 12,
+    marginLeft: 12,
   },
   messageBubble: {
     paddingHorizontal: 14,
