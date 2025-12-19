@@ -15,6 +15,7 @@ import RNFS from 'react-native-fs';
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
+import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const INTRO_MESSAGE = 'Initiating the super agent network…';
@@ -38,6 +39,11 @@ class AgentChat extends React.Component {
     return {
       ...BlueNavigationStyle(),
       title: '',
+      headerStyle: {
+        backgroundColor: '#ffffff',
+        borderBottomColor: '#e3e5ea',
+      },
+      headerTintColor: '#000000',
       headerTitle: () => <Text style={styles.headerTitle}>{title}</Text>,
       headerRight: () => (
         <TouchableOpacity
@@ -45,7 +51,7 @@ class AgentChat extends React.Component {
           style={styles.headerAction}
           onPress={() => navigation.state?.params?.onOpenSettings?.()}
         >
-          <Icon name="more-horizontal" type="feather" color="#ffffff" size={20} />
+          <Icon name="more-horizontal" type="feather" color="#000000" size={20} />
         </TouchableOpacity>
       ),
     };
@@ -213,9 +219,17 @@ class AgentChat extends React.Component {
 
   renderAvatar = sender => {
     const isUser = sender === 'user';
-    const source = isUser ? require('../../img/icon.png') : require('../../img/bluebeast.png');
+    if (isUser) {
+      return (
+        <View style={[styles.avatarWrapper, styles.userAvatarWrapper, styles.userAvatarBlank]} />
+      );
+    }
+
+    const { shortCode } = this.props.navigation.state.params || {};
+    const avatarUri = buildHeadAssetUri(shortCode);
+    const source = avatarUri ? { uri: avatarUri } : require('../../img/bluebeast.png');
     return (
-      <View style={[styles.avatarWrapper, isUser ? styles.userAvatarWrapper : styles.agentAvatarWrapper]}>
+      <View style={[styles.avatarWrapper, styles.agentAvatarWrapper]}>
         <Image source={source} style={styles.avatarImage} resizeMode="cover" />
       </View>
     );
@@ -298,7 +312,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#0a0d15',
   },
   headerTitle: {
-    color: '#ffffff',
+    color: '#000000',
     fontSize: 18,
     fontWeight: '700',
   },
@@ -384,6 +398,9 @@ const styles = StyleSheet.create({
   userAvatarWrapper: {
     borderWidth: 1,
     borderColor: '#1fcd51',
+  },
+  userAvatarBlank: {
+    backgroundColor: '#000000',
   },
   emptyContainer: {
     flex: 1,
