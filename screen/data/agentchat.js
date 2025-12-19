@@ -51,7 +51,15 @@ class AgentChat extends React.Component {
         borderBottomColor: '#e3e5ea',
       },
       headerTintColor: '#000000',
-      headerTitle: () => <Text style={styles.headerTitle}>{title}</Text>,
+      headerTitle: () => (
+        <TouchableOpacity
+          accessibilityLabel="Open space"
+          onPress={() => navigation.state?.params?.onTitlePress?.()}
+          style={styles.headerTitleButton}
+        >
+          <Text style={styles.headerTitle}>{title}</Text>
+        </TouchableOpacity>
+      ),
       headerRight: () => (
         <TouchableOpacity
           accessibilityLabel="Open chat settings"
@@ -66,6 +74,7 @@ class AgentChat extends React.Component {
 
   componentDidMount() {
     this._isMounted = true;
+    this.props.navigation?.setParams?.({ onTitlePress: this.handleTitlePress });
     this.initializeChat();
   }
 
@@ -206,6 +215,27 @@ class AgentChat extends React.Component {
       walletId,
       key: this.formatSubmitTitle(),
       value: messageText,
+    });
+  };
+
+  handleTitlePress = () => {
+    const { navigation, namespaceList } = this.props;
+    if (!navigation || typeof navigation.navigate !== 'function') {
+      return;
+    }
+    const { namespaceId, displayName, shortCode, walletId } = navigation.state.params || {};
+    const namespace = namespaceId ? namespaceList?.namespaces?.[namespaceId] : null;
+    navigation.navigate('KeyValues', {
+      namespaceId: namespace?.id || namespaceId,
+      shortCode: namespace?.shortCode || shortCode,
+      displayName: namespace?.displayName || displayName,
+      txid: namespace?.txId,
+      rootAddress: namespace?.rootAddress,
+      walletId: namespace?.walletId || walletId,
+      price: namespace?.price,
+      desc: namespace?.desc,
+      addr: namespace?.addr,
+      profile: namespace?.profile,
     });
   };
 
@@ -462,6 +492,10 @@ const styles = StyleSheet.create({
     color: '#000000',
     fontSize: 18,
     fontWeight: '700',
+  },
+  headerTitleButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   headerAction: {
     paddingHorizontal: 16,
