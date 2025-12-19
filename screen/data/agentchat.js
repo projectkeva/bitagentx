@@ -21,6 +21,7 @@ import { getInitials, stringToColor } from '../../util';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const INTRO_MESSAGE = 'Initiating the super agent network…';
+const PAGE_SIZE = 10;
 
 class AgentChat extends React.Component {
   constructor(props) {
@@ -28,8 +29,12 @@ class AgentChat extends React.Component {
     this.state = {
       allMessages: [],
       messages: [],
+      visibleCount: PAGE_SIZE,
       inputValue: '',
     };
+    this.loadingMore = false;
+    this.didInitialScroll = false;
+    this.shouldScrollToEnd = false;
   }
 
   static navigationOptions = ({ navigation }) => {
@@ -75,12 +80,17 @@ class AgentChat extends React.Component {
     if (!this._isMounted) {
       return;
     }
+    const visibleCount = Math.min(history.length || PAGE_SIZE, PAGE_SIZE);
     this.setState(
       {
         allMessages: history,
-        messages: history.slice(-10),
+        visibleCount,
+        messages: history.slice(-visibleCount),
       },
-      () => this.ensureIntroMessage(),
+      () => {
+        this.ensureIntroMessage();
+        this.scrollToEnd(false);
+      },
     );
   };
 
@@ -134,12 +144,15 @@ class AgentChat extends React.Component {
   });
 
   appendMessage = message => {
+    this.shouldScrollToEnd = true;
     this.setState(
       prevState => {
         const allMessages = [...prevState.allMessages, message];
+        const visibleCount = Math.max(prevState.visibleCount, Math.min(PAGE_SIZE, allMessages.length));
         return {
           allMessages,
-          messages: allMessages.slice(-10),
+          visibleCount,
+          messages: allMessages.slice(-visibleCount),
         };
       },
       () => this.persistMessages(this.state.allMessages),
@@ -176,6 +189,49 @@ class AgentChat extends React.Component {
   replyFromAgent = text => {
     const reply = this.buildMessage(text, 'agent');
     this.appendMessage(reply);
+  };
+
+  loadMoreHistory = () => {
+    if (this.loadingMore) {
+      return;
+    }
+    const { allMessages, visibleCount } = this.state;
+    if (visibleCount >= allMessages.length) {
+      return;
+    }
+    this.loadingMore = true;
+    this.setState(
+      prevState => {
+        const nextCount = Math.min(prevState.allMessages.length, prevState.visibleCount + PAGE_SIZE);
+        return {
+          visibleCount: nextCount,
+          messages: prevState.allMessages.slice(-nextCount),
+        };
+      },
+      () => {
+        this.loadingMore = false;
+      },
+    );
+  };
+
+  handleScroll = event => {
+    const { contentOffset } = event.nativeEvent;
+    if (contentOffset?.y <= 20) {
+      this.loadMoreHistory();
+    }
+  };
+
+  scrollToEnd = animated => {
+    if (this.listRef) {
+      this.listRef.scrollToEnd({ animated });
+    }
+  };
+
+  handleContentSizeChange = () => {
+    if (this.shouldScrollToEnd) {
+      this.scrollToEnd(true);
+      this.shouldScrollToEnd = false;
+    }
   };
 
   shouldShowTimestamp = index => {
@@ -322,8 +378,16 @@ class AgentChat extends React.Component {
                   <Text style={styles.emptyText}>Start a conversation with this agent.</Text>
                 </View>
               )}
-              onContentSizeChange={() => this.listRef && this.listRef.scrollToEnd({ animated: true })}
-              onLayout={() => this.listRef && this.listRef.scrollToEnd({ animated: false })}
+              maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+              onContentSizeChange={this.handleContentSizeChange}
+              onLayout={() => {
+                if (!this.didInitialScroll) {
+                  this.scrollToEnd(false);
+                  this.didInitialScroll = true;
+                }
+              }}
+              onScroll={this.handleScroll}
+              scrollEventThrottle={16}
               keyboardShouldPersistTaps="handled"
             />
           </View>
