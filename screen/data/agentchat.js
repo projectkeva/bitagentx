@@ -195,18 +195,7 @@ class AgentChat extends React.Component {
     return timeConverter(Math.floor(Date.now() / 1000));
   };
 
-  buildChatTranscript = () => {
-    const { displayName } = this.props.navigation.state.params || {};
-    const agentLabel = displayName || 'Agent';
-    return this.state.allMessages
-      .map(message => {
-        const senderLabel = message.sender === 'agent' ? agentLabel : 'You';
-        return `${senderLabel}: ${message.text}`;
-      })
-      .join('\n');
-  };
-
-  handleAgentAvatarPress = () => {
+  handleAvatarPress = messageText => {
     const { navigation } = this.props;
     const { namespaceId, walletId } = navigation.state.params || {};
     if (!navigation || typeof navigation.navigate !== 'function') {
@@ -216,7 +205,7 @@ class AgentChat extends React.Component {
       namespaceId,
       walletId,
       key: this.formatSubmitTitle(),
-      value: this.buildChatTranscript(),
+      value: messageText,
     });
   };
 
@@ -357,16 +346,9 @@ class AgentChat extends React.Component {
     const avatarUri = buildHeadAssetUri(shortCode);
     const source = avatarUri ? { uri: avatarUri } : require('../../img/bluebeast.png');
     return (
-      <TouchableOpacity
-        accessibilityLabel="Open submit form"
-        activeOpacity={0.7}
-        onPress={this.handleAgentAvatarPress}
-        style={styles.avatarPressable}
-      >
-        <View style={[styles.avatarWrapper, styles.agentAvatarWrapper]}>
-          <Image source={source} style={styles.avatarImage} resizeMode="cover" />
-        </View>
-      </TouchableOpacity>
+      <View style={[styles.avatarWrapper, styles.agentAvatarWrapper]}>
+        <Image source={source} style={styles.avatarImage} resizeMode="cover" />
+      </View>
     );
   };
 
@@ -380,13 +362,31 @@ class AgentChat extends React.Component {
           </View>
         )}
         <View style={[styles.messageRow, isUser ? styles.userRow : styles.agentRow]}>
-          {!isUser && this.renderAvatar('agent')}
+          {!isUser && (
+            <TouchableOpacity
+              accessibilityLabel="Open submit form"
+              activeOpacity={0.7}
+              onPress={() => this.handleAvatarPress(item.text)}
+              style={styles.avatarPressable}
+            >
+              {this.renderAvatar('agent')}
+            </TouchableOpacity>
+          )}
           <View style={[styles.bubbleColumn, isUser ? styles.userBubbleColumn : styles.agentBubbleColumn]}>
             <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}>
               <Text style={[styles.messageText, isUser ? styles.userText : styles.agentText]}>{item.text}</Text>
             </View>
           </View>
-          {isUser && this.renderAvatar('user')}
+          {isUser && (
+            <TouchableOpacity
+              accessibilityLabel="Open submit form"
+              activeOpacity={0.7}
+              onPress={() => this.handleAvatarPress(item.text)}
+              style={styles.avatarPressable}
+            >
+              {this.renderAvatar('user')}
+            </TouchableOpacity>
+          )}
         </View>
       </>
     );
