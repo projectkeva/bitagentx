@@ -340,6 +340,7 @@ class Namespace extends React.Component {
     const namespaceId = data.id || data.namespaceId;
     navigation.push('AgentChat', {
       namespaceId,
+      walletId: data.walletId,
       displayName: data.displayName,
       shortCode: data.shortCode,
     });

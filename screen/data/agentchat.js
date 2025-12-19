@@ -17,7 +17,7 @@ const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
-import { getInitials, stringToColor } from '../../util';
+import { getInitials, stringToColor, timeConverter } from '../../util';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const INTRO_MESSAGE = 'Initiating the super agent network…';
@@ -191,6 +191,35 @@ class AgentChat extends React.Component {
     this.appendMessage(reply);
   };
 
+  formatSubmitTitle = () => {
+    return timeConverter(Math.floor(Date.now() / 1000));
+  };
+
+  buildChatTranscript = () => {
+    const { displayName } = this.props.navigation.state.params || {};
+    const agentLabel = displayName || 'Agent';
+    return this.state.allMessages
+      .map(message => {
+        const senderLabel = message.sender === 'agent' ? agentLabel : 'You';
+        return `${senderLabel}: ${message.text}`;
+      })
+      .join('\n');
+  };
+
+  handleAgentAvatarPress = () => {
+    const { navigation } = this.props;
+    const { namespaceId, walletId } = navigation.state.params || {};
+    if (!navigation || typeof navigation.navigate !== 'function') {
+      return;
+    }
+    navigation.navigate('AddKeyValue', {
+      namespaceId,
+      walletId,
+      key: this.formatSubmitTitle(),
+      value: this.buildChatTranscript(),
+    });
+  };
+
   loadMoreHistory = () => {
     if (this.loadingMore) {
       return;
@@ -328,9 +357,16 @@ class AgentChat extends React.Component {
     const avatarUri = buildHeadAssetUri(shortCode);
     const source = avatarUri ? { uri: avatarUri } : require('../../img/bluebeast.png');
     return (
-      <View style={[styles.avatarWrapper, styles.agentAvatarWrapper]}>
-        <Image source={source} style={styles.avatarImage} resizeMode="cover" />
-      </View>
+      <TouchableOpacity
+        accessibilityLabel="Open submit form"
+        activeOpacity={0.7}
+        onPress={this.handleAgentAvatarPress}
+        style={styles.avatarPressable}
+      >
+        <View style={[styles.avatarWrapper, styles.agentAvatarWrapper]}>
+          <Image source={source} style={styles.avatarImage} resizeMode="cover" />
+        </View>
+      </TouchableOpacity>
     );
   };
 
@@ -501,6 +537,9 @@ const styles = StyleSheet.create({
   avatarImage: {
     width: '100%',
     height: '100%',
+  },
+  avatarPressable: {
+    borderRadius: 12,
   },
   agentAvatarWrapper: {
     borderWidth: 1,
