@@ -7,23 +7,30 @@ import {
   FlatList,
   SafeAreaView,
   TouchableOpacity,
+  Clipboard,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { Icon } from 'react-native-elements';
 import RNFS from 'react-native-fs';
 import { connect } from 'react-redux';
+import { encode as b64encode, decode as b64decode } from 'base-64';
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
-import { getInitials, stringToColor, timeConverter } from '../../util';
+import { getInitials, stringToColor, timeConverter, toastError } from '../../util';
+import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
+import { getNamespaceScriptHash, replyKeyValue, toScriptHash } from '../../class/keva-ops';
+import ActionSheet from '../ActionSheet';
 
-const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
-const INTRO_MESSAGE = 'Initiating the super agent network…';
+let BlueApp = require('../../BlueApp');
+let BlueElectrum = require('../../BlueElectrum');
+
+const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/follow_chats`;
 const PAGE_SIZE = 10;
 
-class AgentChat extends React.Component {
+class FollowChat extends React.Component {
   constructor(props) {
     super(props);
     this.state = {
@@ -31,16 +38,25 @@ class AgentChat extends React.Component {
       messages: [],
       visibleCount: PAGE_SIZE,
       inputValue: '',
+      myNamespaceId: null,
+      peerNamespaceId: null,
+      myAnchorTxid: null,
+      peerAnchorTxid: null,
+      syncing: false,
+      lastSyncAt: 0,
+      myInboxCursor: -1,
+      peerInboxCursor: -1,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
     this.shouldScrollToEnd = false;
+    this.conversationId = null;
   }
 
   static navigationOptions = ({ navigation }) => {
     const params = navigation.state?.params || {};
-    const displayName = params.displayName || 'Agent';
-    const shortCode = params.shortCode ? `@${params.shortCode}` : '';
+    const displayName = params.peerDisplayName || params.displayName || 'Agent';
+    const shortCode = params.peerShortCode ? `@${params.peerShortCode}` : '';
     const title = shortCode ? `${displayName}${shortCode}` : displayName;
 
     return {
@@ -76,29 +92,50 @@ class AgentChat extends React.Component {
     this._isMounted = true;
     this.props.navigation?.setParams?.({ onTitlePress: this.handleTitlePress });
     this.initializeChat();
+    this.syncTimer = setInterval(() => this.syncFromChain(), 8000);
   }
 
   componentWillUnmount() {
     this._isMounted = false;
+    if (this.syncTimer) {
+      clearInterval(this.syncTimer);
+    }
   }
 
   initializeChat = async () => {
-    const { namespaceId } = this.props.navigation.state.params || {};
+    const params = this.props.navigation.state.params || {};
+    const { namespaceList } = this.props;
+    const myNamespaceId = params.myNamespaceId || namespaceList?.order?.[0] || null;
+    const peerNamespaceId = params.peerNamespaceId || null;
+    const conversationId = this.getConversationId(myNamespaceId, peerNamespaceId);
     await this.ensureStorage();
-    const history = await this.readHistory(namespaceId);
+    const history = await this.readHistory(conversationId);
     if (!this._isMounted) {
       return;
     }
     const visibleCount = Math.min(history.length || PAGE_SIZE, PAGE_SIZE);
+    let myAnchorTxid = params.myAnchorTxid || null;
+    let peerAnchorTxid = params.peerAnchorTxid || null;
+    if (!myAnchorTxid && myNamespaceId) {
+      myAnchorTxid = await this.resolveAnchorTxid(myNamespaceId);
+    }
+    if (!peerAnchorTxid && peerNamespaceId) {
+      peerAnchorTxid = await this.resolveAnchorTxid(peerNamespaceId);
+    }
+    this.conversationId = conversationId;
     this.setState(
       {
         allMessages: history,
         visibleCount,
         messages: history.slice(-visibleCount),
+        myNamespaceId,
+        peerNamespaceId,
+        myAnchorTxid,
+        peerAnchorTxid,
       },
       () => {
-        this.ensureIntroMessage();
         this.scrollToEnd(false);
+        this.syncFromChain({ reset: true });
       },
     );
   };
@@ -114,10 +151,16 @@ class AgentChat extends React.Component {
     }
   };
 
-  getChatFilePath = namespaceId => `${CHAT_DIR}/${namespaceId || 'default'}.json`;
+  getConversationId = (myNamespaceId, peerNamespaceId) => {
+    const safeMine = myNamespaceId || 'me';
+    const safePeer = peerNamespaceId || 'peer';
+    return `${safeMine}__${safePeer}`;
+  };
 
-  readHistory = async namespaceId => {
-    const path = this.getChatFilePath(namespaceId);
+  getChatFilePath = conversationId => `${CHAT_DIR}/${conversationId || 'default'}.json`;
+
+  readHistory = async conversationId => {
+    const path = this.getChatFilePath(conversationId);
     try {
       const fileExists = await RNFS.exists(path);
       if (!fileExists) {
@@ -136,8 +179,7 @@ class AgentChat extends React.Component {
   };
 
   persistMessages = async messages => {
-    const { namespaceId } = this.props.navigation.state.params || {};
-    const path = this.getChatFilePath(namespaceId);
+    const path = this.getChatFilePath(this.conversationId);
     try {
       await RNFS.writeFile(path, JSON.stringify(messages), 'utf8');
     } catch (error) {
@@ -145,12 +187,19 @@ class AgentChat extends React.Component {
     }
   };
 
-  buildMessage = (text, sender = 'user') => ({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    text,
-    sender,
-    timestamp: Date.now(),
-  });
+  buildMessage = (text, sender = 'user', options = {}) => {
+    const idSource = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    return {
+      id: options.id || b64encode(idSource),
+      text,
+      sender,
+      timestamp: options.timestamp || Date.now(),
+      txid: options.txid || null,
+      pending: Boolean(options.pending),
+      failed: Boolean(options.failed),
+      direction: options.direction || (sender === 'user' ? 'out' : 'in'),
+    };
+  };
 
   appendMessage = message => {
     this.shouldScrollToEnd = true;
@@ -168,50 +217,104 @@ class AgentChat extends React.Component {
     );
   };
 
-  ensureIntroMessage = () => {
-    const lastMessage = this.state.allMessages[this.state.allMessages.length - 1];
-    if (lastMessage && lastMessage.text === INTRO_MESSAGE && lastMessage.sender === 'agent') {
-      return;
-    }
-    const intro = this.buildMessage(INTRO_MESSAGE, 'agent');
-    this.appendMessage(intro);
+  markMessageFailed = messageId => {
+    this.setState(
+      prevState => {
+        const allMessages = prevState.allMessages.map(message =>
+          message.id === messageId ? { ...message, failed: true, pending: false } : message,
+        );
+        return {
+          allMessages,
+          messages: allMessages.slice(-prevState.visibleCount),
+        };
+      },
+      () => this.persistMessages(this.state.allMessages),
+    );
   };
 
-  handleSend = () => {
+  handleSend = async () => {
     const text = this.state.inputValue.trim();
-    if (!text) {
+    const canSend = this.canSendMessage();
+    if (!text || !canSend) {
       return;
     }
-    const userMessage = this.buildMessage(text, 'user');
+    const userMessage = this.buildMessage(text, 'user', { pending: true, direction: 'out' });
     this.appendMessage(userMessage);
     this.setState({ inputValue: '' });
-    this.handleTriggers(text);
-  };
-
-  handleTriggers = text => {
-    const normalized = text.trim().toUpperCase();
-    if (normalized.includes('D-CARD')) {
-      this.replyFromAgent('Reading D-CARD ok');
+    try {
+      await this.sendOnChain(text);
+      await this.syncFromChain();
+    } catch (error) {
+      console.warn('Failed to send follow chat message', error);
+      this.markMessageFailed(userMessage.id);
+      toastError(error?.message || 'Failed to send message');
     }
-  };
-
-  replyFromAgent = text => {
-    const reply = this.buildMessage(text, 'agent');
-    this.appendMessage(reply);
   };
 
   formatSubmitTitle = () => {
     return timeConverter(Math.floor(Date.now() / 1000));
   };
 
-  handleAvatarPress = messageText => {
+  handleMessagePress = messageText => {
+    if (messageText) {
+      Clipboard.setString(messageText);
+    }
+  };
+
+  handleMessageLongPress = messageText => {
+    if (!messageText) {
+      return;
+    }
+    if (Platform.OS === 'ios') {
+      ActionSheet.showActionSheetWithOptions(
+        {
+          options: ['Copy', 'Submit to my namespace', 'Cancel'],
+          cancelButtonIndex: 2,
+        },
+        buttonIndex => {
+          if (buttonIndex === 0) {
+            Clipboard.setString(messageText);
+          }
+          if (buttonIndex === 1) {
+            this.submitToNamespace(messageText);
+          }
+        },
+      );
+    } else {
+      ActionSheet.showActionSheetWithOptions({
+        title: '',
+        message: '',
+        buttons: [
+          {
+            text: 'Cancel',
+            onPress: () => {},
+            style: 'cancel',
+          },
+          {
+            text: 'Copy',
+            onPress: () => Clipboard.setString(messageText),
+          },
+          {
+            text: 'Submit to my namespace',
+            onPress: () => this.submitToNamespace(messageText),
+          },
+        ],
+      });
+    }
+  };
+
+  submitToNamespace = messageText => {
     const { navigation } = this.props;
-    const { namespaceId, walletId } = navigation.state.params || {};
+    const { myNamespaceId } = this.state;
+    const walletId = this.getWalletId();
     if (!navigation || typeof navigation.navigate !== 'function') {
       return;
     }
+    if (!myNamespaceId || !walletId) {
+      return;
+    }
     navigation.navigate('AddKeyValue', {
-      namespaceId,
+      namespaceId: myNamespaceId,
       walletId,
       key: this.formatSubmitTitle(),
       value: messageText,
@@ -223,12 +326,12 @@ class AgentChat extends React.Component {
     if (!navigation || typeof navigation.navigate !== 'function') {
       return;
     }
-    const { namespaceId, displayName, shortCode, walletId } = navigation.state.params || {};
-    const namespace = namespaceId ? namespaceList?.namespaces?.[namespaceId] : null;
+    const { peerNamespaceId, peerDisplayName, peerShortCode, walletId } = navigation.state.params || {};
+    const namespace = peerNamespaceId ? namespaceList?.namespaces?.[peerNamespaceId] : null;
     navigation.navigate('KeyValues', {
-      namespaceId: namespace?.id || namespaceId,
-      shortCode: namespace?.shortCode || shortCode,
-      displayName: namespace?.displayName || displayName,
+      namespaceId: namespace?.id || peerNamespaceId,
+      shortCode: namespace?.shortCode || peerShortCode,
+      displayName: namespace?.displayName || peerDisplayName,
       txid: namespace?.txId,
       rootAddress: namespace?.rootAddress,
       walletId: namespace?.walletId || walletId,
@@ -325,7 +428,7 @@ class AgentChat extends React.Component {
 
   getUserAvatar = () => {
     const { namespaceList } = this.props;
-    const firstId = namespaceList?.order?.[0];
+    const firstId = this.state.myNamespaceId || namespaceList?.order?.[0];
     const namespace = firstId ? namespaceList?.namespaces?.[firstId] : null;
     if (!namespace) {
       return null;
@@ -372,8 +475,8 @@ class AgentChat extends React.Component {
       );
     }
 
-    const { shortCode } = this.props.navigation.state.params || {};
-    const avatarUri = buildHeadAssetUri(shortCode);
+    const { peerShortCode } = this.props.navigation.state.params || {};
+    const avatarUri = buildHeadAssetUri(peerShortCode);
     const source = avatarUri ? { uri: avatarUri } : require('../../img/bluebeast.png');
     return (
       <View style={[styles.avatarWrapper, styles.agentAvatarWrapper]}>
@@ -393,36 +496,266 @@ class AgentChat extends React.Component {
         )}
         <View style={[styles.messageRow, isUser ? styles.userRow : styles.agentRow]}>
           {!isUser && (
-            <TouchableOpacity
-              accessibilityLabel="Open submit form"
-              activeOpacity={0.7}
-              onPress={() => this.handleAvatarPress(item.text)}
-              style={styles.avatarPressable}
-            >
-              {this.renderAvatar('agent')}
-            </TouchableOpacity>
+            <View style={styles.avatarPressable}>{this.renderAvatar('peer')}</View>
           )}
           <View style={[styles.bubbleColumn, isUser ? styles.userBubbleColumn : styles.agentBubbleColumn]}>
-            <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}>
+            <TouchableOpacity
+              accessibilityLabel="Chat message"
+              activeOpacity={0.7}
+              onPress={() => this.handleMessagePress(item.text)}
+              onLongPress={() => this.handleMessageLongPress(item.text)}
+              style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}
+            >
               <Text style={[styles.messageText, isUser ? styles.userText : styles.agentText]}>{item.text}</Text>
-            </View>
+            </TouchableOpacity>
           </View>
           {isUser && (
-            <TouchableOpacity
-              accessibilityLabel="Open submit form"
-              activeOpacity={0.7}
-              onPress={() => this.handleAvatarPress(item.text)}
-              style={styles.avatarPressable}
-            >
-              {this.renderAvatar('user')}
-            </TouchableOpacity>
+            <View style={styles.avatarPressable}>{this.renderAvatar('user')}</View>
           )}
         </View>
       </>
     );
   };
 
+  getWalletId = () => {
+    const params = this.props.navigation.state.params || {};
+    if (params.walletId) {
+      return params.walletId;
+    }
+    const { namespaceList } = this.props;
+    const { myNamespaceId } = this.state;
+    const namespace = myNamespaceId ? namespaceList?.namespaces?.[myNamespaceId] : null;
+    return namespace?.walletId || null;
+  };
+
+  canSendMessage = () => {
+    return Boolean(this.state.peerNamespaceId && this.state.peerAnchorTxid);
+  };
+
+  buildEnvelope = text => {
+    return text;
+  };
+
+  parseEnvelope = value => {
+    if (!value) {
+      return '';
+    }
+    if (typeof value !== 'string') {
+      return String(value);
+    }
+    try {
+      const parsed = JSON.parse(value);
+      return parsed.text || parsed.cipher || value;
+    } catch (error) {
+      return value;
+    }
+  };
+
+  resolveAnchorTxid = async namespaceId => {
+    if (!namespaceId) {
+      return null;
+    }
+    const { namespaceList } = this.props;
+    const namespace = namespaceList?.namespaces?.[namespaceId];
+    const scriptHash = namespace?.rootAddress ? toScriptHash(namespace.rootAddress) : getNamespaceScriptHash(namespaceId);
+    try {
+      await BlueElectrum.ping();
+      const history = await BlueElectrum.blockchainKeva_getKeyValues(scriptHash, -1);
+      const keyvalues = Array.isArray(history) ? history : history?.keyvalues || [];
+      if (!keyvalues.length) {
+        return null;
+      }
+      const reg = keyvalues.find(entry => entry.type === 'REG');
+      if (reg?.tx_hash || reg?.txid) {
+        return reg.tx_hash || reg.txid;
+      }
+      const last = keyvalues[keyvalues.length - 1];
+      return last?.tx_hash || last?.txid || null;
+    } catch (error) {
+      console.warn('Failed to resolve anchor txid', error);
+      return null;
+    }
+  };
+
+  normalizeReactionValue = reaction => {
+    const rawValue = reaction?.value;
+    if (!rawValue) {
+      return '';
+    }
+    if (typeof rawValue !== 'string') {
+      return this.parseEnvelope(rawValue);
+    }
+    try {
+      const decoded = b64decode(rawValue);
+      return this.parseEnvelope(decoded);
+    } catch (error) {
+      return this.parseEnvelope(rawValue);
+    }
+  };
+
+  reactionMatchesSender = (reaction, namespaceId, shortCode) => {
+    if (!reaction) {
+      return false;
+    }
+    const sender = reaction.sender || {};
+    const senderShortCode = sender.shortCode || sender.short_code || reaction.shortCode || reaction.short_code;
+    const senderNamespaceId = sender.namespaceId || sender.namespace_id || reaction.namespaceId || reaction.namespace_id;
+    return (namespaceId && senderNamespaceId === namespaceId) || (shortCode && senderShortCode === shortCode);
+  };
+
+  syncFromChain = async ({ reset = false } = {}) => {
+    const {
+      myNamespaceId,
+      peerNamespaceId,
+      myAnchorTxid,
+      peerAnchorTxid,
+      myInboxCursor,
+      peerInboxCursor,
+      allMessages,
+      syncing,
+    } = this.state;
+    if (syncing) {
+      return;
+    }
+    if (!myNamespaceId || !peerNamespaceId || !myAnchorTxid || !peerAnchorTxid) {
+      return;
+    }
+    this.setState({ syncing: true });
+    try {
+      await BlueElectrum.ping();
+      await BlueElectrum.waitTillConnected();
+      const peerResponse = await BlueElectrum.blockchainKeva_getKeyValueReactions(peerAnchorTxid, reset ? -1 : peerInboxCursor);
+      const myResponse = await BlueElectrum.blockchainKeva_getKeyValueReactions(myAnchorTxid, reset ? -1 : myInboxCursor);
+      const peerReactions = Array.isArray(peerResponse) ? peerResponse : peerResponse?.reactions || peerResponse?.replies || [];
+      const myReactions = Array.isArray(myResponse) ? myResponse : myResponse?.reactions || myResponse?.replies || [];
+
+      const myNamespace = this.props.namespaceList?.namespaces?.[myNamespaceId] || {};
+      const peerNamespace = this.props.namespaceList?.namespaces?.[peerNamespaceId] || {};
+      const myShortCode = myNamespace.shortCode;
+      const peerShortCode = peerNamespace.shortCode;
+
+      const outgoing = peerReactions.filter(reaction => this.reactionMatchesSender(reaction, myNamespaceId, myShortCode));
+      const incoming = myReactions.filter(reaction => this.reactionMatchesSender(reaction, peerNamespaceId, peerShortCode));
+
+      const chainMessages = [];
+      outgoing.forEach(reaction => {
+        const txid = reaction.tx_hash || reaction.txid;
+        const text = this.normalizeReactionValue(reaction);
+        if (!text) {
+          return;
+        }
+        chainMessages.push(
+          this.buildMessage(text, 'user', {
+            id: `${txid}:${reaction.vout || reaction.tx_pos || reaction.n || 0}`,
+            timestamp: (reaction.time || reaction.timestamp || Date.now() / 1000) * 1000,
+            txid,
+            pending: false,
+            direction: 'out',
+          }),
+        );
+      });
+      incoming.forEach(reaction => {
+        const txid = reaction.tx_hash || reaction.txid;
+        const text = this.normalizeReactionValue(reaction);
+        if (!text) {
+          return;
+        }
+        chainMessages.push(
+          this.buildMessage(text, 'peer', {
+            id: `${txid}:${reaction.vout || reaction.tx_pos || reaction.n || 0}`,
+            timestamp: (reaction.time || reaction.timestamp || Date.now() / 1000) * 1000,
+            txid,
+            pending: false,
+            direction: 'in',
+          }),
+        );
+      });
+
+      const existingTxids = new Set(allMessages.filter(message => message.txid).map(message => message.txid));
+      const merged = [...allMessages];
+      chainMessages.forEach(message => {
+        if (message.txid && existingTxids.has(message.txid)) {
+          return;
+        }
+        if (message.direction === 'out') {
+          const pendingIndex = merged.findIndex(
+            existing =>
+              existing.pending &&
+              existing.direction === 'out' &&
+              existing.text === message.text,
+          );
+          if (pendingIndex >= 0) {
+            merged[pendingIndex] = {
+              ...merged[pendingIndex],
+              ...message,
+              pending: false,
+              failed: false,
+            };
+            return;
+          }
+        }
+        merged.push(message);
+      });
+
+      merged.sort((a, b) => a.timestamp - b.timestamp);
+      const nextVisibleCount = Math.max(this.state.visibleCount, Math.min(PAGE_SIZE, merged.length));
+      this.setState(
+        {
+          allMessages: merged,
+          visibleCount: nextVisibleCount,
+          messages: merged.slice(-nextVisibleCount),
+          lastSyncAt: Date.now(),
+          myInboxCursor: myResponse?.min_tx_num ?? myInboxCursor,
+          peerInboxCursor: peerResponse?.min_tx_num ?? peerInboxCursor,
+        },
+        () => this.persistMessages(this.state.allMessages),
+      );
+    } catch (error) {
+      console.warn('Failed to sync follow chat', error);
+    } finally {
+      if (this._isMounted) {
+        this.setState({ syncing: false });
+      }
+    }
+  };
+
+  sendOnChain = async text => {
+    const { myNamespaceId, peerAnchorTxid } = this.state;
+    const walletId = this.getWalletId();
+    if (!myNamespaceId) {
+      throw new Error('namespace not set');
+    }
+    if (!peerAnchorTxid) {
+      throw new Error('peer inbox not ready');
+    }
+    if (!walletId) {
+      throw new Error('wallet not found');
+    }
+    const wallets = BlueApp.getWallets();
+    const wallet = wallets.find(item => item.getID() === walletId);
+    if (!wallet) {
+      throw new Error('wallet not found');
+    }
+    const value = this.buildEnvelope(text);
+    await BlueElectrum.ping();
+    const { tx } = await replyKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, myNamespaceId, value, peerAnchorTxid);
+    await BlueElectrum.waitTillConnected();
+    const broadcastResult = await BlueElectrum.broadcast(tx);
+    if (broadcastResult && broadcastResult.code) {
+      throw new Error(broadcastResult.message || 'Broadcast failed');
+    }
+    return broadcastResult;
+  };
+
   render() {
+    const { peerNamespaceId, peerAnchorTxid } = this.state;
+    const canSend = this.canSendMessage();
+    let emptyText = 'Start a conversation with this peer.';
+    if (!peerNamespaceId) {
+      emptyText = 'Select a peer to start a conversation.';
+    } else if (!peerAnchorTxid) {
+      emptyText = 'peer inbox not ready';
+    }
     return (
       <SafeAreaView style={styles.container}>
         <KeyboardAvoidingView
@@ -441,7 +774,7 @@ class AgentChat extends React.Component {
               contentContainerStyle={this.state.messages.length === 0 ? styles.emptyContainer : styles.listContent}
               ListEmptyComponent={() => (
                 <View style={styles.emptyState}>
-                  <Text style={styles.emptyText}>Start a conversation with this agent.</Text>
+                  <Text style={styles.emptyText}>{emptyText}</Text>
                 </View>
               )}
               maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
@@ -466,8 +799,9 @@ class AgentChat extends React.Component {
               onChangeText={text => this.setState({ inputValue: text })}
               onSubmitEditing={this.handleSend}
               returnKeyType="send"
+              editable={canSend}
             />
-            <TouchableOpacity style={styles.sendButton} onPress={this.handleSend}>
+            <TouchableOpacity style={[styles.sendButton, !canSend && styles.sendButtonDisabled]} onPress={this.handleSend} disabled={!canSend}>
               <Text style={styles.sendButtonText}>Send</Text>
             </TouchableOpacity>
           </View>
@@ -481,7 +815,7 @@ const mapStateToProps = state => ({
   namespaceList: state.namespaceList,
 });
 
-export default connect(mapStateToProps)(AgentChat);
+export default connect(mapStateToProps)(FollowChat);
 
 const styles = StyleSheet.create({
   container: {
@@ -631,6 +965,9 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 12,
     backgroundColor: KevaColors.actionText,
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#55607a',
   },
   sendButtonText: {
     color: '#ffffff',

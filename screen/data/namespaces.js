@@ -333,16 +333,19 @@ class Namespace extends React.Component {
   }
 
   onChat = () => {
-    const { data, navigation } = this.props;
+    const { data, navigation, namespaceList, myNamespaceId } = this.props;
     if (!navigation || typeof navigation.push !== 'function') {
       return;
     }
     const namespaceId = data.id || data.namespaceId;
-    navigation.push('AgentChat', {
-      namespaceId,
-      walletId: data.walletId,
-      displayName: data.displayName,
-      shortCode: data.shortCode,
+    const resolvedMyNamespaceId = myNamespaceId || namespaceList?.order?.[0];
+    const myNamespace = resolvedMyNamespaceId ? namespaceList?.namespaces?.[resolvedMyNamespaceId] : null;
+    navigation.push('FollowChat', {
+      peerNamespaceId: namespaceId,
+      peerShortCode: data.shortCode,
+      peerDisplayName: data.displayName,
+      walletId: myNamespace?.walletId || data.walletId,
+      myNamespaceId: resolvedMyNamespaceId,
     });
   }
 
@@ -925,6 +928,8 @@ class MyNamespaces extends React.Component {
                   active={active}
                   navigation={navigation}
                   latestBlockHeight={this.state.latestBlockHeight}
+                  namespaceList={namespaceList}
+                  myNamespaceId={namespaceList.order[0]}
                   key={key}
                 />
               );
@@ -1064,7 +1069,7 @@ class OtherNamespaces extends React.Component {
   }
 
   render() {
-    const { navigation, otherNamespaceList, onInfo } = this.props;
+    const { navigation, otherNamespaceList, onInfo, namespaceList } = this.props;
     const canSearch = this.state.nsName && this.state.nsName.length > 0;
     const inputMode = this.state.inputMode;
     const isEmpty = otherNamespaceList.order.length == 0;
@@ -1120,7 +1125,19 @@ class OtherNamespaces extends React.Component {
               <RefreshControl onRefresh={() => this.refreshNamespaces()} refreshing={this.state.isRefreshing} />
             }
             renderRow={({data, active}) => {
-              return <Namespace onInfo={onInfo} onDelete={this.onDelete} data={data} active={active} navigation={navigation} canDelete={true} isOther={true}/>
+              return (
+                <Namespace
+                  onInfo={onInfo}
+                  onDelete={this.onDelete}
+                  data={data}
+                  active={active}
+                  navigation={navigation}
+                  canDelete={true}
+                  isOther={true}
+                  namespaceList={namespaceList}
+                  myNamespaceId={namespaceList?.order?.[0]}
+                />
+              );
             }}
           />
           :
@@ -1400,7 +1417,15 @@ class Namespaces extends React.Component {
                 case 'first':
                   return <MyNamespaces dispatch={dispatch} navigation={navigation} namespaceList={namespaceList} onInfo={this.onNSInfo} onWait={this.onWait}/>;
                 case 'second':
-                  return <OtherNamespaces dispatch={dispatch} navigation={navigation} otherNamespaceList={otherNamespaceList} onInfo={this.onNSInfo} />;
+                  return (
+                    <OtherNamespaces
+                      dispatch={dispatch}
+                      navigation={navigation}
+                      otherNamespaceList={otherNamespaceList}
+                      namespaceList={namespaceList}
+                      onInfo={this.onNSInfo}
+                    />
+                  );
               }
             }}
             onIndexChange={index => this.setState({ index })}
