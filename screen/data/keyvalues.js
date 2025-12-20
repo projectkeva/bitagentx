@@ -47,6 +47,7 @@ import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
 import LinearGradient from 'react-native-linear-gradient';
 const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
 const createHash = require('create-hash');
+import { removeConversationMetadataForPeer } from './followChatStorage';
 
 const sha256Bytes = message => Buffer.from(createHash('sha256').update(message).digest());
 
@@ -1151,6 +1152,7 @@ class KeyValues extends React.Component {
   onUnfollow = (namespaceId) => {
     const {dispatch} = this.props;
     dispatch(deleteOtherNamespace(namespaceId));
+    removeConversationMetadataForPeer(namespaceId);
   }
 
   onFollow = (namespaceId, namespaceInfo) => {
