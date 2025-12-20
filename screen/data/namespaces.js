@@ -34,6 +34,7 @@ import SortableListView from 'react-native-sortable-list'
 import RNPickerSelect from 'react-native-picker-select';
 import { TabView, TabBar } from 'react-native-tab-view';
 import { connect } from 'react-redux'
+import { decode as b64decode } from 'base-64';
 import {
   setNamespaceList, setOtherNamespaceList,
   setNamespaceOrder, setOtherNamespaceOrder,
@@ -64,8 +65,16 @@ import StepModal from "../../common/StepModalWizard";
 import {
   createKevaNamespace, findMyNamespaces,
   findOtherNamespace, getNamespaceInfo,
+  getNamespaceScriptHash,
+  toScriptHash,
   waitPromise, populateReactions,
 } from '../../class/keva-ops';
+import {
+  buildConversationId,
+  listConversationMetadataForPeer,
+  removeConversationMetadataForPeer,
+  setConversationMetadata,
+} from './followChatStorage';
 
 const COPY_ICON = (<Icon name="ios-copy" size={22} color={KevaColors.extraLightText}
                          style={{ paddingVertical: 5, paddingHorizontal: 5, position: 'relative', left: -3 }}
@@ -109,6 +118,9 @@ const selectAvatarCandidateUri = (candidateUris = [], failedUris = [], generated
   }
   return null;
 };
+
+const GUEST_SECTION_KEY = 'guest_inbox_section';
+const GUEST_ORDER_STORAGE_KEY = 'guest_inbox_order_index';
 
 
 class Namespace extends React.Component {
@@ -333,20 +345,33 @@ class Namespace extends React.Component {
   }
 
   onChat = () => {
-    const { data, navigation, namespaceList, myNamespaceId } = this.props;
+    const { data, navigation } = this.props;
     if (!navigation || typeof navigation.push !== 'function') {
       return;
     }
+    if (!this.props.canChat) {
+      return;
+    }
     const namespaceId = data.id || data.namespaceId;
-    const resolvedMyNamespaceId = myNamespaceId || namespaceList?.order?.[0];
-    const myNamespace = resolvedMyNamespaceId ? namespaceList?.namespaces?.[resolvedMyNamespaceId] : null;
-    navigation.push('FollowChat', {
-      peerNamespaceId: namespaceId,
-      peerShortCode: data.shortCode,
-      peerDisplayName: data.displayName,
-      walletId: myNamespace?.walletId || data.walletId,
-      myNamespaceId: resolvedMyNamespaceId,
-    });
+    listConversationMetadataForPeer(namespaceId)
+      .then(entries => {
+        const boundNamespaceIds = entries.map(entry => entry.replyFromNamespaceId).filter(Boolean);
+        const replyFromNamespaceId = boundNamespaceIds.length === 1 ? boundNamespaceIds[0] : null;
+        navigation.push('FollowChat', {
+          peerNamespaceId: namespaceId,
+          peerShortCode: data.shortCode,
+          peerDisplayName: data.displayName,
+          replyFromNamespaceId,
+        });
+      })
+      .catch(error => {
+        console.warn('Failed to load follow chat metadata', error);
+        navigation.push('FollowChat', {
+          peerNamespaceId: namespaceId,
+          peerShortCode: data.shortCode,
+          peerDisplayName: data.displayName,
+        });
+      });
   }
 
   render() {
@@ -367,6 +392,7 @@ class Namespace extends React.Component {
     const levelLabelText = Number.isFinite(shortCodeLevel)
       ? `[ Lv.${shortCodeLevel} ]${alphaLabelText ? ` ${alphaLabelText}` : ''}`
       : null;
+    const canChat = this.props.canChat;
     const {
       avatarCandidateUris,
       avatarCandidateRequestId,
@@ -422,9 +448,11 @@ class Namespace extends React.Component {
                     {levelLabelText && (
                       <Text style={styles.levelLabel}>{levelLabelText}</Text>
                     )}
-                    <TouchableOpacity style={styles.chatButton} onPress={this.onChat}>
-                      <Text style={styles.chatButtonText}>Chat</Text>
-                    </TouchableOpacity>
+                    {canChat && (
+                      <TouchableOpacity style={styles.chatButton} onPress={this.onChat}>
+                        <Text style={styles.chatButtonText}>Chat</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </View>
                 <View style={styles.actionContainer}>
@@ -463,6 +491,56 @@ class Namespace extends React.Component {
   }
 
 }
+
+const GuestInbox = ({ items, onFollow, followingPairs }) => {
+  return (
+    <View style={styles.guestContainer}>
+      <Text style={styles.guestTitle}>Guest</Text>
+      {items.length === 0 ? (
+        <Text style={styles.guestEmpty}>No guest messages yet.</Text>
+      ) : (
+        items.map((item, index) => {
+          const shortCode = item.peerShortCode || '';
+          const displayName = item.peerDisplayName || 'Unknown';
+          const avatarCandidates = buildHeadAssetUriCandidates(shortCode) || [];
+          const avatarUri = avatarCandidates.length > 0 ? avatarCandidates[0] : null;
+          const initials = getInitials(displayName);
+          const color = stringToColor(displayName);
+          const isFollowing = !!followingPairs[item.pairId];
+          return (
+            <View key={item.pairId} style={[styles.guestItem, index === 0 && styles.guestItemFirst]}>
+              <View style={styles.guestAvatarWrapper}>
+                {avatarUri ? (
+                  <Image source={{ uri: avatarUri }} style={styles.guestAvatarImage} />
+                ) : (
+                  <View style={[styles.guestAvatarFallback, { backgroundColor: color }]}>
+                    <Text style={styles.guestAvatarText}>{initials}</Text>
+                  </View>
+                )}
+              </View>
+              <View style={styles.guestContent}>
+                <Text style={styles.guestName} numberOfLines={1} ellipsizeMode="tail">
+                  {displayName} {shortCode ? `#${shortCode}` : ''}
+                </Text>
+                <Text style={styles.guestMessage} numberOfLines={1} ellipsizeMode="tail">
+                  {item.lastMessage || ''}
+                </Text>
+              </View>
+              <Button
+                type="outline"
+                title={loc.namespaces.follow}
+                buttonStyle={styles.guestFollowButton}
+                titleStyle={styles.guestFollowTitle}
+                disabled={isFollowing}
+                onPress={() => onFollow(item)}
+              />
+            </View>
+          );
+        })
+      )}
+    </View>
+  );
+};
 
 
 class MyNamespaces extends React.Component {
@@ -971,15 +1049,230 @@ class OtherNamespaces extends React.Component {
       isLoading: true, isModalVisible: false,
       isRefreshing: false,
       inputMode: false,
+      guestItems: [],
+      guestLoading: false,
+      guestOrderIndex: null,
+      followedByMap: {},
+      followingGuestPairs: {},
     };
   }
 
   onChangeOrder = async (order) => {
-    this.props.dispatch(setOtherNamespaceOrder(order));
+    const guestIndex = order.indexOf(GUEST_SECTION_KEY);
+    const cleanedOrder = order.filter(id => id !== GUEST_SECTION_KEY);
+    this.props.dispatch(setOtherNamespaceOrder(cleanedOrder));
+    if (guestIndex >= 0) {
+      await this.persistGuestOrder(guestIndex);
+    }
   }
 
   async componentDidMount() {
+    await this.loadGuestOrder();
+    await this.refreshGuestInbox();
   }
+
+  loadGuestOrder = async () => {
+    try {
+      const storedIndex = await BlueApp.getItemStorage(GUEST_ORDER_STORAGE_KEY);
+      const parsed = Number.parseInt(storedIndex, 10);
+      if (Number.isFinite(parsed)) {
+        this.setState({ guestOrderIndex: parsed });
+      }
+    } catch (error) {
+      console.warn('Failed to load guest order', error);
+    }
+  }
+
+  persistGuestOrder = async index => {
+    try {
+      await BlueApp.setItemStorage(GUEST_ORDER_STORAGE_KEY, String(index));
+      this.setState({ guestOrderIndex: index });
+    } catch (error) {
+      console.warn('Failed to save guest order', error);
+    }
+  }
+
+  buildOrderWithGuest = order => {
+    const cleanedOrder = order.filter(id => id && id !== GUEST_SECTION_KEY);
+    const maxIndex = cleanedOrder.length;
+    const guestIndex = Number.isFinite(this.state.guestOrderIndex)
+      ? Math.min(Math.max(this.state.guestOrderIndex, 0), maxIndex)
+      : maxIndex;
+    const nextOrder = [...cleanedOrder];
+    nextOrder.splice(guestIndex, 0, GUEST_SECTION_KEY);
+    return { nextOrder, guestIndex, cleanedOrder };
+  }
+
+  resolveAnchorTxid = async namespaceId => {
+    if (!namespaceId) {
+      return null;
+    }
+    const { namespaceList } = this.props;
+    const namespace = namespaceList?.namespaces?.[namespaceId];
+    const scriptHash = namespace?.rootAddress ? toScriptHash(namespace.rootAddress) : getNamespaceScriptHash(namespaceId);
+    try {
+      await BlueElectrum.ping();
+      const history = await BlueElectrum.blockchainKeva_getKeyValues(scriptHash, -1);
+      const keyvalues = Array.isArray(history) ? history : history?.keyvalues || [];
+      if (!keyvalues.length) {
+        return null;
+      }
+      const reg = keyvalues.find(entry => entry.type === 'REG');
+      if (reg?.tx_hash || reg?.txid) {
+        return reg.tx_hash || reg.txid;
+      }
+      const last = keyvalues[keyvalues.length - 1];
+      return last?.tx_hash || last?.txid || null;
+    } catch (error) {
+      console.warn('Failed to resolve anchor txid', error);
+      return null;
+    }
+  };
+
+  parseReactionValue = reaction => {
+    const rawValue = reaction?.value;
+    if (!rawValue) {
+      return '';
+    }
+    if (typeof rawValue !== 'string') {
+      return String(rawValue);
+    }
+    try {
+      const decoded = b64decode(rawValue);
+      return decoded || rawValue;
+    } catch (error) {
+      return rawValue;
+    }
+  };
+
+  refreshGuestInbox = async () => {
+    const { namespaceList, otherNamespaceList } = this.props;
+    const myNamespaceIds = namespaceList?.order || [];
+    if (!myNamespaceIds.length) {
+      this.setState({ guestItems: [], followedByMap: {} });
+      return;
+    }
+    this.setState({ guestLoading: true });
+    try {
+      await BlueElectrum.ping();
+      await BlueElectrum.waitTillConnected();
+      const anchorEntries = await Promise.all(
+        myNamespaceIds.map(async namespaceId => {
+          const txid = await this.resolveAnchorTxid(namespaceId);
+          return [namespaceId, txid];
+        }),
+      );
+      const anchorMap = anchorEntries.reduce((acc, [namespaceId, txid]) => {
+        if (txid) {
+          acc[namespaceId] = txid;
+        }
+        return acc;
+      }, {});
+      const reactions = [];
+      for (const [myNamespaceId, anchorTxid] of Object.entries(anchorMap)) {
+        const response = await BlueElectrum.blockchainKeva_getKeyValueReactions(anchorTxid, -1);
+        const reactionList = Array.isArray(response) ? response : response?.reactions || response?.replies || [];
+        reactionList.forEach(reaction => {
+          const sender = reaction.sender || {};
+          const peerNamespaceId = sender.namespaceId || sender.namespace_id || reaction.namespaceId || reaction.namespace_id;
+          if (!peerNamespaceId) {
+            return;
+          }
+          if (namespaceList?.namespaces?.[peerNamespaceId]) {
+            return;
+          }
+          reactions.push({
+            ...reaction,
+            toMyNamespaceId: myNamespaceId,
+            peerNamespaceId,
+            peerShortCode: sender.shortCode || sender.short_code || reaction.shortCode || reaction.short_code,
+            peerDisplayName: sender.displayName || sender.display_name || reaction.displayName || reaction.display_name,
+          });
+        });
+      }
+
+      const pairMap = {};
+      const followedByMap = {};
+      reactions.forEach(reaction => {
+        const peerNamespaceId = reaction.peerNamespaceId;
+        if (!peerNamespaceId) {
+          return;
+        }
+        followedByMap[peerNamespaceId] = true;
+        const pairId = `${reaction.toMyNamespaceId}__${peerNamespaceId}`;
+        const timeSeconds = reaction.time || reaction.timestamp || Date.now() / 1000;
+        const lastTime = timeSeconds * 1000;
+        const lastMessage = this.parseReactionValue(reaction);
+        const existing = pairMap[pairId];
+        if (!existing || lastTime >= existing.lastTime) {
+          pairMap[pairId] = {
+            pairId,
+            peerNamespaceId,
+            peerShortCode: reaction.peerShortCode,
+            peerDisplayName: reaction.peerDisplayName,
+            toMyNamespaceId: reaction.toMyNamespaceId,
+            lastMessage,
+            lastTime,
+          };
+        }
+      });
+
+      const guestItems = Object.values(pairMap)
+        .filter(item => !otherNamespaceList?.namespaces?.[item.peerNamespaceId])
+        .sort((a, b) => b.lastTime - a.lastTime);
+      this.setState({ guestItems, followedByMap });
+    } catch (error) {
+      console.warn('Failed to refresh guest inbox', error);
+    } finally {
+      this.setState({ guestLoading: false });
+    }
+  };
+
+  handleGuestFollow = async item => {
+    const { otherNamespaceList, dispatch } = this.props;
+    if (!item?.peerNamespaceId) {
+      return;
+    }
+    this.setState(prevState => ({
+      followingGuestPairs: { ...prevState.followingGuestPairs, [item.pairId]: true },
+    }));
+    try {
+      await BlueElectrum.ping();
+      const namespaceInfo = await getNamespaceInfo(BlueElectrum, item.peerNamespaceId, true);
+      const namespaceData = {
+        id: item.peerNamespaceId,
+        namespaceId: item.peerNamespaceId,
+        displayName: namespaceInfo?.displayName || item.peerDisplayName,
+        shortCode: namespaceInfo?.shortCode || item.peerShortCode,
+        price: namespaceInfo?.price,
+        desc: namespaceInfo?.desc,
+        addr: namespaceInfo?.addr,
+        txId: namespaceInfo?.tx,
+        profile: namespaceInfo?.value,
+      };
+      let order = [...otherNamespaceList.order];
+      if (!order.find(nsid => nsid === item.peerNamespaceId)) {
+        order.unshift(item.peerNamespaceId);
+      }
+      dispatch(setOtherNamespaceList({ [item.peerNamespaceId]: namespaceData }, order));
+      const conversationId = buildConversationId(item.toMyNamespaceId, item.peerNamespaceId);
+      await setConversationMetadata(conversationId, {
+        peerNamespaceId: item.peerNamespaceId,
+        replyFromNamespaceId: item.toMyNamespaceId,
+        isMutual: true,
+        boundAt: Date.now(),
+      });
+      await this.refreshGuestInbox();
+    } catch (error) {
+      console.warn('Failed to follow from guest', error);
+    } finally {
+      this.setState(prevState => {
+        const nextMap = { ...prevState.followingGuestPairs };
+        delete nextMap[item.pairId];
+        return { followingGuestPairs: nextMap };
+      });
+    }
+  };
 
   refreshNamespaces = async () => {
     const { dispatch, otherNamespaceList } = this.props;
@@ -1000,6 +1293,7 @@ class OtherNamespaces extends React.Component {
       this.setState({isRefreshing: false});
     }
     this.setState({isRefreshing: false});
+    await this.refreshGuestInbox();
   }
 
   onSearchNamespace = async () => {
@@ -1033,7 +1327,7 @@ class OtherNamespaces extends React.Component {
     }
   }
 
-  onDeleteConfirm = index => {
+  onDeleteConfirm = async index => {
     const {dispatch} = this.props;
     if (index === 0 && this._namespaceId) {
       LayoutAnimation.configureNext({
@@ -1042,6 +1336,7 @@ class OtherNamespaces extends React.Component {
       });
       dispatch(deleteOtherNamespace(this._namespaceId));
       dispatch(setKeyValueList(this._namespaceId));
+      await removeConversationMetadataForPeer(this._namespaceId);
     }
   }
 
@@ -1072,7 +1367,15 @@ class OtherNamespaces extends React.Component {
     const { navigation, otherNamespaceList, onInfo, namespaceList } = this.props;
     const canSearch = this.state.nsName && this.state.nsName.length > 0;
     const inputMode = this.state.inputMode;
-    const isEmpty = otherNamespaceList.order.length == 0;
+    const { guestItems, followedByMap, followingGuestPairs } = this.state;
+    const hasGuestSection = true;
+    const isEmpty = otherNamespaceList.order.length == 0 && guestItems.length === 0;
+    const hasRows = otherNamespaceList.order.length > 0 || hasGuestSection;
+    const { nextOrder, cleanedOrder } = this.buildOrderWithGuest(otherNamespaceList.order);
+    const listOrder = hasGuestSection ? nextOrder : cleanedOrder;
+    const listData = hasGuestSection
+      ? { ...otherNamespaceList.namespaces, [GUEST_SECTION_KEY]: { id: GUEST_SECTION_KEY, isGuest: true } }
+      : otherNamespaceList.namespaces;
 
     return (
       <View style={styles.container}>
@@ -1114,17 +1417,31 @@ class OtherNamespaces extends React.Component {
             </TouchableOpacity>
           }
         </View>
-        {otherNamespaceList.order.length > 0 ?
+        {hasRows ?
           <SortableListView
             style={[styles.listStyle, isEmpty && {flex: 0}]}
             contentContainerStyle={(!isEmpty) && {paddingBottom: 400}}
-            data={otherNamespaceList.namespaces}
-            order={otherNamespaceList.order}
+            data={listData}
+            order={listOrder}
             onChangeOrder={this.onChangeOrder}
             refreshControl={
               <RefreshControl onRefresh={() => this.refreshNamespaces()} refreshing={this.state.isRefreshing} />
             }
             renderRow={({data, active}) => {
+              if (data?.isGuest) {
+                return (
+                  <GuestInbox
+                    active={active}
+                    items={guestItems}
+                    onFollow={this.handleGuestFollow}
+                    followingPairs={followingGuestPairs}
+                  />
+                );
+              }
+              const peerNamespaceId = data.id || data.namespaceId;
+              const isFollowing = !!otherNamespaceList.namespaces[peerNamespaceId];
+              const isFollowedBy = !!followedByMap[peerNamespaceId];
+              const isMutual = isFollowing && isFollowedBy;
               return (
                 <Namespace
                   onInfo={onInfo}
@@ -1135,7 +1452,7 @@ class OtherNamespaces extends React.Component {
                   canDelete={true}
                   isOther={true}
                   namespaceList={namespaceList}
-                  myNamespaceId={namespaceList?.order?.[0]}
+                  canChat={isMutual}
                 />
               );
             }}
@@ -1624,6 +1941,80 @@ var styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     letterSpacing: 0.2,
+  },
+  guestContainer: {
+    backgroundColor: '#0b1224',
+    borderRadius: 18,
+    padding: 16,
+    marginHorizontal: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#1f2a44',
+  },
+  guestTitle: {
+    color: '#e2e8f0',
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 12,
+  },
+  guestEmpty: {
+    color: '#6f7587',
+    fontSize: 14,
+  },
+  guestItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#162033',
+  },
+  guestItemFirst: {
+    borderTopWidth: 0,
+  },
+  guestAvatarWrapper: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    overflow: 'hidden',
+    marginRight: 12,
+  },
+  guestAvatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  guestAvatarFallback: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guestAvatarText: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  guestContent: {
+    flex: 1,
+    marginRight: 12,
+  },
+  guestName: {
+    color: '#e2e8f0',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  guestMessage: {
+    color: '#94a3b8',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  guestFollowButton: {
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderColor: KevaColors.actionText,
+  },
+  guestFollowTitle: {
+    color: KevaColors.actionText,
+    fontSize: 14,
   },
   cardContent: {
     backgroundColor: '#fff',

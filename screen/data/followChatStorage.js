@@ -1,0 +1,105 @@
+import RNFS from 'react-native-fs';
+
+export const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/follow_chats`;
+const META_FILE = `${CHAT_DIR}/metadata.json`;
+
+export const buildConversationId = (myNamespaceId, peerNamespaceId) => {
+  const safeMine = myNamespaceId || 'me';
+  const safePeer = peerNamespaceId || 'peer';
+  return `${safeMine}__${safePeer}`;
+};
+
+export const ensureChatStorage = async () => {
+  try {
+    const exists = await RNFS.exists(CHAT_DIR);
+    if (!exists) {
+      await RNFS.mkdir(CHAT_DIR);
+    }
+    const metaExists = await RNFS.exists(META_FILE);
+    if (!metaExists) {
+      await RNFS.writeFile(META_FILE, JSON.stringify({}), 'utf8');
+    }
+  } catch (error) {
+    console.warn('Failed to prepare follow chat storage', error);
+  }
+};
+
+const readMetadataMap = async () => {
+  try {
+    const exists = await RNFS.exists(META_FILE);
+    if (!exists) {
+      return {};
+    }
+    const content = await RNFS.readFile(META_FILE, 'utf8');
+    const parsed = JSON.parse(content);
+    if (parsed && typeof parsed === 'object') {
+      return parsed;
+    }
+  } catch (error) {
+    console.warn('Failed to read follow chat metadata', error);
+  }
+  return {};
+};
+
+const writeMetadataMap = async map => {
+  try {
+    await RNFS.writeFile(META_FILE, JSON.stringify(map), 'utf8');
+  } catch (error) {
+    console.warn('Failed to write follow chat metadata', error);
+  }
+};
+
+export const getConversationMetadata = async conversationId => {
+  if (!conversationId) {
+    return null;
+  }
+  const map = await readMetadataMap();
+  return map[conversationId] || null;
+};
+
+export const setConversationMetadata = async (conversationId, metadata) => {
+  if (!conversationId) {
+    return;
+  }
+  const map = await readMetadataMap();
+  map[conversationId] = { ...(map[conversationId] || {}), ...metadata };
+  await writeMetadataMap(map);
+};
+
+export const removeConversationMetadata = async conversationId => {
+  if (!conversationId) {
+    return;
+  }
+  const map = await readMetadataMap();
+  if (map[conversationId]) {
+    delete map[conversationId];
+    await writeMetadataMap(map);
+  }
+};
+
+export const listConversationMetadataForPeer = async peerNamespaceId => {
+  if (!peerNamespaceId) {
+    return [];
+  }
+  const map = await readMetadataMap();
+  return Object.entries(map)
+    .filter(([, value]) => value?.peerNamespaceId === peerNamespaceId)
+    .map(([conversationId, value]) => ({ conversationId, ...value }));
+};
+
+export const removeConversationMetadataForPeer = async peerNamespaceId => {
+  if (!peerNamespaceId) {
+    return;
+  }
+  const map = await readMetadataMap();
+  let changed = false;
+  Object.keys(map).forEach(key => {
+    if (map[key]?.peerNamespaceId === peerNamespaceId) {
+      delete map[key];
+      changed = true;
+    }
+  });
+  if (changed) {
+    await writeMetadataMap(map);
+  }
+};

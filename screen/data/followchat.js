@@ -15,6 +15,7 @@ import { Icon } from 'react-native-elements';
 import RNFS from 'react-native-fs';
 import { connect } from 'react-redux';
 import { encode as b64encode, decode as b64decode } from 'base-64';
+import RNPickerSelect from 'react-native-picker-select';
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
@@ -23,11 +24,16 @@ import { getInitials, stringToColor, timeConverter, toastError } from '../../uti
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 import { getNamespaceScriptHash, replyKeyValue, toScriptHash } from '../../class/keva-ops';
 import ActionSheet from '../ActionSheet';
+import {
+  CHAT_DIR,
+  buildConversationId,
+  ensureChatStorage,
+  listConversationMetadataForPeer,
+  setConversationMetadata,
+} from './followChatStorage';
 
 let BlueApp = require('../../BlueApp');
 let BlueElectrum = require('../../BlueElectrum');
-
-const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/follow_chats`;
 const PAGE_SIZE = 10;
 
 class FollowChat extends React.Component {
@@ -46,6 +52,9 @@ class FollowChat extends React.Component {
       lastSyncAt: 0,
       myInboxCursor: -1,
       peerInboxCursor: -1,
+      replyFromNamespaceId: null,
+      pendingReplyFromNamespaceId: null,
+      availableBoundNamespaceIds: [],
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -104,20 +113,24 @@ class FollowChat extends React.Component {
 
   initializeChat = async () => {
     const params = this.props.navigation.state.params || {};
-    const { namespaceList } = this.props;
-    const myNamespaceId = params.myNamespaceId || namespaceList?.order?.[0] || null;
     const peerNamespaceId = params.peerNamespaceId || null;
-    const conversationId = this.getConversationId(myNamespaceId, peerNamespaceId);
-    await this.ensureStorage();
-    const history = await this.readHistory(conversationId);
+    const boundEntries = peerNamespaceId ? await listConversationMetadataForPeer(peerNamespaceId) : [];
+    const boundNamespaceIds = boundEntries
+      .map(entry => entry.replyFromNamespaceId)
+      .filter(Boolean);
+    const replyFromNamespaceId =
+      params.replyFromNamespaceId || (boundNamespaceIds.length === 1 ? boundNamespaceIds[0] : null);
+    const conversationId = replyFromNamespaceId ? buildConversationId(replyFromNamespaceId, peerNamespaceId) : null;
+    await ensureChatStorage();
+    const history = conversationId ? await this.readHistory(conversationId) : [];
     if (!this._isMounted) {
       return;
     }
     const visibleCount = Math.min(history.length || PAGE_SIZE, PAGE_SIZE);
-    let myAnchorTxid = params.myAnchorTxid || null;
+    let myAnchorTxid = null;
     let peerAnchorTxid = params.peerAnchorTxid || null;
-    if (!myAnchorTxid && myNamespaceId) {
-      myAnchorTxid = await this.resolveAnchorTxid(myNamespaceId);
+    if (replyFromNamespaceId) {
+      myAnchorTxid = await this.resolveAnchorTxid(replyFromNamespaceId);
     }
     if (!peerAnchorTxid && peerNamespaceId) {
       peerAnchorTxid = await this.resolveAnchorTxid(peerNamespaceId);
@@ -128,33 +141,19 @@ class FollowChat extends React.Component {
         allMessages: history,
         visibleCount,
         messages: history.slice(-visibleCount),
-        myNamespaceId,
+        myNamespaceId: replyFromNamespaceId,
         peerNamespaceId,
         myAnchorTxid,
         peerAnchorTxid,
+        replyFromNamespaceId,
+        pendingReplyFromNamespaceId: null,
+        availableBoundNamespaceIds: boundNamespaceIds,
       },
       () => {
         this.scrollToEnd(false);
         this.syncFromChain({ reset: true });
       },
     );
-  };
-
-  ensureStorage = async () => {
-    try {
-      const exists = await RNFS.exists(CHAT_DIR);
-      if (!exists) {
-        await RNFS.mkdir(CHAT_DIR);
-      }
-    } catch (error) {
-      console.warn('Failed to prepare chat storage', error);
-    }
-  };
-
-  getConversationId = (myNamespaceId, peerNamespaceId) => {
-    const safeMine = myNamespaceId || 'me';
-    const safePeer = peerNamespaceId || 'peer';
-    return `${safeMine}__${safePeer}`;
   };
 
   getChatFilePath = conversationId => `${CHAT_DIR}/${conversationId || 'default'}.json`;
@@ -232,9 +231,81 @@ class FollowChat extends React.Component {
     );
   };
 
+  setActiveNamespace = async (namespaceId, { setBound = false } = {}) => {
+    const { peerNamespaceId } = this.state;
+    if (!namespaceId || !peerNamespaceId) {
+      return;
+    }
+    const conversationId = buildConversationId(namespaceId, peerNamespaceId);
+    const history = await this.readHistory(conversationId);
+    const visibleCount = Math.min(history.length || PAGE_SIZE, PAGE_SIZE);
+    const myAnchorTxid = await this.resolveAnchorTxid(namespaceId);
+    this.conversationId = conversationId;
+    this.setState(
+      {
+        allMessages: history,
+        visibleCount,
+        messages: history.slice(-visibleCount),
+        myNamespaceId: namespaceId,
+        myAnchorTxid,
+        myInboxCursor: -1,
+        peerInboxCursor: -1,
+        replyFromNamespaceId: setBound ? namespaceId : this.state.replyFromNamespaceId,
+      },
+      () => {
+        this.scrollToEnd(false);
+        this.syncFromChain({ reset: true });
+      },
+    );
+  };
+
+  handleSelectNamespace = async namespaceId => {
+    if (!namespaceId) {
+      return;
+    }
+    const { availableBoundNamespaceIds } = this.state;
+    const isBound = availableBoundNamespaceIds.includes(namespaceId);
+    if (isBound) {
+      this.setState(
+        {
+          replyFromNamespaceId: namespaceId,
+          pendingReplyFromNamespaceId: null,
+        },
+        () => this.setActiveNamespace(namespaceId, { setBound: true }),
+      );
+      return;
+    }
+    this.setState(
+      {
+        pendingReplyFromNamespaceId: namespaceId,
+        replyFromNamespaceId: null,
+      },
+      () => this.setActiveNamespace(namespaceId),
+    );
+  };
+
+  resetPendingSelection = () => {
+    this.conversationId = null;
+    this.setState({
+      pendingReplyFromNamespaceId: null,
+      myNamespaceId: null,
+      myAnchorTxid: null,
+      allMessages: [],
+      messages: [],
+      visibleCount: PAGE_SIZE,
+      myInboxCursor: -1,
+      peerInboxCursor: -1,
+    });
+  };
+
   handleSend = async () => {
     const text = this.state.inputValue.trim();
+    const activeNamespaceId = this.getActiveNamespaceId();
     const canSend = this.canSendMessage();
+    if (!activeNamespaceId) {
+      toastError('Select a space to reply');
+      return;
+    }
     if (!text || !canSend) {
       return;
     }
@@ -243,6 +314,21 @@ class FollowChat extends React.Component {
     this.setState({ inputValue: '' });
     try {
       await this.sendOnChain(text);
+      const { pendingReplyFromNamespaceId, replyFromNamespaceId, peerNamespaceId, availableBoundNamespaceIds } = this.state;
+      if (!replyFromNamespaceId && pendingReplyFromNamespaceId && peerNamespaceId) {
+        const conversationId = buildConversationId(pendingReplyFromNamespaceId, peerNamespaceId);
+        await setConversationMetadata(conversationId, {
+          peerNamespaceId,
+          replyFromNamespaceId: pendingReplyFromNamespaceId,
+          isMutual: true,
+          boundAt: Date.now(),
+        });
+        this.setState({
+          replyFromNamespaceId: pendingReplyFromNamespaceId,
+          pendingReplyFromNamespaceId: null,
+          availableBoundNamespaceIds: Array.from(new Set([...availableBoundNamespaceIds, pendingReplyFromNamespaceId])),
+        });
+      }
       await this.syncFromChain();
     } catch (error) {
       console.warn('Failed to send follow chat message', error);
@@ -305,7 +391,7 @@ class FollowChat extends React.Component {
 
   submitToNamespace = messageText => {
     const { navigation } = this.props;
-    const { myNamespaceId } = this.state;
+    const myNamespaceId = this.getActiveNamespaceId();
     const walletId = this.getWalletId();
     if (!navigation || typeof navigation.navigate !== 'function') {
       return;
@@ -428,7 +514,7 @@ class FollowChat extends React.Component {
 
   getUserAvatar = () => {
     const { namespaceList } = this.props;
-    const firstId = this.state.myNamespaceId || namespaceList?.order?.[0];
+    const firstId = this.getActiveNamespaceId();
     const namespace = firstId ? namespaceList?.namespaces?.[firstId] : null;
     if (!namespace) {
       return null;
@@ -523,13 +609,18 @@ class FollowChat extends React.Component {
       return params.walletId;
     }
     const { namespaceList } = this.props;
-    const { myNamespaceId } = this.state;
+    const myNamespaceId = this.getActiveNamespaceId();
     const namespace = myNamespaceId ? namespaceList?.namespaces?.[myNamespaceId] : null;
     return namespace?.walletId || null;
   };
 
+  getActiveNamespaceId = () => {
+    const { replyFromNamespaceId, pendingReplyFromNamespaceId } = this.state;
+    return replyFromNamespaceId || pendingReplyFromNamespaceId || null;
+  };
+
   canSendMessage = () => {
-    return Boolean(this.state.peerNamespaceId && this.state.peerAnchorTxid);
+    return Boolean(this.getActiveNamespaceId() && this.state.peerNamespaceId && this.state.peerAnchorTxid && this.state.myAnchorTxid);
   };
 
   buildEnvelope = text => {
@@ -720,7 +811,8 @@ class FollowChat extends React.Component {
   };
 
   sendOnChain = async text => {
-    const { myNamespaceId, peerAnchorTxid } = this.state;
+    const { peerAnchorTxid } = this.state;
+    const myNamespaceId = this.getActiveNamespaceId();
     const walletId = this.getWalletId();
     if (!myNamespaceId) {
       throw new Error('namespace not set');
@@ -748,8 +840,24 @@ class FollowChat extends React.Component {
   };
 
   render() {
-    const { peerNamespaceId, peerAnchorTxid } = this.state;
+    const { peerNamespaceId, peerAnchorTxid, replyFromNamespaceId, pendingReplyFromNamespaceId } = this.state;
+    const { namespaceList } = this.props;
     const canSend = this.canSendMessage();
+    const activeNamespaceId = this.getActiveNamespaceId();
+    const needsBinding = !replyFromNamespaceId;
+    const namespaceOptions = (namespaceList?.order || [])
+      .map(namespaceId => {
+        const namespace = namespaceList?.namespaces?.[namespaceId];
+        if (!namespace) {
+          return null;
+        }
+        const shortCode = namespace.shortCode ? `@${namespace.shortCode}` : '';
+        return {
+          label: `${namespace.displayName || namespaceId} ${shortCode}`.trim(),
+          value: namespaceId,
+        };
+      })
+      .filter(Boolean);
     let emptyText = 'Start a conversation with this peer.';
     if (!peerNamespaceId) {
       emptyText = 'Select a peer to start a conversation.';
@@ -764,6 +872,30 @@ class FollowChat extends React.Component {
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
           <View style={styles.chatContainer}>
+            {needsBinding && (
+              <View style={styles.bindContainer}>
+                <Text style={styles.bindTitle}>Select a space to reply</Text>
+                <RNPickerSelect
+                  value={activeNamespaceId}
+                  placeholder={{ label: 'Select a space', value: null }}
+                  useNativeAndroidPickerStyle={false}
+                  style={{
+                    inputAndroid: styles.bindPicker,
+                    inputIOS: styles.bindPicker,
+                    placeholder: styles.bindPlaceholder,
+                    iconContainer: styles.bindPickerIcon,
+                  }}
+                  onValueChange={this.handleSelectNamespace}
+                  items={namespaceOptions}
+                  Icon={() => <Icon name="chevron-down" type="feather" color="#9aa4b2" size={18} />}
+                />
+                {pendingReplyFromNamespaceId && (
+                  <TouchableOpacity style={styles.bindChangeButton} onPress={this.resetPendingSelection}>
+                    <Text style={styles.bindChangeText}>Change</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
             <FlatList
               ref={ref => {
                 this.listRef = ref;
@@ -799,7 +931,7 @@ class FollowChat extends React.Component {
               onChangeText={text => this.setState({ inputValue: text })}
               onSubmitEditing={this.handleSend}
               returnKeyType="send"
-              editable={canSend}
+              editable={Boolean(activeNamespaceId)}
             />
             <TouchableOpacity style={[styles.sendButton, !canSend && styles.sendButtonDisabled]} onPress={this.handleSend} disabled={!canSend}>
               <Text style={styles.sendButtonText}>Send</Text>
@@ -838,6 +970,45 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 16,
     paddingTop: 16,
+  },
+  bindContainer: {
+    backgroundColor: '#0f172a',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#1f2a44',
+  },
+  bindTitle: {
+    color: '#d2d7e0',
+    fontSize: 14,
+    marginBottom: 10,
+    fontWeight: '600',
+  },
+  bindPicker: {
+    fontSize: 15,
+    color: '#e2e8f0',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#0b1224',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#1f2a44',
+  },
+  bindPlaceholder: {
+    color: '#6f7587',
+  },
+  bindPickerIcon: {
+    top: 12,
+    right: 12,
+  },
+  bindChangeButton: {
+    alignSelf: 'flex-start',
+    marginTop: 10,
+  },
+  bindChangeText: {
+    color: '#7dd3fc',
+    fontWeight: '600',
   },
   listContent: {
     paddingBottom: 12,
