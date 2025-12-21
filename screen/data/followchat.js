@@ -22,7 +22,7 @@ import { BlueNavigationStyle } from '../../BlueComponents';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, stringToColor, timeConverter, toastError } from '../../util';
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
-import { getNamespaceScriptHash, replyKeyValue, toScriptHash } from '../../class/keva-ops';
+import { getHashtagScriptHash, getNamespaceScriptHash, replyKeyValue, toScriptHash } from '../../class/keva-ops';
 import ActionSheet from '../ActionSheet';
 import {
   CHAT_DIR,
@@ -35,6 +35,9 @@ import {
 let BlueApp = require('../../BlueApp');
 let BlueElectrum = require('../../BlueElectrum');
 const PAGE_SIZE = 10;
+const TAG_DM_PREFIX = '#DM';
+const TAG_CHAT_PREFIX = '#CHAT';
+const TAG_GLOBAL_CHAT = '#chatxkeva';
 
 class FollowChat extends React.Component {
   constructor(props) {
@@ -50,8 +53,7 @@ class FollowChat extends React.Component {
       peerAnchorTxid: null,
       syncing: false,
       lastSyncAt: 0,
-      myInboxCursor: -1,
-      peerInboxCursor: -1,
+      chatCursor: -1,
       replyFromNamespaceId: null,
       pendingReplyFromNamespaceId: null,
       availableBoundNamespaceIds: [],
@@ -256,8 +258,7 @@ class FollowChat extends React.Component {
         messages: filteredHistory.slice(-visibleCount),
         myNamespaceId: namespaceId,
         myAnchorTxid,
-        myInboxCursor: -1,
-        peerInboxCursor: -1,
+        chatCursor: -1,
         replyFromNamespaceId: setBound ? namespaceId : this.state.replyFromNamespaceId,
       },
       () => {
@@ -302,8 +303,7 @@ class FollowChat extends React.Component {
       allMessages: [],
       messages: [],
       visibleCount: PAGE_SIZE,
-      myInboxCursor: -1,
-      peerInboxCursor: -1,
+      chatCursor: -1,
     });
   };
 
@@ -649,8 +649,13 @@ class FollowChat extends React.Component {
     return messages.filter(message => message.direction !== 'in' && message.sender !== 'peer');
   };
 
-  buildEnvelope = text => {
-    return text;
+  buildTaggedMessage = (text, myShort, peerShort) => {
+    const min = Math.min(Number(myShort), Number(peerShort));
+    const max = Math.max(Number(myShort), Number(peerShort));
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      throw new Error('short code invalid');
+    }
+    return `${text}\n${TAG_DM_PREFIX}${peerShort}\n${TAG_CHAT_PREFIX}${min}_${max}\n${TAG_GLOBAL_CHAT}`;
   };
 
   parseEnvelope = value => {
@@ -694,30 +699,69 @@ class FollowChat extends React.Component {
     }
   };
 
-  normalizeReactionValue = reaction => {
-    const rawValue = reaction?.value;
+  stripChatTags = text => {
+    if (!text || typeof text !== 'string') {
+      return '';
+    }
+    return text
+      .split('\n')
+      .filter(line => {
+        const trimmed = line.trim();
+        return !(trimmed.startsWith(TAG_DM_PREFIX) || trimmed.startsWith(TAG_CHAT_PREFIX) || trimmed.toLowerCase() === TAG_GLOBAL_CHAT);
+      })
+      .join('\n')
+      .trim();
+  };
+
+  normalizeHashtagValue = item => {
+    const rawValue = item?.value;
     if (!rawValue) {
       return '';
     }
     if (typeof rawValue !== 'string') {
-      return this.parseEnvelope(rawValue);
+      return this.stripChatTags(this.parseEnvelope(rawValue));
     }
     try {
       const decoded = b64decode(rawValue);
-      return this.parseEnvelope(decoded);
+      return this.stripChatTags(this.parseEnvelope(decoded));
     } catch (error) {
-      return this.parseEnvelope(rawValue);
+      return this.stripChatTags(this.parseEnvelope(rawValue));
     }
   };
 
-  reactionMatchesSender = (reaction, namespaceId, shortCode) => {
-    if (!reaction) {
+  isFromNamespace = (item, namespaceId, shortCode) => {
+    if (!item) {
       return false;
     }
-    const sender = reaction.sender || {};
-    const senderShortCode = sender.shortCode || sender.short_code || reaction.shortCode || reaction.short_code;
-    const senderNamespaceId = sender.namespaceId || sender.namespace_id || reaction.namespaceId || reaction.namespace_id;
-    return (namespaceId && senderNamespaceId === namespaceId) || (shortCode && senderShortCode === shortCode);
+    const itemNamespaceId = item.namespace != null ? String(item.namespace) : null;
+    const itemShortCode = item.shortCode != null ? String(item.shortCode) : null;
+    const normalizedNamespaceId = namespaceId != null ? String(namespaceId) : null;
+    const normalizedShortCode = shortCode != null ? String(shortCode) : null;
+    return (
+      (normalizedNamespaceId && itemNamespaceId === normalizedNamespaceId) ||
+      (normalizedShortCode && itemShortCode === normalizedShortCode)
+    );
+  };
+
+  getNamespaceShortCode = (namespaceId, fallback) => {
+    if (!namespaceId) {
+      return fallback || null;
+    }
+    const { namespaceList } = this.props;
+    const namespace = namespaceList?.namespaces?.[namespaceId];
+    return namespace?.shortCode || fallback || null;
+  };
+
+  getChatTag = (myShort, peerShort) => {
+    if (!myShort || !peerShort) {
+      return null;
+    }
+    const min = Math.min(Number(myShort), Number(peerShort));
+    const max = Math.max(Number(myShort), Number(peerShort));
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      return null;
+    }
+    return `${TAG_CHAT_PREFIX}${min}_${max}`;
   };
 
   syncFromChain = async ({ reset = false } = {}) => {
@@ -726,11 +770,9 @@ class FollowChat extends React.Component {
       peerNamespaceId,
       myAnchorTxid,
       peerAnchorTxid,
-      myInboxCursor,
-      peerInboxCursor,
+      chatCursor,
       allMessages,
       syncing,
-      mode,
     } = this.state;
     if (syncing) {
       return;
@@ -738,57 +780,43 @@ class FollowChat extends React.Component {
     if (!myNamespaceId || !peerNamespaceId || !myAnchorTxid || !peerAnchorTxid) {
       return;
     }
+    const { namespaceList } = this.props;
+    const myNamespace = namespaceList?.namespaces?.[myNamespaceId] || {};
+    const peerNamespace = namespaceList?.namespaces?.[peerNamespaceId] || {};
+    const myShortCode = this.getNamespaceShortCode(myNamespaceId, myNamespace.shortCode);
+    const peerShortCode = this.getNamespaceShortCode(peerNamespaceId, peerNamespace.shortCode);
+    const chatTag = this.getChatTag(myShortCode, peerShortCode);
+    if (!chatTag) {
+      return;
+    }
     this.setState({ syncing: true });
     try {
       await BlueElectrum.ping();
       await BlueElectrum.waitTillConnected();
-      const peerResponse = await BlueElectrum.blockchainKeva_getKeyValueReactions(peerAnchorTxid, reset ? -1 : peerInboxCursor);
-      const myResponse = mode === 'send_only'
-        ? null
-        : await BlueElectrum.blockchainKeva_getKeyValueReactions(myAnchorTxid, reset ? -1 : myInboxCursor);
-      const peerReactions = Array.isArray(peerResponse) ? peerResponse : peerResponse?.reactions || peerResponse?.replies || [];
-      const myReactions = Array.isArray(myResponse) ? myResponse : myResponse?.reactions || myResponse?.replies || [];
-
-      const myNamespace = this.props.namespaceList?.namespaces?.[myNamespaceId] || {};
-      const peerNamespace = this.props.namespaceList?.namespaces?.[peerNamespaceId] || {};
-      const myShortCode = myNamespace.shortCode;
-      const peerShortCode = peerNamespace.shortCode;
-
-      const outgoing = peerReactions.filter(reaction => this.reactionMatchesSender(reaction, myNamespaceId, myShortCode));
-      const incoming = mode === 'send_only'
-        ? []
-        : myReactions.filter(reaction => this.reactionMatchesSender(reaction, peerNamespaceId, peerShortCode));
-
+      const response = await BlueElectrum.blockchainKeva_getHashtag(getHashtagScriptHash(chatTag), reset ? -1 : chatCursor);
+      const hashtagItems = Array.isArray(response) ? response : response?.hashtags || [];
       const chainMessages = [];
-      outgoing.forEach(reaction => {
-        const txid = reaction.tx_hash || reaction.txid;
-        const text = this.normalizeReactionValue(reaction);
+      hashtagItems.forEach(item => {
+        const txid = item.tx_hash || item.txid || item.tx;
+        const text = this.normalizeHashtagValue(item);
         if (!text) {
           return;
         }
-        chainMessages.push(
-          this.buildMessage(text, 'user', {
-            id: `${txid}:${reaction.vout || reaction.tx_pos || reaction.n || 0}`,
-            timestamp: (reaction.time || reaction.timestamp || Date.now() / 1000) * 1000,
-            txid,
-            pending: false,
-            direction: 'out',
-          }),
-        );
-      });
-      incoming.forEach(reaction => {
-        const txid = reaction.tx_hash || reaction.txid;
-        const text = this.normalizeReactionValue(reaction);
-        if (!text) {
+        const isMine = this.isFromNamespace(item, myNamespaceId, myShortCode);
+        const isPeer = this.isFromNamespace(item, peerNamespaceId, peerShortCode);
+        if (!isMine && !isPeer) {
+          return;
+        }
+        if (this.state.mode === 'send_only' && !isMine) {
           return;
         }
         chainMessages.push(
-          this.buildMessage(text, 'peer', {
-            id: `${txid}:${reaction.vout || reaction.tx_pos || reaction.n || 0}`,
-            timestamp: (reaction.time || reaction.timestamp || Date.now() / 1000) * 1000,
+          this.buildMessage(text, isMine ? 'user' : 'peer', {
+            id: `${txid}:${item.vout || item.tx_pos || item.n || 0}`,
+            timestamp: (item.time || item.timestamp || Date.now() / 1000) * 1000,
             txid,
             pending: false,
-            direction: 'in',
+            direction: isMine ? 'out' : 'in',
           }),
         );
       });
@@ -828,8 +856,7 @@ class FollowChat extends React.Component {
           visibleCount: nextVisibleCount,
           messages: filteredMessages.slice(-nextVisibleCount),
           lastSyncAt: Date.now(),
-          myInboxCursor: myResponse?.min_tx_num ?? myInboxCursor,
-          peerInboxCursor: peerResponse?.min_tx_num ?? peerInboxCursor,
+          chatCursor: response?.min_tx_num ?? chatCursor,
         },
         () => this.persistMessages(this.state.allMessages),
       );
@@ -860,7 +887,15 @@ class FollowChat extends React.Component {
     if (!wallet) {
       throw new Error('wallet not found');
     }
-    const value = this.buildEnvelope(text);
+    const { namespaceList } = this.props;
+    const myNamespace = namespaceList?.namespaces?.[myNamespaceId] || {};
+    const peerNamespace = namespaceList?.namespaces?.[this.state.peerNamespaceId] || {};
+    const myShortCode = myNamespace.shortCode;
+    const peerShortCode = peerNamespace.shortCode || this.props.navigation.state?.params?.peerShortCode;
+    if (!myShortCode || !peerShortCode) {
+      throw new Error('short code missing');
+    }
+    const value = this.buildTaggedMessage(text, myShortCode, peerShortCode);
     await BlueElectrum.ping();
     const { tx } = await replyKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, myNamespaceId, value, peerAnchorTxid);
     await BlueElectrum.waitTillConnected();

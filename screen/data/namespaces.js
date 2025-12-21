@@ -65,8 +65,7 @@ import StepModal from "../../common/StepModalWizard";
 import {
   createKevaNamespace, findMyNamespaces,
   findOtherNamespace, getNamespaceInfo,
-  getNamespaceScriptHash,
-  toScriptHash,
+  getHashtagScriptHash,
   waitPromise, populateReactions,
 } from '../../class/keva-ops';
 import {
@@ -121,6 +120,9 @@ const selectAvatarCandidateUri = (candidateUris = [], failedUris = [], generated
 
 const GUEST_SECTION_KEY = 'guest_inbox_section';
 const GUEST_ORDER_STORAGE_KEY = 'guest_inbox_order_index';
+const TAG_DM_PREFIX = '#DM';
+const TAG_CHAT_PREFIX = '#CHAT';
+const TAG_GLOBAL_CHAT = '#chatxkeva';
 
 
 class Namespace extends React.Component {
@@ -1107,45 +1109,33 @@ class OtherNamespaces extends React.Component {
     return { nextOrder, guestIndex, cleanedOrder };
   }
 
-  resolveAnchorTxid = async namespaceId => {
-    if (!namespaceId) {
-      return null;
+  stripChatTags = text => {
+    if (!text || typeof text !== 'string') {
+      return '';
     }
-    const { namespaceList } = this.props;
-    const namespace = namespaceList?.namespaces?.[namespaceId];
-    const scriptHash = namespace?.rootAddress ? toScriptHash(namespace.rootAddress) : getNamespaceScriptHash(namespaceId);
-    try {
-      await BlueElectrum.ping();
-      const history = await BlueElectrum.blockchainKeva_getKeyValues(scriptHash, -1);
-      const keyvalues = Array.isArray(history) ? history : history?.keyvalues || [];
-      if (!keyvalues.length) {
-        return null;
-      }
-      const reg = keyvalues.find(entry => entry.type === 'REG');
-      if (reg?.tx_hash || reg?.txid) {
-        return reg.tx_hash || reg.txid;
-      }
-      const last = keyvalues[keyvalues.length - 1];
-      return last?.tx_hash || last?.txid || null;
-    } catch (error) {
-      console.warn('Failed to resolve anchor txid', error);
-      return null;
-    }
+    return text
+      .split('\n')
+      .filter(line => {
+        const trimmed = line.trim();
+        return !(trimmed.startsWith(TAG_DM_PREFIX) || trimmed.startsWith(TAG_CHAT_PREFIX) || trimmed.toLowerCase() === TAG_GLOBAL_CHAT);
+      })
+      .join('\n')
+      .trim();
   };
 
-  parseReactionValue = reaction => {
-    const rawValue = reaction?.value;
+  parseHashtagValue = item => {
+    const rawValue = item?.value;
     if (!rawValue) {
       return '';
     }
     if (typeof rawValue !== 'string') {
-      return String(rawValue);
+      return this.stripChatTags(String(rawValue));
     }
     try {
       const decoded = b64decode(rawValue);
-      return decoded || rawValue;
+      return this.stripChatTags(decoded || rawValue);
     } catch (error) {
-      return rawValue;
+      return this.stripChatTags(rawValue);
     }
   };
 
@@ -1160,36 +1150,18 @@ class OtherNamespaces extends React.Component {
     try {
       await BlueElectrum.ping();
       await BlueElectrum.waitTillConnected();
-      const anchorEntries = await Promise.all(
-        myNamespaceIds.map(async namespaceId => {
-          const txid = await this.resolveAnchorTxid(namespaceId);
-          return [namespaceId, txid];
-        }),
-      );
-      const anchorMap = anchorEntries.reduce((acc, [namespaceId, txid]) => {
-        if (txid) {
-          acc[namespaceId] = txid;
-        }
-        return acc;
-      }, {});
       const reactions = [];
-      for (const [myNamespaceId, anchorTxid] of Object.entries(anchorMap)) {
-        const response = await BlueElectrum.blockchainKeva_getKeyValueReactions(anchorTxid, -1);
-        const reactionList = Array.isArray(response) ? response : response?.reactions || response?.replies || [];
-        reactionList.forEach(reaction => {
-          const sender = reaction.sender || {};
-          console.log('reaction sender keys', Object.keys(sender), sender);
-          // peerNamespaceId 必须兜底到 shortCode（ElectrumX 常见只给 shortCode）
-          const peerNamespaceIdRaw =
-            sender.namespaceId ??
-            sender.namespace_id ??
-            reaction.namespaceId ??
-            reaction.namespace_id ??
-            sender.shortCode ??
-            sender.short_code ??
-            reaction.shortCode ??
-            reaction.short_code;
-
+      for (const myNamespaceId of myNamespaceIds) {
+        const myNamespace = namespaceList?.namespaces?.[myNamespaceId] || {};
+        const myShortCode = myNamespace.shortCode || myNamespaceId;
+        if (!myShortCode) {
+          continue;
+        }
+        const tag = `${TAG_DM_PREFIX}${myShortCode}`;
+        const response = await BlueElectrum.blockchainKeva_getHashtag(getHashtagScriptHash(tag), -1);
+        const hashtagItems = Array.isArray(response) ? response : response?.hashtags || [];
+        hashtagItems.forEach(item => {
+          const peerNamespaceIdRaw = item.namespace;
           const peerNamespaceId = peerNamespaceIdRaw != null ? String(peerNamespaceIdRaw) : null;
           if (!peerNamespaceId) {
             return;
@@ -1198,22 +1170,11 @@ class OtherNamespaces extends React.Component {
             return;
           }
           reactions.push({
-            ...reaction,
+            ...item,
             toMyNamespaceId: myNamespaceId,
             peerNamespaceId,
-            peerShortCode: String(
-              sender.shortCode ??
-                sender.short_code ??
-                reaction.shortCode ??
-                reaction.short_code ??
-                peerNamespaceId,
-            ),
-            peerDisplayName:
-              sender.displayName ??
-              sender.display_name ??
-              reaction.displayName ??
-              reaction.display_name ??
-              'Unknown',
+            peerShortCode: String(item.shortCode ?? peerNamespaceId),
+            peerDisplayName: item.displayName || 'Unknown',
           });
         });
       }
@@ -1229,7 +1190,7 @@ class OtherNamespaces extends React.Component {
         const pairId = `${String(reaction.toMyNamespaceId)}__${peerNamespaceId}`;
         const timeSeconds = reaction.time || reaction.timestamp || Date.now() / 1000;
         const lastTime = timeSeconds * 1000;
-        const lastMessage = this.parseReactionValue(reaction);
+        const lastMessage = this.parseHashtagValue(reaction);
         const existing = pairMap[pairId];
         if (!existing || lastTime >= existing.lastTime) {
           pairMap[pairId] = {
