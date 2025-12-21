@@ -345,7 +345,7 @@ class Namespace extends React.Component {
   }
 
   onChat = () => {
-    const { data, navigation } = this.props;
+    const { data, navigation, isMutual } = this.props;
     if (!navigation || typeof navigation.push !== 'function') {
       return;
     }
@@ -353,6 +353,7 @@ class Namespace extends React.Component {
       return;
     }
     const namespaceId = data.id || data.namespaceId;
+    const mode = isMutual === false ? 'send_only' : 'mutual';
     listConversationMetadataForPeer(namespaceId)
       .then(entries => {
         const boundNamespaceIds = entries.map(entry => entry.replyFromNamespaceId).filter(Boolean);
@@ -362,6 +363,7 @@ class Namespace extends React.Component {
           peerShortCode: data.shortCode,
           peerDisplayName: data.displayName,
           replyFromNamespaceId,
+          mode,
         });
       })
       .catch(error => {
@@ -370,6 +372,7 @@ class Namespace extends React.Component {
           peerNamespaceId: namespaceId,
           peerShortCode: data.shortCode,
           peerDisplayName: data.displayName,
+          mode,
         });
       });
   }
@@ -1008,6 +1011,7 @@ class MyNamespaces extends React.Component {
                   latestBlockHeight={this.state.latestBlockHeight}
                   namespaceList={namespaceList}
                   myNamespaceId={namespaceList.order[0]}
+                  canChat={true}
                   key={key}
                 />
               );
@@ -1452,7 +1456,8 @@ class OtherNamespaces extends React.Component {
                   canDelete={true}
                   isOther={true}
                   namespaceList={namespaceList}
-                  canChat={isMutual}
+                  canChat={true}
+                  isMutual={isMutual}
                 />
               );
             }}
