@@ -347,7 +347,7 @@ class Namespace extends React.Component {
   }
 
   onChat = () => {
-    const { data, navigation, isMutual } = this.props;
+    const { data, navigation, isMutual, isOther } = this.props;
     if (!navigation || typeof navigation.push !== 'function') {
       return;
     }
@@ -355,6 +355,23 @@ class Namespace extends React.Component {
       return;
     }
     const namespaceId = data.id || data.namespaceId;
+
+    if (!isOther) {
+      navigation.push('AgentChat', {
+        namespaceId,
+        shortCode: data.shortCode,
+        displayName: data.displayName,
+        walletId: data.walletId,
+        txid: data.txId,
+        rootAddress: data.rootAddress,
+        price: data.price,
+        desc: data.desc,
+        addr: data.addr,
+        profile: data.profile,
+      });
+      return;
+    }
+
     const mode = isMutual === false ? 'send_only' : 'mutual';
     listConversationMetadataForPeer(namespaceId)
       .then(entries => {
