@@ -55,6 +55,7 @@ class FollowChat extends React.Component {
       replyFromNamespaceId: null,
       pendingReplyFromNamespaceId: null,
       availableBoundNamespaceIds: [],
+      mode: 'mutual',
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -114,6 +115,7 @@ class FollowChat extends React.Component {
   initializeChat = async () => {
     const params = this.props.navigation.state.params || {};
     const peerNamespaceId = params.peerNamespaceId || null;
+    const mode = params.mode === 'send_only' ? 'send_only' : 'mutual';
     const boundEntries = peerNamespaceId ? await listConversationMetadataForPeer(peerNamespaceId) : [];
     const boundNamespaceIds = boundEntries
       .map(entry => entry.replyFromNamespaceId)
@@ -126,7 +128,8 @@ class FollowChat extends React.Component {
     if (!this._isMounted) {
       return;
     }
-    const visibleCount = Math.min(history.length || PAGE_SIZE, PAGE_SIZE);
+    const filteredHistory = this.filterMessagesForMode(history, mode);
+    const visibleCount = Math.min(filteredHistory.length || PAGE_SIZE, PAGE_SIZE);
     let myAnchorTxid = null;
     let peerAnchorTxid = params.peerAnchorTxid || null;
     if (replyFromNamespaceId) {
@@ -140,7 +143,7 @@ class FollowChat extends React.Component {
       {
         allMessages: history,
         visibleCount,
-        messages: history.slice(-visibleCount),
+        messages: filteredHistory.slice(-visibleCount),
         myNamespaceId: replyFromNamespaceId,
         peerNamespaceId,
         myAnchorTxid,
@@ -148,6 +151,7 @@ class FollowChat extends React.Component {
         replyFromNamespaceId,
         pendingReplyFromNamespaceId: null,
         availableBoundNamespaceIds: boundNamespaceIds,
+        mode,
       },
       () => {
         this.scrollToEnd(false);
@@ -205,11 +209,12 @@ class FollowChat extends React.Component {
     this.setState(
       prevState => {
         const allMessages = [...prevState.allMessages, message];
-        const visibleCount = Math.max(prevState.visibleCount, Math.min(PAGE_SIZE, allMessages.length));
+        const filteredMessages = this.filterMessagesForMode(allMessages);
+        const visibleCount = Math.max(prevState.visibleCount, Math.min(PAGE_SIZE, filteredMessages.length));
         return {
           allMessages,
           visibleCount,
-          messages: allMessages.slice(-visibleCount),
+          messages: filteredMessages.slice(-visibleCount),
         };
       },
       () => this.persistMessages(this.state.allMessages),
@@ -222,9 +227,10 @@ class FollowChat extends React.Component {
         const allMessages = prevState.allMessages.map(message =>
           message.id === messageId ? { ...message, failed: true, pending: false } : message,
         );
+        const filteredMessages = this.filterMessagesForMode(allMessages);
         return {
           allMessages,
-          messages: allMessages.slice(-prevState.visibleCount),
+          messages: filteredMessages.slice(-Math.min(prevState.visibleCount, filteredMessages.length || prevState.visibleCount)),
         };
       },
       () => this.persistMessages(this.state.allMessages),
@@ -238,14 +244,15 @@ class FollowChat extends React.Component {
     }
     const conversationId = buildConversationId(namespaceId, peerNamespaceId);
     const history = await this.readHistory(conversationId);
-    const visibleCount = Math.min(history.length || PAGE_SIZE, PAGE_SIZE);
+    const filteredHistory = this.filterMessagesForMode(history);
+    const visibleCount = Math.min(filteredHistory.length || PAGE_SIZE, PAGE_SIZE);
     const myAnchorTxid = await this.resolveAnchorTxid(namespaceId);
     this.conversationId = conversationId;
     this.setState(
       {
         allMessages: history,
         visibleCount,
-        messages: history.slice(-visibleCount),
+        messages: filteredHistory.slice(-visibleCount),
         myNamespaceId: namespaceId,
         myAnchorTxid,
         myInboxCursor: -1,
@@ -433,16 +440,17 @@ class FollowChat extends React.Component {
       return;
     }
     const { allMessages, visibleCount } = this.state;
-    if (visibleCount >= allMessages.length) {
+    const filteredMessages = this.filterMessagesForMode(allMessages);
+    if (visibleCount >= filteredMessages.length) {
       return;
     }
     this.loadingMore = true;
     this.setState(
       prevState => {
-        const nextCount = Math.min(prevState.allMessages.length, prevState.visibleCount + PAGE_SIZE);
+        const nextCount = Math.min(filteredMessages.length, prevState.visibleCount + PAGE_SIZE);
         return {
           visibleCount: nextCount,
-          messages: prevState.allMessages.slice(-nextCount),
+          messages: filteredMessages.slice(-nextCount),
         };
       },
       () => {
@@ -623,6 +631,14 @@ class FollowChat extends React.Component {
     return Boolean(this.getActiveNamespaceId() && this.state.peerNamespaceId && this.state.peerAnchorTxid && this.state.myAnchorTxid);
   };
 
+  filterMessagesForMode = (messages, modeOverride) => {
+    const mode = modeOverride || this.state.mode;
+    if (mode !== 'send_only') {
+      return messages;
+    }
+    return messages.filter(message => message.direction !== 'in' && message.sender !== 'peer');
+  };
+
   buildEnvelope = text => {
     return text;
   };
@@ -704,6 +720,7 @@ class FollowChat extends React.Component {
       peerInboxCursor,
       allMessages,
       syncing,
+      mode,
     } = this.state;
     if (syncing) {
       return;
@@ -716,7 +733,9 @@ class FollowChat extends React.Component {
       await BlueElectrum.ping();
       await BlueElectrum.waitTillConnected();
       const peerResponse = await BlueElectrum.blockchainKeva_getKeyValueReactions(peerAnchorTxid, reset ? -1 : peerInboxCursor);
-      const myResponse = await BlueElectrum.blockchainKeva_getKeyValueReactions(myAnchorTxid, reset ? -1 : myInboxCursor);
+      const myResponse = mode === 'send_only'
+        ? null
+        : await BlueElectrum.blockchainKeva_getKeyValueReactions(myAnchorTxid, reset ? -1 : myInboxCursor);
       const peerReactions = Array.isArray(peerResponse) ? peerResponse : peerResponse?.reactions || peerResponse?.replies || [];
       const myReactions = Array.isArray(myResponse) ? myResponse : myResponse?.reactions || myResponse?.replies || [];
 
@@ -726,7 +745,9 @@ class FollowChat extends React.Component {
       const peerShortCode = peerNamespace.shortCode;
 
       const outgoing = peerReactions.filter(reaction => this.reactionMatchesSender(reaction, myNamespaceId, myShortCode));
-      const incoming = myReactions.filter(reaction => this.reactionMatchesSender(reaction, peerNamespaceId, peerShortCode));
+      const incoming = mode === 'send_only'
+        ? []
+        : myReactions.filter(reaction => this.reactionMatchesSender(reaction, peerNamespaceId, peerShortCode));
 
       const chainMessages = [];
       outgoing.forEach(reaction => {
@@ -789,12 +810,13 @@ class FollowChat extends React.Component {
       });
 
       merged.sort((a, b) => a.timestamp - b.timestamp);
-      const nextVisibleCount = Math.max(this.state.visibleCount, Math.min(PAGE_SIZE, merged.length));
+      const filteredMessages = this.filterMessagesForMode(merged);
+      const nextVisibleCount = Math.max(this.state.visibleCount, Math.min(PAGE_SIZE, filteredMessages.length));
       this.setState(
         {
           allMessages: merged,
           visibleCount: nextVisibleCount,
-          messages: merged.slice(-nextVisibleCount),
+          messages: filteredMessages.slice(-nextVisibleCount),
           lastSyncAt: Date.now(),
           myInboxCursor: myResponse?.min_tx_num ?? myInboxCursor,
           peerInboxCursor: peerResponse?.min_tx_num ?? peerInboxCursor,
@@ -840,7 +862,7 @@ class FollowChat extends React.Component {
   };
 
   render() {
-    const { peerNamespaceId, peerAnchorTxid, replyFromNamespaceId, pendingReplyFromNamespaceId } = this.state;
+    const { peerNamespaceId, peerAnchorTxid, replyFromNamespaceId, pendingReplyFromNamespaceId, mode } = this.state;
     const { namespaceList } = this.props;
     const canSend = this.canSendMessage();
     const activeNamespaceId = this.getActiveNamespaceId();
@@ -872,6 +894,11 @@ class FollowChat extends React.Component {
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
           <View style={styles.chatContainer}>
+            {mode === 'send_only' && (
+              <View style={styles.oneWayBanner}>
+                <Text style={styles.oneWayText}>One-way delivery</Text>
+              </View>
+            )}
             {needsBinding && (
               <View style={styles.bindContainer}>
                 <Text style={styles.bindTitle}>Select a space to reply</Text>
@@ -970,6 +997,21 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 16,
     paddingTop: 16,
+  },
+  oneWayBanner: {
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#1f2a44',
+    backgroundColor: '#0f172a',
+  },
+  oneWayText: {
+    color: '#fbbf24',
+    fontSize: 12,
+    fontWeight: '600',
   },
   bindContainer: {
     backgroundColor: '#0f172a',
