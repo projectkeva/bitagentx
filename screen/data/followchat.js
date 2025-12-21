@@ -7,6 +7,7 @@ import {
   FlatList,
   SafeAreaView,
   TouchableOpacity,
+  Modal,
   Clipboard,
   KeyboardAvoidingView,
   Platform,
@@ -15,7 +16,6 @@ import { Icon } from 'react-native-elements';
 import RNFS from 'react-native-fs';
 import { connect } from 'react-redux';
 import { encode as b64encode, decode as b64decode } from 'base-64';
-import RNPickerSelect from 'react-native-picker-select';
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
@@ -56,6 +56,7 @@ class FollowChat extends React.Component {
       pendingReplyFromNamespaceId: null,
       availableBoundNamespaceIds: [],
       mode: 'mutual',
+      isNamespaceModalVisible: false,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -270,6 +271,7 @@ class FollowChat extends React.Component {
     if (!namespaceId) {
       return;
     }
+    this.closeNamespaceModal();
     const { availableBoundNamespaceIds } = this.state;
     const isBound = availableBoundNamespaceIds.includes(namespaceId);
     if (isBound) {
@@ -303,6 +305,14 @@ class FollowChat extends React.Component {
       myInboxCursor: -1,
       peerInboxCursor: -1,
     });
+  };
+
+  openNamespaceModal = () => {
+    this.setState({ isNamespaceModalVisible: true });
+  };
+
+  closeNamespaceModal = () => {
+    this.setState({ isNamespaceModalVisible: false });
   };
 
   handleSend = async () => {
@@ -880,6 +890,7 @@ class FollowChat extends React.Component {
         };
       })
       .filter(Boolean);
+    const selectedNamespaceLabel = namespaceOptions.find(option => option.value === activeNamespaceId)?.label || null;
     let emptyText = 'Start a conversation with this peer.';
     if (!peerNamespaceId) {
       emptyText = 'Select a peer to start a conversation.';
@@ -902,26 +913,17 @@ class FollowChat extends React.Component {
             {needsBinding && (
               <View style={styles.bindContainer}>
                 <Text style={styles.bindTitle}>Select a space to reply</Text>
-                <RNPickerSelect
-                  value={activeNamespaceId}
-                  placeholder={{ label: 'Select a space', value: null }}
-                  useNativeAndroidPickerStyle={false}
-                  style={{
-                    inputAndroid: styles.bindPicker,
-                    inputIOS: styles.bindPicker,
-                    placeholder: styles.bindPlaceholder,
-                    iconContainer: styles.bindPickerIcon,
-                    viewContainer: styles.bindPickerViewContainer,
-                    modalViewTop: styles.bindPickerModalTop,
-                    modalViewBottom: styles.bindPickerModalBottom,
-                    done: styles.bindPickerDone,
-                    chevronContainer: styles.bindPickerChevronContainer,
-                  }}
-                  onValueChange={this.handleSelectNamespace}
-                  items={namespaceOptions}
-                  Icon={() => <Icon name="chevron-down" type="feather" color="#9aa4b2" size={18} />}
-                  textInputProps={{ placeholderTextColor: '#6f7587' }}
-                />
+                <TouchableOpacity
+                  style={styles.bindPickerButton}
+                  onPress={this.openNamespaceModal}
+                  accessibilityLabel="Select a space"
+                  activeOpacity={0.8}
+                >
+                  <Text style={selectedNamespaceLabel ? styles.bindPickerText : styles.bindPlaceholder}>
+                    {selectedNamespaceLabel || 'Select a space'}
+                  </Text>
+                  <Icon name="chevron-down" type="feather" color="#9aa4b2" size={18} />
+                </TouchableOpacity>
                 {pendingReplyFromNamespaceId && (
                   <TouchableOpacity style={styles.bindChangeButton} onPress={this.resetPendingSelection}>
                     <Text style={styles.bindChangeText}>Change</Text>
@@ -929,6 +931,50 @@ class FollowChat extends React.Component {
                 )}
               </View>
             )}
+            <Modal
+              animationType="fade"
+              transparent
+              visible={this.state.isNamespaceModalVisible}
+              onRequestClose={this.closeNamespaceModal}
+            >
+              <TouchableOpacity
+                style={styles.bindModalOverlay}
+                activeOpacity={1}
+                onPress={this.closeNamespaceModal}
+              >
+                <TouchableOpacity
+                  activeOpacity={1}
+                  style={styles.bindModalContent}
+                  onPress={() => {}}
+                >
+                  <View style={styles.bindModalHeader}>
+                    <Text style={styles.bindModalTitle}>Select a space</Text>
+                    <TouchableOpacity onPress={this.closeNamespaceModal}>
+                      <Text style={styles.bindModalDone}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <FlatList
+                    data={namespaceOptions}
+                    keyExtractor={item => item.value}
+                    renderItem={({ item }) => (
+                      <TouchableOpacity
+                        style={styles.bindModalItem}
+                        onPress={() => this.handleSelectNamespace(item.value)}
+                      >
+                        <Text style={styles.bindModalItemText}>{item.label}</Text>
+                      </TouchableOpacity>
+                    )}
+                    ItemSeparatorComponent={() => <View style={styles.bindModalSeparator} />}
+                    contentContainerStyle={styles.bindModalList}
+                    ListEmptyComponent={() => (
+                      <View style={styles.bindModalEmpty}>
+                        <Text style={styles.bindModalEmptyText}>No spaces available</Text>
+                      </View>
+                    )}
+                  />
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </Modal>
             <FlatList
               ref={ref => {
                 this.listRef = ref;
@@ -1033,9 +1079,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     fontWeight: '600',
   },
-  bindPicker: {
-    fontSize: 15,
-    color: '#e2e8f0',
+  bindPlaceholder: {
+    color: '#6f7587',
+  },
+  bindPickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingVertical: 10,
     paddingHorizontal: 12,
     backgroundColor: '#0b1224',
@@ -1043,32 +1093,66 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1f2a44',
   },
-  bindPlaceholder: {
-    color: '#6f7587',
+  bindPickerText: {
+    color: '#e2e8f0',
+    fontSize: 15,
   },
-  bindPickerIcon: {
-    top: 12,
-    right: 12,
+  bindModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(4, 7, 16, 0.7)',
+    justifyContent: 'center',
+    padding: 20,
   },
-  bindPickerViewContainer: {
+  bindModalContent: {
     backgroundColor: '#0b1224',
-    borderRadius: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1f2a44',
+    maxHeight: '70%',
   },
-  bindPickerModalTop: {
+  bindModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     backgroundColor: '#0f172a',
     borderBottomWidth: 1,
     borderBottomColor: '#1f2a44',
   },
-  bindPickerModalBottom: {
-    backgroundColor: '#0b1224',
+  bindModalTitle: {
+    color: '#d2d7e0',
+    fontSize: 16,
+    fontWeight: '600',
   },
-  bindPickerDone: {
+  bindModalDone: {
     color: '#7dd3fc',
     fontSize: 16,
     fontWeight: '600',
   },
-  bindPickerChevronContainer: {
-    backgroundColor: 'transparent',
+  bindModalList: {
+    paddingVertical: 4,
+  },
+  bindModalItem: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  bindModalItemText: {
+    color: '#e2e8f0',
+    fontSize: 15,
+  },
+  bindModalSeparator: {
+    height: 1,
+    backgroundColor: '#1f2a44',
+  },
+  bindModalEmpty: {
+    paddingHorizontal: 16,
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  bindModalEmptyText: {
+    color: '#6f7587',
+    fontSize: 14,
   },
   bindChangeButton: {
     alignSelf: 'flex-start',
