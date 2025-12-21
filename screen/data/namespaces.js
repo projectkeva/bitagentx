@@ -1178,7 +1178,19 @@ class OtherNamespaces extends React.Component {
         const reactionList = Array.isArray(response) ? response : response?.reactions || response?.replies || [];
         reactionList.forEach(reaction => {
           const sender = reaction.sender || {};
-          const peerNamespaceId = sender.namespaceId || sender.namespace_id || reaction.namespaceId || reaction.namespace_id;
+          console.log('reaction sender keys', Object.keys(sender), sender);
+          // peerNamespaceId 必须兜底到 shortCode（ElectrumX 常见只给 shortCode）
+          const peerNamespaceIdRaw =
+            sender.namespaceId ??
+            sender.namespace_id ??
+            reaction.namespaceId ??
+            reaction.namespace_id ??
+            sender.shortCode ??
+            sender.short_code ??
+            reaction.shortCode ??
+            reaction.short_code;
+
+          const peerNamespaceId = peerNamespaceIdRaw != null ? String(peerNamespaceIdRaw) : null;
           if (!peerNamespaceId) {
             return;
           }
@@ -1189,8 +1201,19 @@ class OtherNamespaces extends React.Component {
             ...reaction,
             toMyNamespaceId: myNamespaceId,
             peerNamespaceId,
-            peerShortCode: sender.shortCode || sender.short_code || reaction.shortCode || reaction.short_code,
-            peerDisplayName: sender.displayName || sender.display_name || reaction.displayName || reaction.display_name,
+            peerShortCode: String(
+              sender.shortCode ??
+                sender.short_code ??
+                reaction.shortCode ??
+                reaction.short_code ??
+                peerNamespaceId,
+            ),
+            peerDisplayName:
+              sender.displayName ??
+              sender.display_name ??
+              reaction.displayName ??
+              reaction.display_name ??
+              'Unknown',
           });
         });
       }
@@ -1198,12 +1221,12 @@ class OtherNamespaces extends React.Component {
       const pairMap = {};
       const followedByMap = {};
       reactions.forEach(reaction => {
-        const peerNamespaceId = reaction.peerNamespaceId;
+        const peerNamespaceId = reaction.peerNamespaceId != null ? String(reaction.peerNamespaceId) : null;
         if (!peerNamespaceId) {
           return;
         }
         followedByMap[peerNamespaceId] = true;
-        const pairId = `${reaction.toMyNamespaceId}__${peerNamespaceId}`;
+        const pairId = `${String(reaction.toMyNamespaceId)}__${peerNamespaceId}`;
         const timeSeconds = reaction.time || reaction.timestamp || Date.now() / 1000;
         const lastTime = timeSeconds * 1000;
         const lastMessage = this.parseReactionValue(reaction);
@@ -1222,7 +1245,7 @@ class OtherNamespaces extends React.Component {
       });
 
       const guestItems = Object.values(pairMap)
-        .filter(item => !otherNamespaceList?.namespaces?.[item.peerNamespaceId])
+        .filter(item => !otherNamespaceList?.namespaces?.[String(item.peerNamespaceId)])
         .sort((a, b) => b.lastTime - a.lastTime);
       this.setState({ guestItems, followedByMap });
     } catch (error) {
