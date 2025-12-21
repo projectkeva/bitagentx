@@ -911,10 +911,16 @@ class FollowChat extends React.Component {
                     inputIOS: styles.bindPicker,
                     placeholder: styles.bindPlaceholder,
                     iconContainer: styles.bindPickerIcon,
+                    viewContainer: styles.bindPickerViewContainer,
+                    modalViewTop: styles.bindPickerModalTop,
+                    modalViewBottom: styles.bindPickerModalBottom,
+                    done: styles.bindPickerDone,
+                    chevronContainer: styles.bindPickerChevronContainer,
                   }}
                   onValueChange={this.handleSelectNamespace}
                   items={namespaceOptions}
                   Icon={() => <Icon name="chevron-down" type="feather" color="#9aa4b2" size={18} />}
+                  textInputProps={{ placeholderTextColor: '#6f7587' }}
                 />
                 {pendingReplyFromNamespaceId && (
                   <TouchableOpacity style={styles.bindChangeButton} onPress={this.resetPendingSelection}>
@@ -1043,6 +1049,26 @@ const styles = StyleSheet.create({
   bindPickerIcon: {
     top: 12,
     right: 12,
+  },
+  bindPickerViewContainer: {
+    backgroundColor: '#0b1224',
+    borderRadius: 8,
+  },
+  bindPickerModalTop: {
+    backgroundColor: '#0f172a',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1f2a44',
+  },
+  bindPickerModalBottom: {
+    backgroundColor: '#0b1224',
+  },
+  bindPickerDone: {
+    color: '#7dd3fc',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  bindPickerChevronContainer: {
+    backgroundColor: 'transparent',
   },
   bindChangeButton: {
     alignSelf: 'flex-start',
