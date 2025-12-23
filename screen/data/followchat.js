@@ -53,7 +53,9 @@ class FollowChat extends React.Component {
       peerAnchorTxid: null,
       syncing: false,
       lastSyncAt: 0,
-      chatCursor: -1,
+      peerShortCode: null,
+      chatOldestCursor: -1,
+      loadingOlder: false,
       replyFromNamespaceId: null,
       pendingReplyFromNamespaceId: null,
       availableBoundNamespaceIds: [],
@@ -118,6 +120,7 @@ class FollowChat extends React.Component {
   initializeChat = async () => {
     const params = this.props.navigation.state.params || {};
     const peerNamespaceId = params.peerNamespaceId || null;
+    const peerShortCode = params.peerShortCode || params.shortCode || null;
     const mode = params.mode === 'send_only' ? 'send_only' : 'mutual';
     const boundEntries = peerNamespaceId ? await listConversationMetadataForPeer(peerNamespaceId) : [];
     const boundNamespaceIds = boundEntries
@@ -155,6 +158,8 @@ class FollowChat extends React.Component {
         pendingReplyFromNamespaceId: null,
         availableBoundNamespaceIds: boundNamespaceIds,
         mode,
+        peerShortCode,
+        chatOldestCursor: -1,
       },
       () => {
         this.scrollToEnd(false);
@@ -258,7 +263,7 @@ class FollowChat extends React.Component {
         messages: filteredHistory.slice(-visibleCount),
         myNamespaceId: namespaceId,
         myAnchorTxid,
-        chatCursor: -1,
+        chatOldestCursor: -1,
         replyFromNamespaceId: setBound ? namespaceId : this.state.replyFromNamespaceId,
       },
       () => {
@@ -303,7 +308,7 @@ class FollowChat extends React.Component {
       allMessages: [],
       messages: [],
       visibleCount: PAGE_SIZE,
-      chatCursor: -1,
+      chatOldestCursor: -1,
     });
   };
 
@@ -470,9 +475,14 @@ class FollowChat extends React.Component {
   };
 
   handleScroll = event => {
-    const { contentOffset } = event.nativeEvent;
-    if (contentOffset?.y <= 20) {
-      this.loadMoreHistory();
+    const y = event.nativeEvent?.contentOffset?.y ?? 0;
+    if (y <= 20) {
+      const filtered = this.filterMessagesForMode(this.state.allMessages);
+      if (this.state.visibleCount < filtered.length) {
+        this.loadMoreHistory();
+      } else {
+        this.loadOlderFromChain();
+      }
     }
   };
 
@@ -642,11 +652,7 @@ class FollowChat extends React.Component {
   };
 
   filterMessagesForMode = (messages, modeOverride) => {
-    const mode = modeOverride || this.state.mode;
-    if (mode !== 'send_only') {
-      return messages;
-    }
-    return messages.filter(message => message.direction !== 'in' && message.sender !== 'peer');
+    return messages;
   };
 
   buildTaggedMessage = (text, myShort, peerShort) => {
@@ -770,7 +776,6 @@ class FollowChat extends React.Component {
       peerNamespaceId,
       myAnchorTxid,
       peerAnchorTxid,
-      chatCursor,
       allMessages,
       syncing,
     } = this.state;
@@ -782,9 +787,11 @@ class FollowChat extends React.Component {
     }
     const { namespaceList } = this.props;
     const myNamespace = namespaceList?.namespaces?.[myNamespaceId] || {};
-    const peerNamespace = namespaceList?.namespaces?.[peerNamespaceId] || {};
     const myShortCode = this.getNamespaceShortCode(myNamespaceId, myNamespace.shortCode);
-    const peerShortCode = this.getNamespaceShortCode(peerNamespaceId, peerNamespace.shortCode);
+    const peerShortCode =
+      this.state.peerShortCode ||
+      this.props.navigation.state?.params?.peerShortCode ||
+      null;
     const chatTag = this.getChatTag(myShortCode, peerShortCode);
     if (!chatTag) {
       return;
@@ -793,7 +800,7 @@ class FollowChat extends React.Component {
     try {
       await BlueElectrum.ping();
       await BlueElectrum.waitTillConnected();
-      const response = await BlueElectrum.blockchainKeva_getHashtag(getHashtagScriptHash(chatTag), reset ? -1 : chatCursor);
+      const response = await BlueElectrum.blockchainKeva_getHashtag(getHashtagScriptHash(chatTag), -1);
       const hashtagItems = Array.isArray(response) ? response : response?.hashtags || [];
       const chainMessages = [];
       hashtagItems.forEach(item => {
@@ -807,9 +814,6 @@ class FollowChat extends React.Component {
         if (!isMine && !isPeer) {
           return;
         }
-        if (this.state.mode === 'send_only' && !isMine) {
-          return;
-        }
         chainMessages.push(
           this.buildMessage(text, isMine ? 'user' : 'peer', {
             id: `${txid}:${item.vout || item.tx_pos || item.n || 0}`,
@@ -821,10 +825,10 @@ class FollowChat extends React.Component {
         );
       });
 
-      const existingTxids = new Set(allMessages.filter(message => message.txid).map(message => message.txid));
+      const existingIds = new Set(allMessages.map(message => message.id));
       const merged = [...allMessages];
       chainMessages.forEach(message => {
-        if (message.txid && existingTxids.has(message.txid)) {
+        if (existingIds.has(message.id)) {
           return;
         }
         if (message.direction === 'out') {
@@ -850,13 +854,16 @@ class FollowChat extends React.Component {
       merged.sort((a, b) => a.timestamp - b.timestamp);
       const filteredMessages = this.filterMessagesForMode(merged);
       const nextVisibleCount = Math.max(this.state.visibleCount, Math.min(PAGE_SIZE, filteredMessages.length));
+      const nextOldest =
+        typeof response?.min_tx_num === 'number' ? response.min_tx_num : this.state.chatOldestCursor;
       this.setState(
         {
           allMessages: merged,
           visibleCount: nextVisibleCount,
           messages: filteredMessages.slice(-nextVisibleCount),
           lastSyncAt: Date.now(),
-          chatCursor: response?.min_tx_num ?? chatCursor,
+          chatOldestCursor:
+            this.state.chatOldestCursor === -1 ? nextOldest : Math.min(this.state.chatOldestCursor, nextOldest),
         },
         () => this.persistMessages(this.state.allMessages),
       );
@@ -865,6 +872,83 @@ class FollowChat extends React.Component {
     } finally {
       if (this._isMounted) {
         this.setState({ syncing: false });
+      }
+    }
+  };
+
+  loadOlderFromChain = async () => {
+    if (this.state.loadingOlder || this.state.syncing) {
+      return;
+    }
+    const { myNamespaceId, peerNamespaceId, chatOldestCursor } = this.state;
+    if (!myNamespaceId || !peerNamespaceId) {
+      return;
+    }
+    if (chatOldestCursor === -1) {
+      return;
+    }
+    const myShortCode = this.getNamespaceShortCode(myNamespaceId);
+    const peerShortCode =
+      this.state.peerShortCode ||
+      this.props.navigation.state?.params?.peerShortCode ||
+      null;
+    const chatTag = this.getChatTag(myShortCode, peerShortCode);
+    if (!chatTag) {
+      return;
+    }
+    this.setState({ loadingOlder: true });
+    try {
+      await BlueElectrum.ping();
+      await BlueElectrum.waitTillConnected();
+      const response = await BlueElectrum.blockchainKeva_getHashtag(getHashtagScriptHash(chatTag), chatOldestCursor);
+      const hashtagItems = Array.isArray(response) ? response : response?.hashtags || [];
+      const chainMessages = [];
+      hashtagItems.forEach(item => {
+        const txid = item.tx_hash || item.txid || item.tx;
+        const text = this.normalizeHashtagValue(item);
+        if (!text) {
+          return;
+        }
+        const isMine = this.isFromNamespace(item, myNamespaceId, myShortCode);
+        const isPeer = this.isFromNamespace(item, peerNamespaceId, peerShortCode);
+        if (!isMine && !isPeer) {
+          return;
+        }
+        chainMessages.push(
+          this.buildMessage(text, isMine ? 'user' : 'peer', {
+            id: `${txid}:${item.vout || item.tx_pos || item.n || 0}`,
+            timestamp: (item.time || item.timestamp || Date.now() / 1000) * 1000,
+            txid,
+            pending: false,
+            direction: isMine ? 'out' : 'in',
+          }),
+        );
+      });
+      this.setState(prevState => {
+        const existingIds = new Set(prevState.allMessages.map(message => message.id));
+        const merged = [...prevState.allMessages];
+        chainMessages.forEach(message => {
+          if (existingIds.has(message.id)) {
+            return;
+          }
+          merged.push(message);
+        });
+        merged.sort((a, b) => a.timestamp - b.timestamp);
+        const filteredMessages = this.filterMessagesForMode(merged);
+        const nextVisibleCount = Math.max(prevState.visibleCount, Math.min(PAGE_SIZE, filteredMessages.length));
+        return {
+          allMessages: merged,
+          visibleCount: nextVisibleCount,
+          messages: filteredMessages.slice(-nextVisibleCount),
+          chatOldestCursor:
+            typeof response?.min_tx_num === 'number' ? response.min_tx_num : prevState.chatOldestCursor,
+        };
+      }, () => this.persistMessages(this.state.allMessages));
+    } catch (error) {
+      console.warn('Failed to load older follow chat messages', error);
+    } finally {
+      if (this._isMounted) {
+        this.setState({ loadingOlder: false });
       }
     }
   };
