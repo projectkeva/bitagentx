@@ -11,6 +11,7 @@ import {
   Clipboard,
   KeyboardAvoidingView,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import { Icon } from 'react-native-elements';
 import RNFS from 'react-native-fs';
@@ -61,6 +62,7 @@ class FollowChat extends React.Component {
       availableBoundNamespaceIds: [],
       mode: 'mutual',
       isNamespaceModalVisible: false,
+      hasMoreOlder: true,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -164,7 +166,10 @@ class FollowChat extends React.Component {
       () => {
         this.scrollToEnd(false);
         this.syncFromChain({ reset: true });
-      },
+        if (!this.state.replyFromNamespaceId) {
+          this.autoPickNamespaceForRead();
+        }
+        },
     );
   };
 
@@ -735,6 +740,49 @@ class FollowChat extends React.Component {
     }
   };
 
+
+  getHashtagRawText = item => {
+    const rawValue = item?.value;
+    if (!rawValue) {
+      return '';
+    }
+    if (typeof rawValue !== 'string') {
+      return String(rawValue);
+    }
+    try {
+      return b64decode(rawValue);
+    } catch (error) {
+      return rawValue;
+    }
+  };
+
+  hasDmTag = (raw, shortCode) => {
+    if (!raw || !shortCode) {
+      return false;
+    }
+    const needle = `${TAG_DM_PREFIX}${shortCode}`;
+    return String(raw)
+      .split('\n')
+      .some(line => line.trim() === needle);
+  };
+
+  inferSenderByDmTag = (raw, myShort, peerShort) => {
+    const toPeer = this.hasDmTag(raw, peerShort);
+    const toMe = this.hasDmTag(raw, myShort);
+
+    if (toPeer && !toMe) {
+      return 'user';
+    }
+    if (toMe && !toPeer) {
+      return 'peer';
+    }
+    if (toPeer) {
+      return 'user';
+    }
+    return 'peer';
+  };
+
+
   isFromNamespace = (item, namespaceId, shortCode) => {
     if (!item) {
       return false;
@@ -758,6 +806,90 @@ class FollowChat extends React.Component {
     return namespace?.shortCode || fallback || null;
   };
 
+  withTimeout = (promise, ms = 8000) => {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ]);
+};
+
+// guest 状态：未绑定 reply space 时，自动从“我的空间”里挑一个能读到对方消息的
+autoPickNamespaceForRead = async () => {
+  const { namespaceList } = this.props;
+  const peerNamespaceId = this.state.peerNamespaceId || this.props.navigation.state?.params?.peerNamespaceId;
+  const peerShortCode = this.state.peerShortCode || this.props.navigation.state?.params?.peerShortCode;
+
+  if (!peerNamespaceId || !peerShortCode) return;
+
+  const candidates = (namespaceList?.order || [])
+    .map(id => ({ id, shortCode: namespaceList?.namespaces?.[id]?.shortCode }))
+    .filter(x => x.shortCode && /^\d+$/.test(String(x.shortCode)))
+    .slice(0, 12);
+
+  if (!candidates.length) return;
+
+  try {
+    await BlueElectrum.ping();
+    await this.withTimeout(BlueElectrum.waitTillConnected(), 8000);
+  } catch (e) {
+    return;
+  }
+
+  for (const c of candidates) {
+    const tag = this.getChatTag(c.shortCode, peerShortCode);
+    if (!tag) continue;
+
+    try {
+      const resp = await this.withTimeout(
+        BlueElectrum.blockchainKeva_getHashtag(getHashtagScriptHash(tag), -1),
+        8000,
+      );
+      const items = Array.isArray(resp) ? resp : resp?.hashtags || [];
+
+      // 判断是否存在“发给候选 shortCode”的消息（即对方发给我）
+      const hasPeer = items.some(it => {
+        const raw = this.parseEnvelope(this.getHashtagRawText(it));
+        return this.hasDmTag(raw, c.shortCode);
+      });
+
+      if (hasPeer) {
+        const myAnchorTxid = await this.resolveAnchorTxid(c.id);
+        if (!this._isMounted) return;
+
+        this.setState(
+          {
+            pendingReplyFromNamespaceId: c.id,
+            myNamespaceId: c.id,
+            myAnchorTxid,
+            chatOldestCursor: -1,
+            hasMoreOlder: true,
+          },
+          () => this.syncFromChain({ reset: true }),
+        );
+        return;
+      }
+    } catch (e) {
+      // ignore and try next candidate
+    }
+  }
+
+  const fallback = candidates[0];
+  const myAnchorTxid = await this.resolveAnchorTxid(fallback.id);
+  if (!this._isMounted) return;
+
+  this.setState(
+    {
+      pendingReplyFromNamespaceId: fallback.id,
+      myNamespaceId: fallback.id,
+      myAnchorTxid,
+      chatOldestCursor: -1,
+      hasMoreOlder: true,
+    },
+    () => this.syncFromChain({ reset: true }),
+  );
+};
+
+
   getChatTag = (myShort, peerShort) => {
     if (!myShort || !peerShort) {
       return null;
@@ -769,53 +901,58 @@ class FollowChat extends React.Component {
     }
     return `${TAG_CHAT_PREFIX}${min}_${max}`;
   };
-
   syncFromChain = async ({ reset = false } = {}) => {
-    const {
-      myNamespaceId,
-      peerNamespaceId,
-      myAnchorTxid,
-      peerAnchorTxid,
-      allMessages,
-      syncing,
-    } = this.state;
-    if (syncing) {
-      return;
-    }
-    if (!myNamespaceId || !peerNamespaceId || !myAnchorTxid || !peerAnchorTxid) {
-      return;
-    }
+    if (this.state.syncing) return;
+
+    const activeNamespaceId = this.getActiveNamespaceId() || this.state.myNamespaceId;
+    const peerNamespaceId = this.state.peerNamespaceId;
+    if (!activeNamespaceId || !peerNamespaceId) return;
+
     const { namespaceList } = this.props;
-    const myNamespace = namespaceList?.namespaces?.[myNamespaceId] || {};
-    const myShortCode = this.getNamespaceShortCode(myNamespaceId, myNamespace.shortCode);
+    const myShortCode = this.getNamespaceShortCode(
+      activeNamespaceId,
+      namespaceList?.namespaces?.[activeNamespaceId]?.shortCode,
+    );
     const peerShortCode =
       this.state.peerShortCode ||
       this.props.navigation.state?.params?.peerShortCode ||
       null;
+
     const chatTag = this.getChatTag(myShortCode, peerShortCode);
-    if (!chatTag) {
-      return;
-    }
+    if (!chatTag) return;
+
     this.setState({ syncing: true });
+
     try {
       await BlueElectrum.ping();
-      await BlueElectrum.waitTillConnected();
-      const response = await BlueElectrum.blockchainKeva_getHashtag(getHashtagScriptHash(chatTag), -1);
+      await this.withTimeout(BlueElectrum.waitTillConnected(), 8000);
+
+      const response = await this.withTimeout(
+        BlueElectrum.blockchainKeva_getHashtag(getHashtagScriptHash(chatTag), -1),
+        8000,
+      );
+
       const hashtagItems = Array.isArray(response) ? response : response?.hashtags || [];
       const chainMessages = [];
-      hashtagItems.forEach(item => {
+
+      for (const item of hashtagItems) {
         const txid = item.tx_hash || item.txid || item.tx;
-        const text = this.normalizeHashtagValue(item);
-        if (!text) {
-          return;
-        }
-        const isMine = this.isFromNamespace(item, myNamespaceId, myShortCode);
-        const isPeer = this.isFromNamespace(item, peerNamespaceId, peerShortCode);
-        if (!isMine && !isPeer) {
-          return;
-        }
+        const rawEnvelope = this.parseEnvelope(this.getHashtagRawText(item));
+        if (!rawEnvelope) continue;
+
+        // 只接受包含本会话 #DM 标签的消息
+        const hasDmToPeer = this.hasDmTag(rawEnvelope, peerShortCode);
+        const hasDmToMe = this.hasDmTag(rawEnvelope, myShortCode);
+        if (!hasDmToPeer && !hasDmToMe) continue;
+
+        const text = this.stripChatTags(String(rawEnvelope));
+        if (!text) continue;
+
+        const sender = this.inferSenderByDmTag(rawEnvelope, myShortCode, peerShortCode);
+        const isMine = sender === 'user';
+
         chainMessages.push(
-          this.buildMessage(text, isMine ? 'user' : 'peer', {
+          this.buildMessage(text, sender, {
             id: `${txid}:${item.vout || item.tx_pos || item.n || 0}`,
             timestamp: (item.time || item.timestamp || Date.now() / 1000) * 1000,
             txid,
@@ -823,39 +960,40 @@ class FollowChat extends React.Component {
             direction: isMine ? 'out' : 'in',
           }),
         );
-      });
+      }
 
-      const existingIds = new Set(allMessages.map(message => message.id));
-      const merged = [...allMessages];
-      chainMessages.forEach(message => {
-        if (existingIds.has(message.id)) {
-          return;
-        }
-        if (message.direction === 'out') {
+      // merge + 去重（按 message.id）
+      const existingIds = new Set(this.state.allMessages.map(m => m.id));
+      const merged = [...this.state.allMessages];
+
+      for (const msg of chainMessages) {
+        if (existingIds.has(msg.id)) continue;
+
+        // 用链上消息替换本地 pending
+        if (msg.direction === 'out') {
           const pendingIndex = merged.findIndex(
-            existing =>
-              existing.pending &&
-              existing.direction === 'out' &&
-              existing.text === message.text,
+            m => m.pending && m.direction === 'out' && m.text === msg.text,
           );
           if (pendingIndex >= 0) {
-            merged[pendingIndex] = {
-              ...merged[pendingIndex],
-              ...message,
-              pending: false,
-              failed: false,
-            };
-            return;
+            merged[pendingIndex] = { ...merged[pendingIndex], ...msg, pending: false, failed: false };
+            continue;
           }
         }
-        merged.push(message);
-      });
+
+        merged.push(msg);
+      }
 
       merged.sort((a, b) => a.timestamp - b.timestamp);
+
       const filteredMessages = this.filterMessagesForMode(merged);
-      const nextVisibleCount = Math.max(this.state.visibleCount, Math.min(PAGE_SIZE, filteredMessages.length));
+      const nextVisibleCount = Math.max(
+        this.state.visibleCount,
+        Math.min(PAGE_SIZE, filteredMessages.length),
+      );
+
       const nextOldest =
         typeof response?.min_tx_num === 'number' ? response.min_tx_num : this.state.chatOldestCursor;
+
       this.setState(
         {
           allMessages: merged,
@@ -863,95 +1001,124 @@ class FollowChat extends React.Component {
           messages: filteredMessages.slice(-nextVisibleCount),
           lastSyncAt: Date.now(),
           chatOldestCursor:
-            this.state.chatOldestCursor === -1 ? nextOldest : Math.min(this.state.chatOldestCursor, nextOldest),
+            this.state.chatOldestCursor === -1
+              ? nextOldest
+              : Math.min(this.state.chatOldestCursor, nextOldest),
+          hasMoreOlder: true,
         },
         () => this.persistMessages(this.state.allMessages),
       );
-    } catch (error) {
-      console.warn('Failed to sync follow chat', error);
+    } catch (e) {
+      console.warn('Failed to sync follow chat', e);
     } finally {
-      if (this._isMounted) {
-        this.setState({ syncing: false });
-      }
+      if (this._isMounted) this.setState({ syncing: false });
     }
   };
 
-  loadOlderFromChain = async () => {
-    if (this.state.loadingOlder || this.state.syncing) {
+loadOlderFromChain = async () => {
+  if (this.state.loadingOlder || this.state.syncing) return;
+  if (!this.state.hasMoreOlder) return;
+
+  const activeNamespaceId = this.getActiveNamespaceId() || this.state.myNamespaceId;
+  const peerNamespaceId = this.state.peerNamespaceId;
+  const cursor = this.state.chatOldestCursor;
+
+  if (!activeNamespaceId || !peerNamespaceId) return;
+  if (cursor === -1) return;
+
+  const { namespaceList } = this.props;
+  const myShortCode = this.getNamespaceShortCode(
+    activeNamespaceId,
+    namespaceList?.namespaces?.[activeNamespaceId]?.shortCode,
+  );
+  const peerShortCode =
+    this.state.peerShortCode ||
+    this.props.navigation.state?.params?.peerShortCode ||
+    null;
+
+  const chatTag = this.getChatTag(myShortCode, peerShortCode);
+  if (!chatTag) return;
+
+  this.setState({ loadingOlder: true });
+
+  try {
+    await BlueElectrum.ping();
+    await this.withTimeout(BlueElectrum.waitTillConnected(), 8000);
+
+    const response = await this.withTimeout(
+      BlueElectrum.blockchainKeva_getHashtag(getHashtagScriptHash(chatTag), cursor),
+      8000,
+    );
+
+    const hashtagItems = Array.isArray(response) ? response : response?.hashtags || [];
+    if (!hashtagItems.length) {
+      this.setState({ hasMoreOlder: false });
       return;
     }
-    const { myNamespaceId, peerNamespaceId, chatOldestCursor } = this.state;
-    if (!myNamespaceId || !peerNamespaceId) {
+
+    const nextCursor = typeof response?.min_tx_num === 'number' ? response.min_tx_num : cursor;
+    if (nextCursor === cursor) {
+      this.setState({ hasMoreOlder: false });
       return;
     }
-    if (chatOldestCursor === -1) {
-      return;
+
+    const chainMessages = [];
+    for (const item of hashtagItems) {
+      const txid = item.tx_hash || item.txid || item.tx;
+      const rawEnvelope = this.parseEnvelope(this.getHashtagRawText(item));
+      if (!rawEnvelope) continue;
+
+      const hasDmToPeer = this.hasDmTag(rawEnvelope, peerShortCode);
+      const hasDmToMe = this.hasDmTag(rawEnvelope, myShortCode);
+      if (!hasDmToPeer && !hasDmToMe) continue;
+
+      const text = this.stripChatTags(String(rawEnvelope));
+      if (!text) continue;
+
+      const sender = this.inferSenderByDmTag(rawEnvelope, myShortCode, peerShortCode);
+      const isMine = sender === 'user';
+
+      chainMessages.push(
+        this.buildMessage(text, sender, {
+          id: `${txid}:${item.vout || item.tx_pos || item.n || 0}`,
+          timestamp: (item.time || item.timestamp || Date.now() / 1000) * 1000,
+          txid,
+          pending: false,
+          direction: isMine ? 'out' : 'in',
+        }),
+      );
     }
-    const myShortCode = this.getNamespaceShortCode(myNamespaceId);
-    const peerShortCode =
-      this.state.peerShortCode ||
-      this.props.navigation.state?.params?.peerShortCode ||
-      null;
-    const chatTag = this.getChatTag(myShortCode, peerShortCode);
-    if (!chatTag) {
-      return;
-    }
-    this.setState({ loadingOlder: true });
-    try {
-      await BlueElectrum.ping();
-      await BlueElectrum.waitTillConnected();
-      const response = await BlueElectrum.blockchainKeva_getHashtag(getHashtagScriptHash(chatTag), chatOldestCursor);
-      const hashtagItems = Array.isArray(response) ? response : response?.hashtags || [];
-      const chainMessages = [];
-      hashtagItems.forEach(item => {
-        const txid = item.tx_hash || item.txid || item.tx;
-        const text = this.normalizeHashtagValue(item);
-        if (!text) {
-          return;
+
+    this.setState(
+      prev => {
+        const existingIds = new Set(prev.allMessages.map(m => m.id));
+        const merged = [...prev.allMessages];
+
+        for (const msg of chainMessages) {
+          if (existingIds.has(msg.id)) continue;
+          merged.push(msg);
         }
-        const isMine = this.isFromNamespace(item, myNamespaceId, myShortCode);
-        const isPeer = this.isFromNamespace(item, peerNamespaceId, peerShortCode);
-        if (!isMine && !isPeer) {
-          return;
-        }
-        chainMessages.push(
-          this.buildMessage(text, isMine ? 'user' : 'peer', {
-            id: `${txid}:${item.vout || item.tx_pos || item.n || 0}`,
-            timestamp: (item.time || item.timestamp || Date.now() / 1000) * 1000,
-            txid,
-            pending: false,
-            direction: isMine ? 'out' : 'in',
-          }),
-        );
-      });
-      this.setState(prevState => {
-        const existingIds = new Set(prevState.allMessages.map(message => message.id));
-        const merged = [...prevState.allMessages];
-        chainMessages.forEach(message => {
-          if (existingIds.has(message.id)) {
-            return;
-          }
-          merged.push(message);
-        });
+
         merged.sort((a, b) => a.timestamp - b.timestamp);
-        const filteredMessages = this.filterMessagesForMode(merged);
-        const nextVisibleCount = Math.max(prevState.visibleCount, Math.min(PAGE_SIZE, filteredMessages.length));
+        const filtered = this.filterMessagesForMode(merged);
+        const nextVisibleCount = Math.max(prev.visibleCount, Math.min(PAGE_SIZE, filtered.length));
+
         return {
           allMessages: merged,
           visibleCount: nextVisibleCount,
-          messages: filteredMessages.slice(-nextVisibleCount),
-          chatOldestCursor:
-            typeof response?.min_tx_num === 'number' ? response.min_tx_num : prevState.chatOldestCursor,
+          messages: filtered.slice(-nextVisibleCount),
+          chatOldestCursor: nextCursor,
         };
-      }, () => this.persistMessages(this.state.allMessages));
-    } catch (error) {
-      console.warn('Failed to load older follow chat messages', error);
-    } finally {
-      if (this._isMounted) {
-        this.setState({ loadingOlder: false });
-      }
-    }
-  };
+      },
+      () => this.persistMessages(this.state.allMessages),
+    );
+  } catch (e) {
+    console.warn('Failed to load older follow chat messages', e);
+  } finally {
+    if (this._isMounted) this.setState({ loadingOlder: false });
+  }
+};
+
 
   sendOnChain = async text => {
     const { peerAnchorTxid } = this.state;
@@ -982,7 +1149,7 @@ class FollowChat extends React.Component {
     const value = this.buildTaggedMessage(text, myShortCode, peerShortCode);
     await BlueElectrum.ping();
     const { tx } = await replyKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, myNamespaceId, value, peerAnchorTxid);
-    await BlueElectrum.waitTillConnected();
+    await this.withTimeout(BlueElectrum.waitTillConnected(), 8000);
     const broadcastResult = await BlueElectrum.broadcast(tx);
     if (broadcastResult && broadcastResult.code) {
       throw new Error(broadcastResult.message || 'Broadcast failed');
@@ -1118,6 +1285,13 @@ class FollowChat extends React.Component {
               onScroll={this.handleScroll}
               scrollEventThrottle={16}
               keyboardShouldPersistTaps="handled"
+              refreshControl={
+  <RefreshControl
+    refreshing={this.state.syncing}
+    onRefresh={() => this.syncFromChain({ reset: true })}
+  />
+}
+
             />
           </View>
           <View style={styles.inputContainer}>
