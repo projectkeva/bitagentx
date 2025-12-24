@@ -514,10 +514,23 @@ class Namespace extends React.Component {
 
 }
 
-const GuestInbox = ({ items, onFollow, followingPairs }) => {
+const GuestInbox = ({ items, onFollow, followingPairs, onRefresh, loading }) => {
   return (
     <View style={styles.guestContainer}>
-      <Text style={styles.guestTitle}>Guest</Text>
+      <View style={styles.guestHeader}>
+        <Text style={styles.guestTitle}>Guest</Text>
+        <TouchableOpacity
+          style={styles.guestRefresh}
+          onPress={onRefresh}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator size="small" color={KevaColors.actionText} />
+          ) : (
+            <Text style={styles.guestRefreshText}>Load</Text>
+          )}
+        </TouchableOpacity>
+      </View>
       {items.length === 0 ? (
         <Text style={styles.guestEmpty}>No guest messages yet.</Text>
       ) : (
@@ -1091,7 +1104,6 @@ class OtherNamespaces extends React.Component {
 
   async componentDidMount() {
     await this.loadGuestOrder();
-    await this.refreshGuestInbox();
   }
 
   loadGuestOrder = async () => {
@@ -1298,6 +1310,9 @@ class OtherNamespaces extends React.Component {
       this.setState({isRefreshing: false});
     }
     this.setState({isRefreshing: false});
+  }
+
+  handleGuestRefresh = async () => {
     await this.refreshGuestInbox();
   }
 
@@ -1429,15 +1444,14 @@ class OtherNamespaces extends React.Component {
             data={listData}
             order={listOrder}
             onChangeOrder={this.onChangeOrder}
-            refreshControl={
-              <RefreshControl onRefresh={() => this.refreshNamespaces()} refreshing={this.state.isRefreshing} />
-            }
             renderRow={({data, active}) => {
               if (data?.isGuest) {
                 return (
                   <GuestInbox
                     active={active}
                     items={guestItems}
+                    onRefresh={this.handleGuestRefresh}
+                    loading={this.state.guestLoading}
                     onFollow={this.handleGuestFollow}
                     followingPairs={followingGuestPairs}
                   />
@@ -1466,9 +1480,6 @@ class OtherNamespaces extends React.Component {
           :
           <ScrollView style={{flex: 1, paddingHorizontal: 10, paddingTop: 30}}
             contentContainerStyle={{justifyContent: 'center', alignItems: 'center'}}
-            refreshControl={
-              <RefreshControl onRefresh={() => this.refreshNamespaces()} refreshing={this.state.isRefreshing} />
-            }
           >
             <Image source={require('../../img/other_no_data.png')} style={{ width: SCREEN_WIDTH*0.33, height: SCREEN_WIDTH*0.33, marginBottom: 20 }} />
             <Text style={[styles.emptyMessage, { marginBottom: 7 }]} selectable>
@@ -1957,11 +1968,29 @@ var styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1f2a44',
   },
+  guestHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
   guestTitle: {
     color: '#e2e8f0',
     fontSize: 18,
     fontWeight: '700',
-    marginBottom: 12,
+  },
+  guestRefresh: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1f2a44',
+    backgroundColor: '#0f172a',
+  },
+  guestRefreshText: {
+    color: KevaColors.actionText,
+    fontSize: 13,
+    fontWeight: '600',
   },
   guestEmpty: {
     color: '#6f7587',
