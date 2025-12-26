@@ -332,10 +332,22 @@ class Item extends React.Component {
   }
 
   getShortCode = (props = this.props) => {
-    const { item } = props;
+    const { item, namespaceList } = props;
     if (item && item.shortCode) {
       return item.shortCode;
     }
+
+    const chatTag = item && item.chatTag ? String(item.chatTag) : null;
+    const myNamespaceId = item && item.targetNamespaceId ? String(item.targetNamespaceId) : null;
+    const myNamespaceEntry = myNamespaceId && namespaceList?.namespaces?.[myNamespaceId];
+    const myShortCode = myNamespaceEntry?.shortCode || myNamespaceId;
+    if (chatTag && myShortCode) {
+      const derived = derivePeerShortCodeFromChatTag(chatTag, myShortCode);
+      if (derived) {
+        return derived;
+      }
+    }
+
     return null;
   }
 
@@ -448,11 +460,12 @@ class Item extends React.Component {
     } catch (err) {
       console.warn(err);
     }
-  }
+    }
 
   render() {
     let {item, onShow, currentHashtag} = this.props;
     let {avatarCandidateUris, avatarCandidateRequestId, avatarFailedUris, generatedAvatarUri} = this.state;
+    const shortCodeText = (this.getShortCode() || '').toString().trim();
     let displayKey = item.key;
     const {keyType} = parseSpecialKey(item.key);
     if (keyType) {
@@ -468,7 +481,6 @@ class Item extends React.Component {
     const hashtagLower = (currentHashtag || '').trim().toLowerCase();
     const isGuestMessage = !!item.dmTag;
     const isSellHashtag = hashtagLower === SELL_HASHTAG_LOWER;
-    const shortCodeText = (item.shortCode || '').toString().trim();
     const formattedShortCode = formatShortCodeForDisplay(shortCodeText);
     let titleText = displayKey;
     let priceLabel = null;
@@ -1412,6 +1424,7 @@ class HashtagExplore extends React.Component {
                   onShare={this.onShare}
                   onReward={this.onReward}
                   navigation={navigation}
+                  namespaceList={this.props.namespaceList}
                   mediaInfoList={mediaInfoList}
                   currentHashtag={hashtag}
                   latestBlockHeight={this.state.latestBlockHeight}
