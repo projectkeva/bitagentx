@@ -445,6 +445,7 @@ class Item extends React.Component {
     const fallbackColor = stringToColor(item.displayName);
     const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
     const hashtagLower = (currentHashtag || '').trim().toLowerCase();
+    const isGuestMessage = !!item.dmTag;
     const isSellHashtag = hashtagLower === SELL_HASHTAG_LOWER;
     const shortCodeText = (item.shortCode || '').toString().trim();
     const formattedShortCode = formatShortCodeForDisplay(shortCodeText);
@@ -498,6 +499,26 @@ class Item extends React.Component {
         <Text style={[styles.fallbackAvatarLabel, isSellHashtag && styles.nftAvatarLabel]}>{fallbackInitials}</Text>
       </View>
     );
+
+    if (isGuestMessage) {
+      const messagePreview = (item.value || '').trim();
+      return (
+        <TouchableOpacity onPress={() => onShow(item)} activeOpacity={0.85}>
+          <View style={styles.guestCard}>
+            <View style={styles.guestAvatarWrapper}>{avatarContent}</View>
+            <View style={styles.guestContent}>
+              <Text style={styles.guestTitle} numberOfLines={1} ellipsizeMode="tail">
+                {item.displayName || 'Guest'}{' '}
+                <Text style={styles.guestShortCode}>#{formattedShortCode || shortCodeText || item.namespaceId}</Text>
+              </Text>
+              <Text style={styles.guestMessage} numberOfLines={2} ellipsizeMode="tail">
+                {messagePreview || '(No message)'}
+              </Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+      );
+    }
 
     const titleContent = isSellHashtag ? (
       <View style={styles.titleRow}>
@@ -892,6 +913,10 @@ class HashtagExplore extends React.Component {
           }
           const decodedKey = decodeBase64(h.key) || '';
           const rawValue = h.value ? Buffer.from(h.value, 'base64').toString() : '';
+          const chatTagLine = (rawValue || '')
+            .split('\n')
+            .map(line => line.trim())
+            .find(line => line.startsWith(TAG_CHAT_PREFIX)) || null;
           const cleanedValue = stripChatTags(rawValue || '');
           collected.push({
             displayName: h.displayName,
@@ -907,6 +932,7 @@ class HashtagExplore extends React.Component {
             value: cleanedValue,
             targetNamespaceId: myNamespaceId,
             dmTag: tag,
+            chatTag: chatTagLine,
           });
         });
       }
@@ -1040,6 +1066,40 @@ class HashtagExplore extends React.Component {
     }
 
     const currentHashtagLower = (this.state.hashtag || '').trim().toLowerCase();
+    if (this.isGuestMode()) {
+      const chatTag = keyValue && keyValue.chatTag;
+      const peerNamespaceId = keyValue && keyValue.namespaceId;
+      const targetNamespaceId = keyValue && keyValue.targetNamespaceId;
+      if (!chatTag || !peerNamespaceId || !targetNamespaceId) {
+        Toast.show('Unable to open chat for this guest message.');
+        return;
+      }
+
+      const namespaceEntry = namespaceList?.namespaces?.[targetNamespaceId] || {};
+      const myShortCode = namespaceEntry.shortCode || targetNamespaceId;
+      let peerShortCode = keyValue.shortCode || null;
+      const chatMatch = chatTag.match(/^#CHAT(\d+)_([0-9]+)/i);
+      if (chatMatch) {
+        const tagA = chatMatch[1];
+        const tagB = chatMatch[2];
+        if (!peerShortCode) {
+          const myShortString = (myShortCode || '').toString();
+          peerShortCode = myShortString === tagA ? tagB : tagA;
+        }
+      }
+
+      navigation.push('FollowChat', {
+        peerNamespaceId,
+        peerShortCode,
+        peerDisplayName: keyValue.displayName,
+        myNamespaceId: targetNamespaceId,
+        mode: 'mutual',
+        replyFromNamespaceId: targetNamespaceId,
+        autoFollowOnSend: true,
+      });
+      return;
+    }
+
     if (currentHashtagLower === SELL_HASHTAG_LOWER) {
       const namespaceId = keyValue.namespaceId;
       if (!namespaceId) {
@@ -1696,5 +1756,39 @@ var styles = StyleSheet.create({
     ios: {
       top: 3,
     }
+  },
+  guestCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginHorizontal: 12,
+    marginTop: 10,
+    borderRadius: 12,
+    backgroundColor: '#0b1224',
+    borderWidth: THIN_BORDER,
+    borderColor: 'rgba(125, 211, 252, 0.35)',
+  },
+  guestAvatarWrapper: {
+    marginRight: 12,
+  },
+  guestContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  guestTitle: {
+    color: '#E0F2FE',
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  guestShortCode: {
+    color: '#7DD3FC',
+    fontWeight: '700',
+  },
+  guestMessage: {
+    color: '#CBD5E1',
+    fontSize: 14,
+    lineHeight: 18,
   },
 });
