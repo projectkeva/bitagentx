@@ -124,6 +124,13 @@ const TAG_DM_PREFIX = '#DM';
 const TAG_CHAT_PREFIX = '#CHAT';
 const TAG_GLOBAL_CHAT = '#chatxkeva';
 
+const normalizeShortCode = shortCode => {
+  if (shortCode === null || typeof shortCode === 'undefined') {
+    return '';
+  }
+  return String(shortCode).replace(/\s+/g, '').trim();
+};
+
 
 class Namespace extends React.Component {
 
@@ -528,12 +535,14 @@ const GuestInbox = ({ items, onFollow, followingPairs, navigation }) => {
         <Text style={styles.guestEmpty}>No guest messages yet.</Text>
       ) : (
         items.map((item, index) => {
-          const shortCode = item.peerShortCode || '';
+          const rawShortCode = item.peerShortCode || '';
+          const normalizedShortCode = normalizeShortCode(rawShortCode);
           const displayName = item.peerDisplayName || 'Unknown';
-          const avatarCandidates = buildHeadAssetUriCandidates(shortCode) || [];
+          const avatarCandidates = buildHeadAssetUriCandidates(normalizedShortCode) || [];
           const avatarUri = avatarCandidates.length > 0 ? avatarCandidates[0] : null;
-          const initials = getInitials(displayName);
-          const color = stringToColor(displayName);
+          const fallbackSeed = normalizedShortCode || displayName;
+          const initials = getInitials(fallbackSeed);
+          const color = stringToColor(fallbackSeed);
           const isFollowing = !!followingPairs[item.pairId];
           return (
             <View key={item.pairId} style={[styles.guestItem, index === 0 && styles.guestItemFirst]}>
@@ -548,7 +557,7 @@ const GuestInbox = ({ items, onFollow, followingPairs, navigation }) => {
               </View>
               <View style={styles.guestContent}>
                 <Text style={styles.guestName} numberOfLines={1} ellipsizeMode="tail">
-                  {displayName} {shortCode ? `#${shortCode}` : ''}
+                  {displayName} {rawShortCode ? `#${rawShortCode}` : ''}
                 </Text>
                 <Text style={styles.guestMessage} numberOfLines={1} ellipsizeMode="tail">
                   {item.lastMessage || ''}
