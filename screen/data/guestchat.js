@@ -441,8 +441,9 @@ class Item extends React.Component {
 
     const avatarCandidateUri = selectAvatarCandidateUri(avatarCandidateUris, avatarFailedUris, generatedAvatarUri);
     const shouldProbeAvatar = !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
-    const fallbackInitials = getInitials(item.displayName);
-    const fallbackColor = stringToColor(item.displayName);
+    const fallbackSeed = shortCodeText || item.displayName || displayKey;
+    const fallbackInitials = getInitials(fallbackSeed);
+    const fallbackColor = stringToColor(fallbackSeed);
     const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
     const hashtagLower = (currentHashtag || '').trim().toLowerCase();
     const isGuestMessage = !!item.dmTag;
@@ -508,7 +509,6 @@ class Item extends React.Component {
             <View style={styles.guestAvatarWrapper}>{avatarContent}</View>
             <View style={styles.guestContent}>
               <Text style={styles.guestTitle} numberOfLines={1} ellipsizeMode="tail">
-                {item.displayName || 'Guest'}{' '}
                 <Text style={styles.guestShortCode}>#{formattedShortCode || shortCodeText || item.namespaceId}</Text>
               </Text>
               <Text style={styles.guestMessage} numberOfLines={2} ellipsizeMode="tail">
