@@ -521,61 +521,59 @@ class Namespace extends React.Component {
 
 }
 
-const GuestInbox = ({ items, onFollow, followingPairs, navigation }) => {
+const GuestInbox = ({ navigation }) => {
   const handleOpenGuestChat = () => {
     navigation.push('GuestChat', { mode: 'guest' });
   };
 
+  const guestSeed = 'guest_messages_card';
+  const avatarColor = stringToColor(guestSeed);
+
   return (
-    <View style={styles.guestContainer}>
-      <TouchableOpacity style={styles.guestHeader} onPress={handleOpenGuestChat}>
-        <Text style={styles.guestTitle}>Guest</Text>
-      </TouchableOpacity>
-      {items.length === 0 ? (
-        <Text style={styles.guestEmpty}>No guest messages yet.</Text>
-      ) : (
-        items.map((item, index) => {
-          const rawShortCode = item.peerShortCode || '';
-          const normalizedShortCode = normalizeShortCode(rawShortCode);
-          const displayName = item.peerDisplayName || 'Unknown';
-          const avatarCandidates = buildHeadAssetUriCandidates(normalizedShortCode) || [];
-          const avatarUri = avatarCandidates.length > 0 ? avatarCandidates[0] : null;
-          const fallbackSeed = normalizedShortCode || displayName;
-          const initials = getInitials(fallbackSeed);
-          const color = stringToColor(fallbackSeed);
-          const isFollowing = !!followingPairs[item.pairId];
-          return (
-            <View key={item.pairId} style={[styles.guestItem, index === 0 && styles.guestItemFirst]}>
-              <View style={styles.guestAvatarWrapper}>
-                {avatarUri ? (
-                  <Image source={{ uri: avatarUri }} style={styles.guestAvatarImage} />
-                ) : (
-                  <View style={[styles.guestAvatarFallback, { backgroundColor: color }]}>
-                    <Text style={styles.guestAvatarText}>{initials}</Text>
+    <Animated.View style={[styles.cardContainer]}>
+      <TouchableOpacity activeOpacity={0.9} onPress={handleOpenGuestChat}>
+        <LinearGradient
+          colors={['#0b1224', '#0f162b', '#0b1224']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.neonCard}
+        >
+          <View style={styles.cardInner}>
+            <View style={styles.headerRow}>
+              <View style={[styles.avatarWrapper, styles.neonAvatarWrapper]}>
+                <View style={[styles.fallbackAvatar, { backgroundColor: avatarColor }]} />
+              </View>
+              <View style={styles.titleArea}>
+                <View style={styles.titleBlock}>
+                  <Text
+                    style={styles.cardTitleText}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    Guset Messages
+                  </Text>
+                  <View style={styles.levelRow}>
+                    <Text style={styles.levelLabel}>{' '}</Text>
                   </View>
-                )}
+                </View>
+                <View style={styles.actionContainer} />
               </View>
-              <View style={styles.guestContent}>
-                <Text style={styles.guestName} numberOfLines={1} ellipsizeMode="tail">
-                  {displayName} {rawShortCode ? `#${rawShortCode}` : ''}
-                </Text>
-                <Text style={styles.guestMessage} numberOfLines={1} ellipsizeMode="tail">
-                  {item.lastMessage || ''}
-                </Text>
-              </View>
-              <Button
-                type="outline"
-                title={loc.namespaces.follow}
-                buttonStyle={styles.guestFollowButton}
-                titleStyle={styles.guestFollowTitle}
-                disabled={isFollowing}
-                onPress={() => onFollow(item)}
-              />
+              <TouchableOpacity onPress={handleOpenGuestChat}>
+                <View style={styles.arrowWrapper}>
+                  <Icon name="ios-arrow-forward" size={24} color={KevaColors.actionText} style={styles.arrowIcon} />
+                </View>
+              </TouchableOpacity>
             </View>
-          );
-        })
-      )}
-    </View>
+            <LinearGradient
+              colors={['transparent', 'rgba(125, 211, 252, 0.65)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.accentLine}
+            />
+          </View>
+        </LinearGradient>
+      </TouchableOpacity>
+    </Animated.View>
   );
 };
 
