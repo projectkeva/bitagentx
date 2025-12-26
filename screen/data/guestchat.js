@@ -49,6 +49,28 @@ const SELL_HASHTAG_BLOCK_WINDOW = 20000;
 const SELL_HASHTAG_LOWER = SELL_HASHTAG.toLowerCase();
 const DEFAULT_SHORTCODE_COLOR = '#000000';
 
+const TAG_DM_PREFIX = '#DM';
+const TAG_CHAT_PREFIX = '#CHAT';
+const TAG_GLOBAL_CHAT = '#chatxkeva';
+
+const stripChatTags = text => {
+  if (!text || typeof text !== 'string') {
+    return '';
+  }
+  return text
+    .split('\n')
+    .filter(line => {
+      const trimmed = line.trim();
+      return !(
+        trimmed.startsWith(TAG_DM_PREFIX) ||
+        trimmed.startsWith(TAG_CHAT_PREFIX) ||
+        trimmed.toLowerCase() === TAG_GLOBAL_CHAT
+      );
+    })
+    .join('\n')
+    .trim();
+};
+
 const sha256Bytes = message => Buffer.from(createHash('sha256').update(message).digest());
 
 const attrSeedBytes = (id, attrName) => {
@@ -566,8 +588,8 @@ class Item extends React.Component {
 
 class HashtagExplore extends React.Component {
 
-  constructor() {
-    super();
+  constructor(props) {
+    super(props);
     this.state = {
       loaded: false,
       isModalVisible: false,
@@ -586,6 +608,7 @@ class HashtagExplore extends React.Component {
       saleStatusCache: {},
       latestBlockHeight: undefined,
       hasMoreWithinWindow: true,
+      guestBanner: '',
     };
     this.onEndReachedCalledDuringMomentum = true;
   }
@@ -595,11 +618,20 @@ class HashtagExplore extends React.Component {
     headerShown: false,
   });
 
+  isGuestMode = () => {
+    const mode = this.props.navigation?.state?.params?.mode;
+    return mode === 'guest';
+  }
+
   progressCallback = (totalToFetch, fetched) => {
     this.setState({totalToFetch, fetched});
   }
 
   onSearchHashtag = async () => {
+    if (this.isGuestMode()) {
+      await this.loadGuestDMs();
+      return;
+    }
     Keyboard.dismiss();
     this.setState({min_tx_num: -1, loading: true, hashtags: [], latestBlockHeight: undefined, hasMoreWithinWindow: true});
     await this.fetchHashtag(-1);
@@ -785,6 +817,10 @@ class HashtagExplore extends React.Component {
   }
 
   refreshKeyValues = async () => {
+    if (this.isGuestMode()) {
+      await this.loadGuestDMs();
+      return;
+    }
     try {
       this.setState({isRefreshing: true, latestBlockHeight: undefined, hasMoreWithinWindow: true});
       await BlueElectrum.ping();
@@ -798,6 +834,9 @@ class HashtagExplore extends React.Component {
   }
 
   loadMoreKeyValues = async () => {
+    if (this.isGuestMode()) {
+      return;
+    }
     const hashtagLower = this.state.hashtag.trim().toLowerCase();
     if (hashtagLower === SELL_HASHTAG_LOWER && !this.state.hasMoreWithinWindow) {
       return;
@@ -819,6 +858,78 @@ class HashtagExplore extends React.Component {
     }
   }
 
+  loadGuestDMs = async () => {
+    const { namespaceList, otherNamespaceList } = this.props;
+    const myNamespaceIds = namespaceList?.order || [];
+    const followedMap = otherNamespaceList?.namespaces || {};
+    if (!myNamespaceIds.length) {
+      this.setState({ hashtags: [], searched: true, loading: false, isRefreshing: false });
+      return;
+    }
+
+    this.setState({ loading: true, hashtags: [], searched: false, min_tx_num: -1 });
+    try {
+      await BlueElectrum.ping();
+      await BlueElectrum.waitTillConnected();
+
+      const collected = [];
+
+      for (const myNamespaceId of myNamespaceIds) {
+        const myNamespace = namespaceList?.namespaces?.[myNamespaceId] || {};
+        const myShortCode = myNamespace.shortCode || myNamespaceId;
+        if (!myShortCode) {
+          continue;
+        }
+        const tag = `${TAG_DM_PREFIX}${myShortCode}`;
+        const response = await BlueElectrum.blockchainKeva_getHashtag(getHashtagScriptHash(tag), -1);
+        const hashtagItems = Array.isArray(response) ? response : response?.hashtags || [];
+
+        hashtagItems.forEach((h, index) => {
+          const peerNamespaceIdRaw = h.namespace;
+          const peerNamespaceId = peerNamespaceIdRaw != null ? String(peerNamespaceIdRaw) : null;
+          if (!peerNamespaceId || followedMap[peerNamespaceId]) {
+            return;
+          }
+          const decodedKey = decodeBase64(h.key) || '';
+          const rawValue = h.value ? Buffer.from(h.value, 'base64').toString() : '';
+          const cleanedValue = stripChatTags(rawValue || '');
+          collected.push({
+            displayName: h.displayName,
+            shortCode: h.shortCode,
+            tx: h.tx_hash || h.txid || h.tx,
+            replies: h.replies,
+            shares: h.shares,
+            likes: h.likes,
+            height: h.height,
+            time: h.time,
+            namespaceId: peerNamespaceId,
+            key: decodedKey || `${h.tx_hash || h.tx || 'dm'}-${index}`,
+            value: cleanedValue,
+            targetNamespaceId: myNamespaceId,
+            dmTag: tag,
+          });
+        });
+      }
+
+      collected.sort((a, b) => {
+        const heightA = typeof a.height === 'number' ? a.height : Number.MAX_SAFE_INTEGER;
+        const heightB = typeof b.height === 'number' ? b.height : Number.MAX_SAFE_INTEGER;
+        if (heightA !== heightB) {
+          return heightA - heightB;
+        }
+        const timeA = typeof a.time === 'number' ? a.time : 0;
+        const timeB = typeof b.time === 'number' ? b.time : 0;
+        return timeA - timeB;
+      });
+
+      this.setState({ hashtags: collected, searched: true, min_tx_num: -1 });
+    } catch (error) {
+      console.warn('Failed to load guest DMs', error);
+    } finally {
+      this.setState({ loading: false, isRefreshing: false });
+    }
+  }
+
   getCurrentWallet = () => {
     const walletId = this.props.navigation.getParam('walletId');
     const wallets = BlueApp.getWallets();
@@ -828,6 +939,10 @@ class HashtagExplore extends React.Component {
 
   async componentDidMount() {
     this.isBiometricUseCapableAndEnabled = await Biometric.isBiometricUseCapableAndEnabled();
+    if (this.isGuestMode()) {
+      await this.loadGuestDMs();
+      return;
+    }
     if (this.state.hashtag) {
       try {
         this.setState({loading: true, min_tx_num: -1, hashtags: []});
@@ -1131,11 +1246,12 @@ class HashtagExplore extends React.Component {
 
   render() {
     let {navigation, dispatch, mediaInfoList} = this.props;
+    const isGuestMode = this.isGuestMode();
     const {inputMode, hashtag, loading, searched, hashtags} = this.state;
     const mergeList = hashtags;
-    const canSearch = hashtag && hashtag.length > 0;
+    const canSearch = isGuestMode ? true : (hashtag && hashtag.length > 0);
 
-    if (this.state.isRefreshing && (!mergeList || mergeList.length == 0)) {
+    if ((this.state.isRefreshing || (isGuestMode && loading)) && (!mergeList || mergeList.length == 0)) {
       return <BlueLoading />
     }
     const footerLoader = this.state.isLoadingMore ? <BlueLoading style={{paddingTop: 30, paddingBottom: 400}} /> : null;
@@ -1149,36 +1265,47 @@ class HashtagExplore extends React.Component {
       >
         <SafeAreaView style={styles.topContainer}>
           <View style={styles.inputContainer}>
-            <TouchableOpacity onPress={this.closeItemAni}>
-              <Text style={[{color: KevaColors.actionText, fontSize: 16, textAlign: 'left'}, inputMode && {paddingRight: 5}]}>
-                {inputMode ? loc.general.cancel : ''}
-              </Text>
-            </TouchableOpacity>
-            <TextInput
-              onFocus={this.openItemAni}
-              ref={ref => this._inputRef = ref}
-              onChangeText={hashtag => this.setState({ hashtag: hashtag, searched: false })}
-              value={hashtag}
-              placeholder={loc.namespaces.search_hashtag}
-              placeholderTextColor={'#94A3B8'}
-              multiline={false}
-              underlineColorAndroid='rgba(0,0,0,0)'
-              returnKeyType='search'
-              clearButtonMode='while-editing'
-              onSubmitEditing={this.onSearchHashtag}
-              style={styles.textInput}
-              returnKeyType={ 'done' }
-              clearButtonMode='while-editing'
-            />
-            {loading ?
-              <ActivityIndicator size="small" color={KevaColors.actionText} style={{ width: 42, height: 42 }} />
-              :
-              <TouchableOpacity onPress={this.onSearchHashtag} disabled={!canSearch}>
-                <Icon name={'md-search'}
-                      style={[styles.searchIcon, !canSearch && {color: KevaColors.inactiveText}]}
-                      size={25} />
-              </TouchableOpacity>
-            }
+            {isGuestMode ? (
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: KevaColors.actionText, fontSize: 18, fontWeight: '600' }}>Guest inbox</Text>
+                <Text style={{ color: KevaColors.inactiveText, marginTop: 4 }}>
+                  Showing messages sent to your namespaces via DM tags (unfollowed senders).
+                </Text>
+              </View>
+            ) : (
+              <>
+                <TouchableOpacity onPress={this.closeItemAni}>
+                  <Text style={[{color: KevaColors.actionText, fontSize: 16, textAlign: 'left'}, inputMode && {paddingRight: 5}]}>
+                    {inputMode ? loc.general.cancel : ''}
+                  </Text>
+                </TouchableOpacity>
+                <TextInput
+                  onFocus={this.openItemAni}
+                  ref={ref => this._inputRef = ref}
+                  onChangeText={hashtag => this.setState({ hashtag: hashtag, searched: false })}
+                  value={hashtag}
+                  placeholder={loc.namespaces.search_hashtag}
+                  placeholderTextColor={'#94A3B8'}
+                  multiline={false}
+                  underlineColorAndroid='rgba(0,0,0,0)'
+                  returnKeyType='search'
+                  clearButtonMode='while-editing'
+                  onSubmitEditing={this.onSearchHashtag}
+                  style={styles.textInput}
+                  returnKeyType={ 'done' }
+                  clearButtonMode='while-editing'
+                />
+                {loading ?
+                  <ActivityIndicator size="small" color={KevaColors.actionText} style={{ width: 42, height: 42 }} />
+                  :
+                  <TouchableOpacity onPress={this.onSearchHashtag} disabled={!canSearch}>
+                    <Icon name={'md-search'}
+                          style={[styles.searchIcon, !canSearch && {color: KevaColors.inactiveText}]}
+                          size={25} />
+                  </TouchableOpacity>
+                }
+              </>
+            )}
           </View>
           {
             (mergeList && mergeList.length > 0 ) ?
@@ -1188,10 +1315,10 @@ class HashtagExplore extends React.Component {
               data={mergeList}
               extraData={this.state.latestBlockHeight}
               onRefresh={() => this.refreshKeyValues()}
-              onEndReached={() => {this.loadMoreKeyValues()}}
+              onEndReached={() => { !isGuestMode && this.loadMoreKeyValues() }}
               onEndReachedThreshold={0.1}
               onMomentumScrollBegin={() => { this.onEndReachedCalledDuringMomentum = false; }}
-              refreshing={this.state.isRefreshing}
+              refreshing={isGuestMode ? this.state.loading : this.state.isRefreshing}
               keyExtractor={(item, index) => item.key + index}
               ListFooterComponent={footerLoader}
               renderItem={({item, index}) =>
@@ -1211,7 +1338,9 @@ class HashtagExplore extends React.Component {
             <View style={{justifyContent: 'center', alignItems: 'center'}}>
               <RNImage source={require('../../img/other_no_data.png')} style={{ width: SCREEN_WIDTH*0.33, height: SCREEN_WIDTH*0.33, marginTop: 50, marginBottom: 10 }} />
               <Text style={{padding: 20, fontSize: 20, textAlign: 'center', color: KevaColors.inactiveText}}>
-                {(searched && hashtag.length > 0) ? (loc.namespaces.no_hashtag + hashtag) : loc.namespaces.hashtag_help}
+                {isGuestMode
+                  ? 'No guest messages yet. Messages sent to your namespaces via DM tags will appear here.'
+                  : ((searched && hashtag.length > 0) ? (loc.namespaces.no_hashtag + hashtag) : loc.namespaces.hashtag_help)}
               </Text>
             </View>
           }
@@ -1225,6 +1354,7 @@ class HashtagExplore extends React.Component {
 function mapStateToProps(state) {
   return {
     namespaceList: state.namespaceList,
+    otherNamespaceList: state.otherNamespaceList,
     mediaInfoList: state.mediaInfoList,
     reactions: state.reactions,
   }

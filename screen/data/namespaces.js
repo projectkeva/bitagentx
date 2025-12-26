@@ -514,23 +514,16 @@ class Namespace extends React.Component {
 
 }
 
-const GuestInbox = ({ items, onFollow, followingPairs, onRefresh, loading }) => {
+const GuestInbox = ({ items, onFollow, followingPairs, navigation }) => {
+  const handleOpenGuestChat = () => {
+    navigation.push('GuestChat', { mode: 'guest' });
+  };
+
   return (
     <View style={styles.guestContainer}>
-      <View style={styles.guestHeader}>
+      <TouchableOpacity style={styles.guestHeader} onPress={handleOpenGuestChat}>
         <Text style={styles.guestTitle}>Guest</Text>
-        <TouchableOpacity
-          style={styles.guestRefresh}
-          onPress={onRefresh}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator size="small" color={KevaColors.actionText} />
-          ) : (
-            <Text style={styles.guestRefreshText}>Load</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+      </TouchableOpacity>
       {items.length === 0 ? (
         <Text style={styles.guestEmpty}>No guest messages yet.</Text>
       ) : (
@@ -1450,10 +1443,9 @@ class OtherNamespaces extends React.Component {
                   <GuestInbox
                     active={active}
                     items={guestItems}
-                    onRefresh={this.handleGuestRefresh}
-                    loading={this.state.guestLoading}
                     onFollow={this.handleGuestFollow}
                     followingPairs={followingGuestPairs}
+                    navigation={navigation}
                   />
                 );
               }
