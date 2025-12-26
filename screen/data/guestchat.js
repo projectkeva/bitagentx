@@ -206,6 +206,12 @@ const getAlphaBackgroundColor = alphaValue => {
   const { backgroundColor } = getAlphaColorDetails(alphaValue);
   return backgroundColor;
 };
+const normalizeShortCode = shortCode => {
+  if (shortCode === null || typeof shortCode === 'undefined') {
+    return '';
+  }
+  return String(shortCode).replace(/\s+/g, '').trim();
+};
 const formatShortCodeForDisplay = shortCode => {
   const normalized = (shortCode || '').toString().trim();
   if (!/^\d+$/.test(normalized)) {
@@ -334,7 +340,7 @@ class Item extends React.Component {
   getShortCode = (props = this.props) => {
     const { item, namespaceList } = props;
     if (item && item.shortCode) {
-      return item.shortCode;
+      return normalizeShortCode(item.shortCode);
     }
 
     const chatTag = item && item.chatTag ? String(item.chatTag) : null;
@@ -344,11 +350,11 @@ class Item extends React.Component {
     if (chatTag && myShortCode) {
       const derived = derivePeerShortCodeFromChatTag(chatTag, myShortCode);
       if (derived) {
-        return derived;
+        return normalizeShortCode(derived);
       }
     }
 
-    return null;
+    return '';
   }
 
   prepareGeneratedAvatar = shortCode => {
