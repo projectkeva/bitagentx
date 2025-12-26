@@ -544,6 +544,14 @@ class Item extends React.Component {
       return (
         <TouchableOpacity onPress={() => onShow(item)} activeOpacity={0.85}>
           <View style={styles.guestCard}>
+            {shouldProbeAvatar && (
+              <Image
+                source={{ uri: avatarCandidateUri }}
+                style={styles.avatarProbe}
+                onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
+                onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
+              />
+            )}
             <View style={styles.guestAvatarWrapper}>{avatarContent}</View>
             <View style={styles.guestContent}>
               <Text style={styles.guestTitle} numberOfLines={1} ellipsizeMode="tail">
@@ -932,6 +940,7 @@ class HashtagExplore extends React.Component {
       await BlueElectrum.waitTillConnected();
 
       const collected = [];
+      const guestShortcodeCache = {};
 
       for (const myNamespaceId of myNamespaceIds) {
         const myNamespace = namespaceList?.namespaces?.[myNamespaceId] || {};
@@ -943,40 +952,69 @@ class HashtagExplore extends React.Component {
         const response = await BlueElectrum.blockchainKeva_getHashtag(getHashtagScriptHash(tag), -1);
         const hashtagItems = Array.isArray(response) ? response : response?.hashtags || [];
 
-        hashtagItems.forEach((h, index) => {
-          const peerNamespaceIdRaw = h.namespace;
-          const peerNamespaceId = peerNamespaceIdRaw != null ? String(peerNamespaceIdRaw) : null;
-          if (!peerNamespaceId || followedMap[peerNamespaceId]) {
-            return;
-          }
-          const decodedKey = decodeBase64(h.key) || '';
-          const rawValue = h.value ? Buffer.from(h.value, 'base64').toString() : '';
-          const chatTagLine = (rawValue || '')
-            .split('\n')
-            .map(line => line.trim())
-            .find(line => line.startsWith(TAG_CHAT_PREFIX)) || null;
-          const derivedShortCode =
-            h.shortCode ||
-            derivePeerShortCodeFromChatTag(chatTagLine, myShortCode) ||
-            peerNamespaceId;
-          const cleanedValue = stripChatTags(rawValue || '');
-          collected.push({
-            displayName: h.displayName,
-            shortCode: derivedShortCode ? String(derivedShortCode) : undefined,
-            tx: h.tx_hash || h.txid || h.tx,
-            replies: h.replies,
-            shares: h.shares,
-            likes: h.likes,
-            height: h.height,
-            time: h.time,
-            namespaceId: peerNamespaceId,
-            key: decodedKey || `${h.tx_hash || h.tx || 'dm'}-${index}`,
-            value: cleanedValue,
-            targetNamespaceId: myNamespaceId,
-            dmTag: tag,
-            chatTag: chatTagLine,
-          });
-        });
+for (let index = 0; index < hashtagItems.length; index++) {
+  const h = hashtagItems[index];
+  const peerNamespaceIdRaw = h.namespace;
+  const peerNamespaceId = peerNamespaceIdRaw != null ? String(peerNamespaceIdRaw) : null;
+  if (!peerNamespaceId || followedMap[peerNamespaceId]) {
+    continue;
+  }
+  const decodedKey = decodeBase64(h.key) || '';
+  const rawValue = h.value ? Buffer.from(h.value, 'base64').toString() : '';
+  const chatTagLine = (rawValue || '')
+    .split('\n')
+    .map(line => (line || '').trim())
+    .find(line => (line || '').toUpperCase().startsWith(TAG_CHAT_PREFIX)) || null;
+  const normalizedChatTag = chatTagLine
+    ? ((chatTagLine.match(/#CHAT\d+_\d+/i) || [])[0] || null)
+    : null;
+
+  let derivedShortCode =
+    normalizeShortCode(h.shortCode) ||
+    (normalizedChatTag ? normalizeShortCode(derivePeerShortCodeFromChatTag(normalizedChatTag, myShortCode)) : '');
+
+  // If hashtag results do not include shortCode, fall back to fetching namespace profile once.
+  if (!derivedShortCode || derivedShortCode === normalizeShortCode(peerNamespaceId)) {
+    const cached = guestShortcodeCache[peerNamespaceId];
+    if (cached) {
+      derivedShortCode = normalizeShortCode(cached);
+    } else {
+      try {
+        const nsInfo = await getNamespaceInfo(BlueElectrum, peerNamespaceId, false);
+        const fetchedShort = nsInfo && (nsInfo.shortCode || nsInfo.shortcode);
+        if (fetchedShort) {
+          guestShortcodeCache[peerNamespaceId] = fetchedShort;
+          derivedShortCode = normalizeShortCode(fetchedShort);
+        }
+      } catch (e) {
+        // ignore: keep fallback below
+      }
+    }
+  }
+
+  // As a last resort, keep the namespaceId only if it looks like a valid shortcode.
+  if (!derivedShortCode && /^\d{3,10}$/.test(String(peerNamespaceId))) {
+    derivedShortCode = normalizeShortCode(peerNamespaceId);
+  }
+
+  const cleanedValue = stripChatTags(rawValue || '');
+  collected.push({
+    displayName: h.displayName,
+    shortCode: derivedShortCode ? String(derivedShortCode) : undefined,
+    tx: h.tx_hash || h.txid || h.tx,
+    replies: h.replies,
+    shares: h.shares,
+    likes: h.likes,
+    height: h.height,
+    time: h.time,
+    namespaceId: peerNamespaceId,
+    key: decodedKey || `${h.tx_hash || h.tx || 'dm'}-${index}`,
+    value: cleanedValue,
+    targetNamespaceId: myNamespaceId,
+    dmTag: tag,
+    chatTag: normalizedChatTag,
+  });
+}
       }
 
       collected.sort((a, b) => {
