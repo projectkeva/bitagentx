@@ -53,6 +53,26 @@ const TAG_DM_PREFIX = '#DM';
 const TAG_CHAT_PREFIX = '#CHAT';
 const TAG_GLOBAL_CHAT = '#chatxkeva';
 
+const derivePeerShortCodeFromChatTag = (chatTag, myShortCode) => {
+  if (!chatTag || !myShortCode) {
+    return null;
+  }
+  const match = chatTag.match(/^#CHAT(\d+)_([0-9]+)$/i);
+  if (!match) {
+    return null;
+  }
+  const a = match[1];
+  const b = match[2];
+  const myStr = String(myShortCode);
+  if (a === myStr) {
+    return b;
+  }
+  if (b === myStr) {
+    return a;
+  }
+  return a;
+};
+
 const stripChatTags = text => {
   if (!text || typeof text !== 'string') {
     return '';
@@ -917,10 +937,14 @@ class HashtagExplore extends React.Component {
             .split('\n')
             .map(line => line.trim())
             .find(line => line.startsWith(TAG_CHAT_PREFIX)) || null;
+          const derivedShortCode =
+            h.shortCode ||
+            derivePeerShortCodeFromChatTag(chatTagLine, myShortCode) ||
+            peerNamespaceId;
           const cleanedValue = stripChatTags(rawValue || '');
           collected.push({
             displayName: h.displayName,
-            shortCode: h.shortCode,
+            shortCode: derivedShortCode ? String(derivedShortCode) : undefined,
             tx: h.tx_hash || h.txid || h.tx,
             replies: h.replies,
             shares: h.shares,
