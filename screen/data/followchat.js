@@ -435,14 +435,15 @@ class FollowChat extends React.Component {
   };
 
   handleTitlePress = () => {
-    const { navigation, namespaceList } = this.props;
+    const { navigation, namespaceList, otherNamespaceList } = this.props;
     if (!navigation || typeof navigation.navigate !== 'function') {
       return;
     }
     const { peerDisplayName, peerShortCode: paramShortCode, walletId: paramWalletId } = navigation.state.params || {};
     const peerNamespaceId = (navigation.state.params || {}).peerNamespaceId || this.state.peerNamespaceId;
     const peerShortCode = paramShortCode || this.state.peerShortCode;
-    const namespace = peerNamespaceId ? namespaceList?.namespaces?.[peerNamespaceId] : null;
+    const otherNamespace = peerNamespaceId ? otherNamespaceList?.namespaces?.[peerNamespaceId] : null;
+    const namespace = otherNamespace || (peerNamespaceId ? namespaceList?.namespaces?.[peerNamespaceId] : null);
     navigation.navigate('KeyValues', {
       namespaceId: namespace?.id || peerNamespaceId,
       shortCode: namespace?.shortCode || peerShortCode,
@@ -454,6 +455,33 @@ class FollowChat extends React.Component {
       desc: namespace?.desc,
       addr: namespace?.addr,
       profile: namespace?.profile,
+    });
+  };
+
+  handleUserAvatarPress = () => {
+    const { navigation, namespaceList } = this.props;
+    if (!navigation || typeof navigation.navigate !== 'function') {
+      return;
+    }
+    const myNamespaceId = this.getActiveNamespaceId();
+    if (!myNamespaceId) {
+      return;
+    }
+    const namespace = namespaceList?.namespaces?.[myNamespaceId];
+    if (!namespace) {
+      return;
+    }
+    navigation.navigate('KeyValues', {
+      namespaceId: namespace.id,
+      shortCode: namespace.shortCode,
+      displayName: namespace.displayName,
+      txid: namespace.txId,
+      rootAddress: namespace.rootAddress,
+      walletId: namespace.walletId,
+      price: namespace.price,
+      desc: namespace.desc,
+      addr: namespace.addr,
+      profile: namespace.profile,
     });
   };
 
@@ -638,7 +666,14 @@ class FollowChat extends React.Component {
             </TouchableOpacity>
           </View>
           {isUser && (
-            <View style={styles.avatarPressable}>{this.renderAvatar('user')}</View>
+            <TouchableOpacity
+              accessibilityLabel="Open my profile"
+              activeOpacity={0.7}
+              onPress={this.handleUserAvatarPress}
+              style={styles.avatarPressable}
+            >
+              {this.renderAvatar('user')}
+            </TouchableOpacity>
           )}
         </View>
       </>
@@ -1326,6 +1361,7 @@ loadOlderFromChain = async () => {
 
 const mapStateToProps = state => ({
   namespaceList: state.namespaceList,
+  otherNamespaceList: state.otherNamespaceList,
 });
 
 export default connect(mapStateToProps)(FollowChat);
