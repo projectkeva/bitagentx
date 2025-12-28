@@ -541,7 +541,9 @@ const GuestInbox = ({ navigation }) => {
           <View style={styles.cardInner}>
             <View style={styles.headerRow}>
               <View style={[styles.avatarWrapper, styles.neonAvatarWrapper]}>
-                <View style={[styles.fallbackAvatar, { backgroundColor: avatarColor }]} />
+                <View style={[styles.fallbackAvatar, styles.guestFallbackAvatar]}>
+                  <Text style={styles.guestFallbackAvatarLabel}>GM</Text>
+                </View>
               </View>
               <View style={styles.titleArea}>
                 <View style={styles.titleBlock}>
@@ -1825,12 +1827,20 @@ var styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  guestFallbackAvatar: {
+    backgroundColor: '#fff',
+  },
   hiddenAvatar: {
     display: 'none',
   },
   fallbackAvatarLabel: {
     color: '#fff',
     fontSize: 20,
+    fontWeight: '700',
+  },
+  guestFallbackAvatarLabel: {
+    color: '#0B1224',
+    fontSize: 18,
     fontWeight: '700',
   },
   avatarProbe: {
