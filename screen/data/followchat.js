@@ -439,7 +439,9 @@ class FollowChat extends React.Component {
     if (!navigation || typeof navigation.navigate !== 'function') {
       return;
     }
-    const { peerNamespaceId, peerDisplayName, peerShortCode, walletId } = navigation.state.params || {};
+    const { peerDisplayName, peerShortCode: paramShortCode, walletId: paramWalletId } = navigation.state.params || {};
+    const peerNamespaceId = (navigation.state.params || {}).peerNamespaceId || this.state.peerNamespaceId;
+    const peerShortCode = paramShortCode || this.state.peerShortCode;
     const namespace = peerNamespaceId ? namespaceList?.namespaces?.[peerNamespaceId] : null;
     navigation.navigate('KeyValues', {
       namespaceId: namespace?.id || peerNamespaceId,
@@ -447,7 +449,7 @@ class FollowChat extends React.Component {
       displayName: namespace?.displayName || peerDisplayName,
       txid: namespace?.txId,
       rootAddress: namespace?.rootAddress,
-      walletId: namespace?.walletId || walletId,
+      walletId: namespace?.walletId || paramWalletId,
       price: namespace?.price,
       desc: namespace?.desc,
       addr: namespace?.addr,
@@ -615,7 +617,14 @@ class FollowChat extends React.Component {
         )}
         <View style={[styles.messageRow, isUser ? styles.userRow : styles.agentRow]}>
           {!isUser && (
-            <View style={styles.avatarPressable}>{this.renderAvatar('peer')}</View>
+            <TouchableOpacity
+              accessibilityLabel="Open peer profile"
+              activeOpacity={0.7}
+              onPress={this.handleTitlePress}
+              style={styles.avatarPressable}
+            >
+              {this.renderAvatar('peer')}
+            </TouchableOpacity>
           )}
           <View style={[styles.bubbleColumn, isUser ? styles.userBubbleColumn : styles.agentBubbleColumn]}>
             <TouchableOpacity
