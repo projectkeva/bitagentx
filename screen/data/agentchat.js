@@ -583,8 +583,9 @@ class AgentChat extends React.Component {
     const trimmed = text.trim();
     const normalized = trimmed.toUpperCase();
     if (normalized === '/D') {
-      const { namespaceId } = this.props.navigation.state.params || {};
-      this.replyFromAgent(buildDestinySeedPrompt(namespaceId));
+      const { namespaceId, shortCode } = this.props.navigation.state.params || {};
+      const agentId = shortCode || namespaceId;
+      this.replyFromAgent(buildDestinySeedPrompt(agentId));
       this.replyFromAgent(
         'Long press to copy, then paste into GPT, Grok, DeepSeek, or any base model to start the interactive Destiny story game. When you finish the run, paste the result here to commit it on-chain for your next level. Have fun!',
       );
