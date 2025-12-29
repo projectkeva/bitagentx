@@ -392,7 +392,7 @@ class AgentChat extends React.Component {
     if (normalized === '/D') {
       this.replyFromAgent(DESTINY_SEED_PROMPT);
       this.replyFromAgent(
-        'Copy the content above into GPT, Grok, DeepSeek, or any base model to start the interactive Destiny story game. When you finish the run, paste the result here to commit it on-chain for your next level.',
+        'Long press to copy, then paste into GPT, Grok, DeepSeek, or any base model to start the interactive Destiny story game. When you finish the run, paste the result here to commit it on-chain for your next level. Have fun!',
       );
     }
   };
