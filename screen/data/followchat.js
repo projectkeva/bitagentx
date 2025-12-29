@@ -455,6 +455,7 @@ class FollowChat extends React.Component {
       desc: namespace?.desc,
       addr: namespace?.addr,
       profile: namespace?.profile,
+      isOther: true,
     });
   };
 
