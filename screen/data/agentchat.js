@@ -116,7 +116,7 @@ SCENE / MAP DECODING GUIDE:
   sceneIndex = abs(s) mod 29   // integer in [0..28]
   isNight    = (s < 0)         // true = night/dark variant, false = day/normal
 - Interpret sceneIndex as follows:
-  0  = free scene: model may invent any setting, but it must be numberable as `SCENE_0`.
+  0  = free scene: model may invent any setting, but it must be numberable as SCENE_0.
   1  = underground dungeon
   2  = prehistoric ruins
   3  = lost civilization site
