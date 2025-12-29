@@ -23,7 +23,7 @@ const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
   'Loading the on-device LLM… (not deployed yet)',
-  'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain.',
+  'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain, or type /d to load a Destiny Seed Card.',
 ];
 const PAGE_SIZE = 10;
 
