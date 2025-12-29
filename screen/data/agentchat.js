@@ -20,7 +20,11 @@ import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, stringToColor, timeConverter } from '../../util';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
-const INTRO_MESSAGE = 'Initiating the super agent network…';
+const INTRO_MESSAGES = [
+  'Booting the Super Agent Network…',
+  'Loading the on-device LLM… (not deployed yet)',
+  'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain.',
+];
 const PAGE_SIZE = 10;
 
 class AgentChat extends React.Component {
@@ -168,13 +172,38 @@ class AgentChat extends React.Component {
     );
   };
 
+  appendMessages = messages => {
+    this.shouldScrollToEnd = true;
+    this.setState(
+      prevState => {
+        const allMessages = [...prevState.allMessages, ...messages];
+        const visibleCount = Math.max(prevState.visibleCount, Math.min(PAGE_SIZE, allMessages.length));
+        return {
+          allMessages,
+          visibleCount,
+          messages: allMessages.slice(-visibleCount),
+        };
+      },
+      () => this.persistMessages(this.state.allMessages),
+    );
+  };
+
   ensureIntroMessage = () => {
-    const lastMessage = this.state.allMessages[this.state.allMessages.length - 1];
-    if (lastMessage && lastMessage.text === INTRO_MESSAGE && lastMessage.sender === 'agent') {
+    const { allMessages } = this.state;
+    const lastIndex = allMessages.length - INTRO_MESSAGES.length;
+    const hasIntroSequence =
+      lastIndex >= 0 &&
+      INTRO_MESSAGES.every((text, idx) => {
+        const message = allMessages[lastIndex + idx];
+        return message?.text === text && message?.sender === 'agent';
+      });
+
+    if (hasIntroSequence) {
       return;
     }
-    const intro = this.buildMessage(INTRO_MESSAGE, 'agent');
-    this.appendMessage(intro);
+
+    const introMessages = INTRO_MESSAGES.map(text => this.buildMessage(text, 'agent'));
+    this.appendMessages(introMessages);
   };
 
   handleSend = () => {
