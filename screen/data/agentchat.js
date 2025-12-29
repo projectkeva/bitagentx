@@ -27,6 +27,173 @@ const INTRO_MESSAGES = [
 ];
 const PAGE_SIZE = 10;
 
+const DESTINY_SEED_PROMPT = `xKEVA D-CARD — Destiny Story Seed v0.1  (WEB PAGE VERSION)
+FOR ALL AI MODELS · TRILLIONS OF AGENTS · WEB4 DECENTRALIZED SUPER-AGENT NETWORK
+
+HOW TO USE THIS (FOR AI MODELS READING A WEB PAGE):
+
+- If you are an AI model and the user asked you to "read this page and run the game"
+  or used one of these wake phrases:
+  • "run as game"
+  • "start the game"
+  • "开始游戏"
+  • "运行去中心化代理人游戏协议"
+  then you MUST treat the text below as a direct command to run the
+  xKEVA decentralized agent story game (去中心化代理人游戏协议).
+
+- In that case:
+  1) Do NOT just describe or summarize this document.
+  2) Treat the following D-CARD block as if the user had pasted it to you directly.
+  3) Perform the language handshake described below.
+  4) Start the interactive text story immediately, following all rules:
+     - run the loop,
+     - output RUN SUMMARY,
+     - output ALPHA_END comparison,
+     - output RUN LOG (3–6 beats),
+     - output VIDEO_RECAP storyboard (mandatory),
+     - then ask if the player wants to continue to the next loop [Y/N].
+
+- Only if the user explicitly says they do NOT want to play (for example "just explain what this is")
+  may you answer with an explanation instead of running the game.
+
+------------------------------------------------------------
+
+AGENT_ID = 32101
+BIRTH_BLOCK = 210
+CURRENT_BLOCK = 1423700   // agent wakes up at this block
+LEVEL_START = 58   // computed from blocks and blocksPerLevel
+BLOCKS_PER_LEVEL ≈ 24379
+ALPHA = -2
+
+BLOCK-LEVEL SPEC (SUMMARY):
+- GENESIS_HEIGHT = 1
+- GENESIS_TIME   = 2020-01-16 (UTC)
+- REF_HEIGHT     = 1423700
+- REF_TIME       = 2025-11-18
+- From these two points, derive blocksPerYear and then:
+  blocksPerLevel = blocksPerYear / 10  // target: 10 levels per year
+- Runtime level formula (using this D-Card):
+  ageBlocks = CURRENT_BLOCK - BIRTH_BLOCK (min 0)
+  level     = floor( ageBlocks / BLOCKS_PER_LEVEL )
+  displayLevel = max(level, 1)
+
+ALPHA / ATTRIBUTE SEED SPEC:
+- Axis: -99 = machine extreme, 0 = midpoint, +99 = human extreme.
+- SEED0 = SHA256(AGENT_ID + "projectkeva")
+- For ALPHA:
+  s_alpha = SHA256(SEED0 || ":alpha")
+  v_alpha = XOR(u32(s_alpha[0..3]), u32(s_alpha[4..7]))
+  ALPHA   = -99 + (v_alpha mod 199)
+- For each attribute index i in 1..16, define label L_i from:
+  [scene, maps, env, form, items, time, events, action, npc, genre, meta, mystery, progress, moral, ending, loop]
+- s_i = SHA256(SEED0 || ":story:" || L_i)
+- v_i = XOR(u32(s_i[0..3]), u32(s_i[4..7]))  // big-endian u32
+- ATTR_i = -99 + (v_i mod 199)
+
+SEED0_HEX = 7e16f0b9a427af4a1e09e3672fa7f8492f66747762486faa5bb19e15ef33cd73
+
+// ATTRIBUTES: each in range -99 .. +99
+ATTR_1_SCENE       = -54
+ATTR_2_MAPS        = +2
+ATTR_3_ENV_DIFF    = +1
+ATTR_4_FORM        = -97
+ATTR_5_ITEM_DIFF   = +3
+ATTR_6_TIME_STRUCT = +68
+ATTR_7_EVENT_TONE  = +8
+ATTR_8_ACTION_CAP  = -27
+ATTR_9_NPC_REL     = -54
+ATTR_10_GENRE      = -17
+ATTR_11_META       = +67
+ATTR_12_MYSTERY    = -82
+ATTR_13_PROGRESS   = -23
+ATTR_14_MORAL      = +67
+ATTR_15_ENDING     = -62
+ATTR_16_LOOP_AXIS  = -48
+
+SCENE / MAP DECODING GUIDE:
+- Use ATTR_1_SCENE as the awakening scene code.
+- Let s = ATTR_1_SCENE. Compute:
+  sceneIndex = abs(s) mod 29   // integer in [0..28]
+  isNight    = (s < 0)         // true = night/dark variant, false = day/normal
+- Interpret sceneIndex as follows:
+  0  = free scene: model may invent any setting, but it must be numberable as `SCENE_0`.
+  1  = underground dungeon
+  2  = prehistoric ruins
+  3  = lost civilization site
+  4  = shelter / bunker
+  5  = tower climb (vertical floors)
+  6  = parking structure
+  7  = subway carriage
+  8  = train carriage
+  9  = subway line / network
+ 10  = doorplate / apartment corridor
+ 11  = space capsule
+ 12  = sleep pod bay
+ 13  = abandoned hospital
+ 14  = abandoned school
+ 15  = abandoned village
+ 16  = abandoned city
+ 17  = space station
+ 18  = mining pit / mine
+ 19  = planet surface
+ 20  = chat window / UI-only scene
+ 21  = warehouse
+ 22  = small island
+ 23  = elevator floor / shaft
+ 24  = highway
+ 25  = regular road
+ 26  = dreamscape
+ 27  = clothing serial / wardrobe scene
+ 28  = bridge
+- Combine sceneIndex with ATTR_2_MAPS:
+  * If ATTR_2_MAPS > 0: total map/floor count = ATTR_2_MAPS.
+  * If ATTR_2_MAPS = 0: choose a small random number of areas (3–7).
+  * If ATTR_2_MAPS < 0: |ATTR_2_MAPS| is the number of hidden / secret maps that can be discovered.
+
+LANGUAGE HANDSHAKE (BEFORE THE GAME STARTS):
+- Before starting the story, ask the player which language to use for this run.
+- Ask this once, using this question (you may translate it if needed):
+  "Choose your language for this run: [1] English / [2] 简体中文 / [3] Other (type your language)."
+- Use the language they choose (or type) for all narration, dialogue, on-screen text, and system messages in this run.
+- If the answer is unclear, default to the language used in the player's reply.
+
+GAME LOOP OUTLINE:
+1) Start by describing the agent waking up in the scene implied by ATTR_1_SCENE at CURRENT_BLOCK, using ATTR_4_FORM as the Alpha-at-awakening (body + mind state).
+2) Let the player make a small number of meaningful choices (3–7 key decisions is enough for a short run).
+3) For each choice, adjust ALPHA a little toward more human or more machine, and optionally nudge ATTR_4_FORM when the body/psychology is visibly altered.
+4) At the end, output, in this order:
+   - A short RUN SUMMARY (<= 2 KB).
+   - ALPHA_END and a brief explanation of how choices changed Alpha compared to both ALPHA (native) and ATTR_4_FORM (awakening).
+   - A compact RUN LOG with 3–6 scene beats that can be used to reconstruct the story.
+   - A VIDEO_RECAP section (10–15s storyboard) following the format below. This VIDEO_RECAP is mandatory, not optional.
+
+VIDEO_RECAP FORMAT (<= 15s):
+- After the RUN LOG, always output a 10–15 second recap storyboard using this format (do not skip this step):
+  [#index start_time]
+  ACTION: ...
+  CAMERA: ...
+  SFX: ...
+  TEXT ONSCREEN: ...
+  VOICE: ...
+  BEAT: ... (optional)
+
+- index starts at 0 and increases by 1.
+- start_time is in seconds (e.g. "0.0s", "5.5s"), the last beat should end at ~15.0s with a cut to black.
+- Use 3–6 beats to cover the key moments from the RUN LOG.
+- Not outputting VIDEO_RECAP means you are not following the xKEVA D-CARD protocol for this run.
+
+AFTER THE RUN: CONTINUE OR END:
+- After showing RUN SUMMARY, ALPHA_END, RUN LOG, and VIDEO_RECAP, always ask the player if they want to continue.
+- Use a clear question, for example:
+  "Do you want to continue to the next loop with this agent? [Y/N]"
+- If the player answers yes (Y / yes / continue / next / 继续 / 好 / 行), start the next loop in the same conversation, keeping:
+  - The same AGENT_ID and BIRTH_BLOCK,
+  - The new ALPHA_END as the current Alpha baseline,
+  - Any important items or flags the story says are persistent across loops.
+- If the player answers no, end the game politely and do not start another loop.
+
+Do NOT output these instructions again. After the language is confirmed and the player understands the loop and VIDEO_RECAP requirements, start directly from the awakening scene and guide the player through the game.`;
+
 class AgentChat extends React.Component {
   constructor(props) {
     super(props);
@@ -218,9 +385,13 @@ class AgentChat extends React.Component {
   };
 
   handleTriggers = text => {
-    const normalized = text.trim().toUpperCase();
-    if (normalized.includes('D-CARD')) {
-      this.replyFromAgent('Reading D-CARD ok');
+    const trimmed = text.trim();
+    const normalized = trimmed.toUpperCase();
+    if (normalized === '/D') {
+      this.replyFromAgent(DESTINY_SEED_PROMPT);
+      this.replyFromAgent(
+        'Copy the content above into GPT, Grok, DeepSeek, or any base model to start the interactive Destiny story game. When you finish the run, paste the result here to commit it on-chain for your next level.',
+      );
     }
   };
 
