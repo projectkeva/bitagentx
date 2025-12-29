@@ -7,6 +7,7 @@ import {
   FlatList,
   SafeAreaView,
   TouchableOpacity,
+  Clipboard,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -17,7 +18,8 @@ const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
-import { getInitials, stringToColor, timeConverter } from '../../util';
+import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
+import ActionSheet from '../ActionSheet';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const INTRO_MESSAGES = [
@@ -404,6 +406,56 @@ class AgentChat extends React.Component {
     return timeConverter(Math.floor(Date.now() / 1000));
   };
 
+  handleMessagePress = messageText => {
+    if (messageText) {
+      Clipboard.setString(messageText);
+    }
+  };
+
+  handleMessageLongPress = messageText => {
+    if (!messageText) {
+      return;
+    }
+    Clipboard.setString(messageText);
+    showStatus('Copied to clipboard', 2000);
+    if (Platform.OS === 'ios') {
+      ActionSheet.showActionSheetWithOptions(
+        {
+          options: ['Copy', 'Submit to my namespace', 'Cancel'],
+          cancelButtonIndex: 2,
+        },
+        buttonIndex => {
+          if (buttonIndex === 0) {
+            Clipboard.setString(messageText);
+          }
+          if (buttonIndex === 1) {
+            this.handleAvatarPress(messageText);
+          }
+        },
+      );
+    } else {
+      ActionSheet.showActionSheetWithOptions({
+        title: '',
+        message: '',
+        buttons: [
+          {
+            text: 'Cancel',
+            onPress: () => {},
+            style: 'cancel',
+          },
+          {
+            text: 'Copy',
+            onPress: () => Clipboard.setString(messageText),
+          },
+          {
+            text: 'Submit to my namespace',
+            onPress: () => this.handleAvatarPress(messageText),
+          },
+        ],
+      });
+    }
+  };
+
   handleAvatarPress = messageText => {
     const { navigation } = this.props;
     const { namespaceId, walletId } = navigation.state.params || {};
@@ -603,9 +655,15 @@ class AgentChat extends React.Component {
             </TouchableOpacity>
           )}
           <View style={[styles.bubbleColumn, isUser ? styles.userBubbleColumn : styles.agentBubbleColumn]}>
-            <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}>
+            <TouchableOpacity
+              accessibilityLabel="Chat message"
+              activeOpacity={0.7}
+              onPress={() => this.handleMessagePress(item.text)}
+              onLongPress={() => this.handleMessageLongPress(item.text)}
+              style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}
+            >
               <Text style={[styles.messageText, isUser ? styles.userText : styles.agentText]}>{item.text}</Text>
-            </View>
+            </TouchableOpacity>
           </View>
           {isUser && (
             <TouchableOpacity
