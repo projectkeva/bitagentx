@@ -21,7 +21,7 @@ const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
-import { getInitials, stringToColor, timeConverter, toastError } from '../../util';
+import { getInitials, showStatus, stringToColor, timeConverter, toastError } from '../../util';
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 import { getHashtagScriptHash, getNamespaceScriptHash, replyKeyValue, toScriptHash } from '../../class/keva-ops';
 import ActionSheet from '../ActionSheet';
@@ -378,6 +378,8 @@ class FollowChat extends React.Component {
     if (!messageText) {
       return;
     }
+    Clipboard.setString(messageText);
+    showStatus('Copied to clipboard', 2000);
     if (Platform.OS === 'ios') {
       ActionSheet.showActionSheetWithOptions(
         {
