@@ -16,17 +16,19 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
 
 
 .desktop-area .desktop-icons {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 18px 20px;
+  justify-items: center;
   align-items: flex-start;
-  padding-top: 32px;     
+  padding-top: 32px;
   padding-bottom: 32px;
+  width: 100%;
 }
 
 .desktop-area .desktop-icons .icon {
-  margin: 12px 18px;   
   text-align: center;
+  width: 100%;
 }
 
 
