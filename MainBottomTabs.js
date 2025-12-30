@@ -215,7 +215,7 @@ if (routeName === 'Home') {
 } else
 
         if (routeName === 'GetAgents') {
-          label = 'Get Agents';
+          label = 'Get ID <@U09QR651E82>';
         } else if (routeName === 'Settings') {
           label = loc.general.label_settings;
         } else if (routeName === 'Namespaces') {
