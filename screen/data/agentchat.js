@@ -15,6 +15,7 @@ import { Icon } from 'react-native-elements';
 import RNFS from 'react-native-fs';
 import { connect } from 'react-redux';
 import CryptoJS from 'crypto-js';
+let BlueElectrum = require('../../BlueElectrum');
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
@@ -568,7 +569,7 @@ class AgentChat extends React.Component {
     this.appendMessages(introMessages);
   };
 
-  handleSend = () => {
+  handleSend = async () => {
     const text = this.state.inputValue.trim();
     if (!text) {
       return;
@@ -576,10 +577,10 @@ class AgentChat extends React.Component {
     const userMessage = this.buildMessage(text, 'user');
     this.appendMessage(userMessage);
     this.setState({ inputValue: '' });
-    this.handleTriggers(text);
+    await this.handleTriggers(text);
   };
 
-  handleTriggers = text => {
+  handleTriggers = async text => {
     const trimmed = text.trim();
     const normalized = trimmed.toUpperCase();
     if (normalized === '/D') {
@@ -589,6 +590,26 @@ class AgentChat extends React.Component {
       this.replyFromAgent(
         'Long press to copy, then paste into GPT, Grok, DeepSeek, or any base model to start the interactive Destiny story game. When you finish the run, paste the result here to commit it on-chain for your next level. Have fun!',
       );
+      return;
+    }
+
+    if (normalized === '/BLOCK') {
+      await this.replyWithCurrentBlock();
+    }
+  };
+
+  replyWithCurrentBlock = async () => {
+    try {
+      await BlueElectrum.ping();
+      const height = await BlueElectrum.blockchainBlock_count();
+      if (Number.isFinite(height)) {
+        this.replyFromAgent(`Current block: ${height}`);
+      } else {
+        this.replyFromAgent('Current block height unavailable.');
+      }
+    } catch (error) {
+      console.warn('AgentChat: failed to fetch current block height', error);
+      this.replyFromAgent('Failed to fetch current block height.');
     }
   };
 
