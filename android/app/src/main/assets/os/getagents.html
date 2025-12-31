@@ -69,6 +69,10 @@
     color: var(--error);
   }
 
+  .status-offline {
+    color: var(--accent);
+  }
+
   .namespace-modal {
     position: fixed;
     inset: 0;
@@ -535,6 +539,104 @@ function failBootOverlay(message) {
   markTimelineReady();
 }
 
+function persistLatestBlockPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return;
+  }
+  const numericHeight = Number(payload.height);
+  const numericTimestamp = Number(payload.timestamp);
+  if (!Number.isFinite(numericHeight) || !Number.isFinite(numericTimestamp)) {
+    return;
+  }
+
+  const record = {
+    height: numericHeight,
+    timestamp: numericTimestamp,
+    walletAgents: payload.walletAgents || null,
+    electrum: payload.electrum || null,
+    cachedAt: Date.now(),
+  };
+
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(CACHED_BLOCK_STORAGE_KEY, JSON.stringify(record));
+    }
+  } catch (error) {
+    console.warn('Get Agents: failed to cache latest block payload', error);
+  }
+}
+
+function readCachedBlockPayload() {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return null;
+    }
+    const raw = window.localStorage.getItem(CACHED_BLOCK_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    const numericHeight = Number(parsed.height);
+    const numericTimestamp = Number(parsed.timestamp);
+    if (!Number.isFinite(numericHeight) || !Number.isFinite(numericTimestamp)) {
+      return null;
+    }
+    const cachedAt = Number(parsed.cachedAt);
+    return {
+      height: numericHeight,
+      timestamp: numericTimestamp,
+      walletAgents: parsed.walletAgents || null,
+      electrum: parsed.electrum || null,
+      cachedAt: Number.isFinite(cachedAt) ? cachedAt : null,
+    };
+  } catch (error) {
+    console.warn('Get Agents: failed to read cached block payload', error);
+    return null;
+  }
+}
+
+function addOfflineNotice(lastSyncedDate, serverHint) {
+  if (!timelineEl) {
+    return;
+  }
+  const statusEl = document.createElement('div');
+  statusEl.id = STATUS_ID;
+  statusEl.className = 'status status-offline';
+  const syncLabel = lastSyncedDate instanceof Date && !Number.isNaN(lastSyncedDate.getTime())
+    ? formatDateTime(lastSyncedDate)
+    : 'Unknown time';
+  const serverLabel = serverHint ? ` via ${serverHint}` : '';
+  statusEl.textContent = `Offline mode — showing cached block (last sync ${syncLabel}${serverLabel})`;
+  if (timelineEl.firstChild) {
+    timelineEl.insertBefore(statusEl, timelineEl.firstChild);
+  } else {
+    timelineEl.appendChild(statusEl);
+  }
+}
+
+function renderCachedTimeline() {
+  const cached = readCachedBlockPayload();
+  if (!cached) {
+    return false;
+  }
+
+  try {
+    applyTimelineData(cached.height, cached.timestamp);
+    setWalletAgentState(cached.walletAgents || null, cached.height);
+    markTimelineReady();
+    const syncDate = cached.cachedAt ? new Date(cached.cachedAt) : new Date(cached.timestamp * 1000);
+    const serverHint = cached.electrum && (cached.electrum.host || cached.electrum.server || cached.electrum.serverName);
+    addOfflineNotice(syncDate, serverHint);
+    return true;
+  } catch (error) {
+    console.error('Get Agents: failed to render cached timeline', error);
+    return false;
+  }
+}
+
 function getParentReactNativeBridge() {
   try {
     if (
@@ -705,6 +807,7 @@ const AGENT_SEED_SUFFIX = 'projectkeva';
 const AGENT_HEAD_POOL = 1000n;
 const AGENT_CLOTH_POOL = 500n;
 const NAMESPACE_REFRESH_DELAY_MS = 800;
+const CACHED_BLOCK_STORAGE_KEY = 'getagents_cached_block';
 
 function parseWalletShortcode(shortCode) {
   if (shortCode === undefined || shortCode === null) {
@@ -1635,6 +1738,7 @@ function handleNativeTimelineMessage(event) {
       appendBootLine('LINK> Connecting the last human node…', 'accent');
       applyTimelineData(payload.height, payload.timestamp);
       setWalletAgentState(payload.walletAgents || null, payload.height);
+      persistLatestBlockPayload(payload);
       markTimelineReady();
     } catch (error) {
       console.error('Invalid payload from native Electrum bridge', error);
@@ -1648,8 +1752,11 @@ function handleNativeTimelineMessage(event) {
       return;
     }
     console.error('Native Electrum bridge reported error', parsed.error);
-    failBootOverlay('App Electrum service unavailable.');
-    showStatus('App Electrum service unavailable. Please try again.', true);
+    const recovered = renderCachedTimeline();
+    if (!recovered) {
+      failBootOverlay('App Electrum service unavailable.');
+      showStatus('App Electrum service unavailable. Please try again.', true);
+    }
   } else if (parsed.type === 'getagents_wallet_state') {
     const payload = parsed.payload || {};
     const fallbackHeight = Number.isFinite(payload.blockHeight) ? payload.blockHeight : baseBlockHeight;
@@ -1802,14 +1909,20 @@ function requestTimelineFromNative() {
       nativeRequestTimeoutId = null;
       if (!hasRenderedTimeline) {
         console.warn('Get Agents Electrum bridge timed out');
-        failBootOverlay('Electrum bridge timeout. Please reopen Get Agents.');
-        showStatus('Electrum bridge timeout. Please reopen Get Agents.', true);
+        const recovered = renderCachedTimeline();
+        if (!recovered) {
+          failBootOverlay('Electrum bridge timeout. Please reopen Get Agents.');
+          showStatus('Electrum bridge timeout. Please reopen Get Agents.', true);
+        }
       }
     }, NATIVE_TIMEOUT_MS);
   } catch (error) {
     console.error('Failed to request Electrum data from native bridge', error);
-    failBootOverlay('Unable to reach Kevacoin app bridge.');
-    showStatus('Unable to load block data via native Electrum service.', true);
+    const recovered = renderCachedTimeline();
+    if (!recovered) {
+      failBootOverlay('Unable to reach Kevacoin app bridge.');
+      showStatus('Unable to load block data via native Electrum service.', true);
+    }
   }
 }
 
