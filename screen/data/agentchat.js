@@ -16,12 +16,15 @@ import RNFS from 'react-native-fs';
 import { connect } from 'react-redux';
 import CryptoJS from 'crypto-js';
 let BlueElectrum = require('../../BlueElectrum');
+let BlueApp = require('../../BlueApp');
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
 import ActionSheet from '../ActionSheet';
+import { updateKeyValue } from '../../class/keva-ops';
+import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const INTRO_MESSAGES = [
@@ -582,6 +585,12 @@ class AgentChat extends React.Component {
 
   handleTriggers = async text => {
     const trimmed = text.trim();
+    const welcomeMatch = /^\/welcome\s+(.+)/i.exec(trimmed);
+    if (welcomeMatch) {
+      await this.handleWelcomeCommand(welcomeMatch[1]);
+      return;
+    }
+
     const normalized = trimmed.toUpperCase();
     if (normalized === '/D') {
       const { namespaceId, shortCode } = this.props.navigation.state.params || {};
@@ -595,6 +604,45 @@ class AgentChat extends React.Component {
 
     if (normalized === '/BLOCK') {
       await this.replyWithCurrentBlock();
+    }
+  };
+
+  handleWelcomeCommand = async rawValue => {
+    const { navigation } = this.props;
+    const { namespaceId, walletId } = navigation.state.params || {};
+
+    const value = rawValue.trim().slice(0, 1000);
+    if (!value) {
+      this.replyFromAgent('Welcome message is empty.');
+      return;
+    }
+
+    if (!namespaceId || !walletId) {
+      this.replyFromAgent('Missing namespace or wallet information to save welcome message.');
+      return;
+    }
+
+    const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
+    if (!wallet) {
+      this.replyFromAgent('Wallet not found for this agent.');
+      return;
+    }
+
+    try {
+      await BlueElectrum.ping();
+      if (typeof BlueElectrum.waitTillConnected === 'function') {
+        await BlueElectrum.waitTillConnected();
+      }
+      const { tx } = await updateKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, namespaceId, 'welcome', value);
+      const result = await BlueElectrum.broadcast(tx);
+      if (result?.code) {
+        throw new Error(result.message || 'Broadcast failed');
+      }
+      await BlueApp.saveToDisk();
+      this.replyFromAgent('Saved welcome message to your agent space.');
+    } catch (error) {
+      console.warn('AgentChat: failed to save welcome message', error);
+      this.replyFromAgent('Failed to save welcome message.');
     }
   };
 
