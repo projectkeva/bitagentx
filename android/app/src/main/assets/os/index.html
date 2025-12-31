@@ -17,13 +17,19 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
 
 .desktop-area .desktop-icons {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(90px, 110px));
   gap: 18px 20px;
   justify-items: center;
+  justify-content: center;
   align-items: flex-start;
+  align-content: flex-start;
   padding-top: 32px;
-  padding-bottom: 32px;
+  padding-bottom: calc(var(--taskbar-height, 48px) + 32px);
   width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  flex: 1;
+  overflow-y: auto;
 }
 
 .desktop-area .desktop-icons .icon {
