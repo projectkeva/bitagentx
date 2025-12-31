@@ -37,128 +37,6 @@
     display: flex;
     align-items: flex-start;
     justify-content: center;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.45s ease;
-  }
-
-  .wrap.wrap--visible {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .boot-overlay {
-    position: fixed;
-    inset: 0;
-    background: radial-gradient(circle at 20% 20%, rgba(12, 80, 97, 0.32), rgba(0, 0, 0, 0.94));
-    z-index: 1000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    --portal-duration: 900ms;
-    transition: opacity 0.65s ease, transform 0.65s ease;
-  }
-
-  .boot-overlay.boot-overlay--hidden {
-    opacity: 0;
-    pointer-events: none;
-    transform: scale(1.02);
-  }
-
-  .boot-overlay::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(180deg, #1b3de4 0%, #132cbe 45%, #0b1e99 100%);
-    transform: scaleY(0.02);
-    transform-origin: center;
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .boot-overlay.boot-overlay--portal .boot-overlay-inner {
-    opacity: 0;
-    transform: scale(0.94);
-    transition: opacity 0.3s ease, transform 0.3s ease;
-  }
-
-  .boot-overlay.boot-overlay--portal::after {
-    opacity: 1;
-    animation: bootPortalOpen var(--portal-duration) ease forwards;
-  }
-
-  @keyframes bootPortalOpen {
-    0% {
-      transform: scaleY(0.02);
-      opacity: 1;
-    }
-    60% {
-      transform: scaleY(1.05);
-      opacity: 1;
-    }
-    100% {
-      transform: scaleY(1.3);
-      opacity: 0;
-    }
-  }
-
-  .boot-overlay-inner {
-    width: min(520px, 90vw);
-    max-height: 70vh;
-    border: 1px solid rgba(0, 234, 255, 0.35);
-    border-radius: 18px;
-    padding: 32px 30px 26px;
-    background: rgba(1, 9, 11, 0.92);
-    box-shadow: 0 0 35px rgba(0, 237, 255, 0.18);
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-  }
-
-  .boot-logo {
-    font-size: 18px;
-    letter-spacing: 0.5em;
-    text-transform: uppercase;
-    color: var(--accent);
-    text-shadow: 0 0 8px rgba(89, 251, 234, 0.6);
-  }
-
-  .boot-log {
-    flex: 1;
-    overflow-x: hidden;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: 14px;
-    color: var(--fg);
-  }
-
-  .boot-line {
-    opacity: 0;
-    transform: translateY(6px);
-    transition: opacity 0.35s ease, transform 0.35s ease;
-    color: rgba(255, 255, 255, 0.82);
-    letter-spacing: 0.08em;
-  }
-
-  .boot-line.visible {
-    opacity: 1;
-    transform: translateY(0);
-  }
-
-  .boot-line::before {
-    content: '> ';
-    color: var(--accent-2);
-  }
-
-  .boot-line.accent {
-    color: var(--accent);
-  }
-
-  .boot-line.error {
-    color: var(--error);
   }
 
   .timeline {
@@ -588,12 +466,6 @@
 </style>
 </head>
 <body>
-<div class="boot-overlay" id="bootOverlay">
-  <div class="boot-overlay-inner">
-    <div class="boot-logo">KEVA//AGENT OPS</div>
-    <div class="boot-log" id="bootLog"></div>
-  </div>
-</div>
 <div class="namespace-modal" id="namespaceModal" aria-hidden="true">
   <div class="namespace-modal__panel" role="dialog" aria-modal="true" aria-labelledby="namespaceModalTitle">
     <div class="namespace-modal__eyebrow">GETA CONFIRM</div>
@@ -629,8 +501,6 @@ const BLOCK_INTERVAL_MS = 2 * 60 * 1000;
 const GETAGENTS_NAMESPACE_NAME = 'Agent';
 const NAMESPACE_CLICK_THROTTLE_MS = 1000;
 const NAMESPACE_BUTTON_BUSY_LABEL = 'Creating…';
-const bootOverlay = document.getElementById('bootOverlay');
-const bootLogEl = document.getElementById('bootLog');
 const timelineWrapEl = document.getElementById('timelineWrap');
 const namespaceModal = document.getElementById('namespaceModal');
 const namespaceModalBlock = document.getElementById('namespaceModalBlock');
@@ -638,179 +508,30 @@ const namespaceModalId = document.getElementById('namespaceModalId');
 const namespaceModalTx = document.getElementById('namespaceModalTx');
 const namespaceModalTxRow = document.getElementById('namespaceModalTxRow');
 const namespaceModalCloseBtn = document.getElementById('namespaceModalClose');
-const MAX_BOOT_LINES = 5;
-const BOOT_AUTO_DISMISS_DELAY_MS = 1000;
-const BOOT_COMPLETION_STORAGE_KEY = 'geta_boot_complete';
-let bootLineCounter = 0;
-let bootPreludeTimer = null;
-let bootOverlayDismissalPersisted = false;
-let bootOverlayPreviouslyCompleted = false;
+if (timelineWrapEl) {
+  timelineWrapEl.classList.add('wrap--visible');
+}
+
 let namespaceModalVisible = false;
 let namespaceModalPendingReload = false;
 let namespaceModalAutoDismissTimer = null;
 
-try {
-  bootOverlayPreviouslyCompleted =
-    typeof window !== 'undefined' &&
-    window.sessionStorage &&
-    window.sessionStorage.getItem(BOOT_COMPLETION_STORAGE_KEY) === '1';
-} catch (error) {
-  bootOverlayPreviouslyCompleted = false;
-}
-
-let bootOverlayDismissed = !bootOverlay || bootOverlayPreviouslyCompleted;
-let bootAutoDismissTimer = null;
-let timelineReady = false;
-let timelineVisible = false;
-
-if (bootOverlayPreviouslyCompleted) {
-  bootOverlayDismissalPersisted = true;
-  if (bootOverlay) {
-    bootOverlay.classList.add('boot-overlay--hidden');
-    bootOverlay.classList.remove('boot-overlay--portal');
-    bootOverlay.style.display = 'none';
-    setTimeout(() => {
-      if (bootOverlay.parentNode) {
-        bootOverlay.parentNode.removeChild(bootOverlay);
-      }
-    }, 0);
-  }
-}
-
-function appendBootLine(message, tone = 'normal', options = {}) {
-  if (!bootLogEl || bootOverlayDismissed) {
-    return;
-  }
-  const { force = false } = options;
-  if (!force && bootLineCounter >= MAX_BOOT_LINES) {
-    return;
-  }
-  const line = document.createElement('div');
-  line.className = 'boot-line' + (tone === 'error' ? ' error' : tone === 'accent' ? ' accent' : '');
-  line.textContent = `[${String(++bootLineCounter).padStart(2, '0')}] ${message}`;
-  bootLogEl.appendChild(line);
-  bootLogEl.scrollTop = bootLogEl.scrollHeight;
-  if (typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(() => line.classList.add('visible'));
-  } else {
-    line.classList.add('visible');
-  }
-  if (
-    !bootAutoDismissTimer &&
-    !bootOverlayDismissed &&
-    bootLineCounter >= MAX_BOOT_LINES
-  ) {
-    bootAutoDismissTimer = setTimeout(() => {
-      bootAutoDismissTimer = null;
-      concludeBootOverlay();
-    }, BOOT_AUTO_DISMISS_DELAY_MS);
-  }
-}
-
-function resetBootOverlay() {
-  if (!bootOverlay || !bootLogEl || bootOverlayDismissed) {
-    return;
-  }
-  bootOverlay.classList.remove('boot-overlay--hidden');
-  bootLogEl.innerHTML = '';
-  bootLogEl.scrollTop = 0;
-  bootLineCounter = 0;
-  if (bootPreludeTimer) {
-    clearTimeout(bootPreludeTimer);
-    bootPreludeTimer = null;
-  }
-}
-
-function playBootPrelude() {
-  if (!bootOverlay || bootOverlayDismissed) {
-    return;
-  }
-  const lines = [
-    'SYS> Initializing GETA terminal…',
-    'CORE> Loading identity holograms…',
-    'NET> Calibrating Kevacoin clock drift…',
-    'OS> Spooling Super-Agent Network uplink…',
-  ];
-  let index = 0;
-  const tick = () => {
-    appendBootLine(lines[index], index === 0 ? 'accent' : 'normal');
-    index += 1;
-    if (index < lines.length) {
-      bootPreludeTimer = setTimeout(tick, 260);
-    }
-  };
-  tick();
-}
-
-function concludeBootOverlay(delay = 0) {
-  if (!bootOverlay || bootOverlayDismissed) {
-    maybeRevealTimelineContent();
-    return;
-  }
-  if (bootPreludeTimer) {
-    clearTimeout(bootPreludeTimer);
-    bootPreludeTimer = null;
-  }
-  if (bootAutoDismissTimer) {
-    clearTimeout(bootAutoDismissTimer);
-    bootAutoDismissTimer = null;
-  }
-  bootOverlayDismissed = true;
-  if (!bootOverlayDismissalPersisted) {
-    try {
-      if (typeof window !== 'undefined' && window.sessionStorage) {
-        window.sessionStorage.setItem(BOOT_COMPLETION_STORAGE_KEY, '1');
-      }
-    } catch (error) {
-      // Ignore storage failures.
-    }
-    bootOverlayDismissalPersisted = true;
-  }
-  setTimeout(() => {
-    bootOverlay.classList.add('boot-overlay--portal');
-    const duration = parseInt(getComputedStyle(bootOverlay).getPropertyValue('--portal-duration'), 10);
-    const fallthroughDelay = Number.isFinite(duration) ? duration : 900;
-    setTimeout(() => {
-      bootOverlay.classList.add('boot-overlay--hidden');
-      bootOverlay.classList.remove('boot-overlay--portal');
-      maybeRevealTimelineContent();
-      setTimeout(() => {
-        if (bootOverlay.parentNode) {
-          bootOverlay.parentNode.removeChild(bootOverlay);
-        }
-      }, 700);
-    }, fallthroughDelay);
-  }, delay);
-}
-
-function revealTimelineContent() {
-  if (!timelineWrapEl || timelineVisible) {
-    return;
-  }
-  timelineWrapEl.classList.add('wrap--visible');
-  timelineVisible = true;
-}
-
-function maybeRevealTimelineContent() {
-  if (!timelineReady) {
-    return;
-  }
-  if (!bootOverlay || bootOverlayDismissed) {
-    revealTimelineContent();
+function appendBootLine(message) {
+  try {
+    console.log(`[GETA] ${message}`);
+  } catch (error) {
+    // no-op if console is unavailable
   }
 }
 
 function markTimelineReady() {
-  if (timelineReady) {
-    return;
+  if (timelineWrapEl) {
+    timelineWrapEl.classList.add('wrap--visible');
   }
-  timelineReady = true;
-  maybeRevealTimelineContent();
 }
 
 function failBootOverlay(message) {
-  appendBootLine(`ERR> ${message}`, 'error', { force: true });
-  concludeBootOverlay(1400);
+  appendBootLine(`ERR> ${message}`);
   markTimelineReady();
 }
 
@@ -2093,8 +1814,6 @@ function requestTimelineFromNative() {
 }
 
 function initializeTimeline() {
-  resetBootOverlay();
-  playBootPrelude();
   if (usesNativeBridge) {
     requestTimelineFromNative();
   } else {

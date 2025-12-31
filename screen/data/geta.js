@@ -5,8 +5,8 @@ import { useSelector } from 'react-redux';
 import BlueElectrum from '../../BlueElectrum';
 import { handleGetAgentsNamespaceRequest } from '../../GetAgentsNamespace';
 
-const ANDROID_GETAGENTS_SOURCE = { uri: 'file:///android_asset/os/getagents.html' };
-const IOS_GETAGENTS_SOURCE = { uri: 'getagents.html' };
+const ANDROID_GETAGENTS_SOURCE = { uri: 'file:///android_asset/os/getagentstart.html' };
+const IOS_GETAGENTS_SOURCE = { uri: 'getagentstart.html' };
 
 function parseBlockHeightFromShortcode(shortCode) {
   if (shortCode === undefined || shortCode === null) {
