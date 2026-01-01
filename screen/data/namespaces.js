@@ -208,7 +208,7 @@ class Namespace extends React.Component {
 
   onInfo = () => {
     let namespace = this.props.data;
-    this.props.onInfo(namespace);
+    this.props.onInfo(namespace, this.props.isOther);
   }
 
   onSoldorOffer = () => {
@@ -1505,6 +1505,7 @@ class Namespaces extends React.Component {
       isLoading: true, isModalVisible: false,
       spinning: false,
       index: 0,
+      nsIsOther: false,
       routes: [
         { key: 'first', title: loc.namespaces.my_data },
         { key: 'second', title: loc.namespaces.others }
@@ -1522,11 +1523,12 @@ class Namespaces extends React.Component {
     });
   }
 
-  onNSInfo = (nsData) => {
+  onNSInfo = (nsData, isOther = false) => {
     this.setState({
       nsData: nsData,
       codeErr: null,
-      isModalVisible: true
+      isModalVisible: true,
+      nsIsOther: !!isOther,
     });
   }
 
@@ -1631,13 +1633,31 @@ class Namespaces extends React.Component {
               onPress={() => this.openTransfer(nsData)}
             />
           )}
+          {this.state.nsIsOther && (
+            <KevaButton
+              type='secondary'
+              caption={loc.namespaces.hide}
+              style={styles.transferAction}
+              onPress={() => this.onUnfollowFromModal(nsData)}
+            />
+          )}
         </View>
       </Modal>
     )
   }
 
   closeModal = () => {
-    this.setState({ codeErr: null, isModalVisible: false });
+    this.setState({ codeErr: null, isModalVisible: false, nsIsOther: false });
+  }
+
+  onUnfollowFromModal = (nsData) => {
+    const namespaceId = nsData?.id || nsData?.namespaceId;
+    if (!namespaceId) {
+      return;
+    }
+    this._namespaceId = namespaceId;
+    this.setState({ isModalVisible: false, nsIsOther: false });
+    this.onDeleteConfirm(0);
   }
 
   getPendingModal() {
