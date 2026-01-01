@@ -453,7 +453,7 @@ class Namespace extends React.Component {
         >
           <View style={styles.cardInner}>
             <View style={styles.headerRow}>
-              <View style={[styles.avatarWrapper, styles.neonAvatarWrapper]}>
+              <TouchableOpacity style={[styles.avatarWrapper, styles.neonAvatarWrapper]} onPress={this.onInfo}>
                 {shouldProbeAvatar && (
                   <Image
                     source={{ uri: avatarCandidateUri }}
@@ -463,7 +463,7 @@ class Namespace extends React.Component {
                   />
                 )}
                 {avatarContent}
-              </View>
+              </TouchableOpacity>
               <View style={styles.titleArea}>
                 <View style={styles.titleBlock}>
                   <Text
@@ -491,9 +491,6 @@ class Namespace extends React.Component {
                       <Icon name="ios-hourglass" size={20} style={[styles.actionIcon, styles.warnAction]} />
                     </TouchableOpacity>
                   }
-                  <TouchableOpacity onPress={this.onInfo}>
-                    <Icon name="ios-information-circle-outline" size={20} style={styles.actionIcon} />
-                  </TouchableOpacity>
                   { canDelete &&
                   <TouchableOpacity onPress={() => onDelete(namespace.id || namespace.namespaceId)}>
                     <Icon name="ios-remove-circle-outline" size={20} style={styles.actionIcon} />
