@@ -221,9 +221,9 @@ class Namespace extends React.Component {
     return (
       <Animated.View style={this._style}>
         <View style={styles.cardTitle} >
-          <View style={{padding: 5}}>
+          <TouchableOpacity style={{padding: 5}} onPress={this.onInfo}>
             <Avatar rounded size="medium" title={titleAvatar} containerStyle={{backgroundColor: colorAvatar}}/>
-          </View>
+          </TouchableOpacity>
           <View style={{ flex: 1, justifyContent: 'space-between', paddingHorizontal: 7, paddingTop: 10 }}>
             <View style={{ flex: 1 }} >
               <Text style={[styles.cardTitleText, isForSale && {color: KevaColors.okColor}]} numberOfLines={1} ellipsizeMode="tail">{displayNameWithShortcode}</Text>
@@ -238,9 +238,6 @@ class Namespace extends React.Component {
                   <Icon name="ios-hourglass" size={20} style={[styles.actionIcon, {color: KevaColors.warnColor}]} />
                 </TouchableOpacity>
               }
-              <TouchableOpacity onPress={this.onInfo}>
-                <Icon name="ios-information-circle-outline" size={20} style={styles.actionIcon} />
-              </TouchableOpacity>
               { canDelete &&
               <TouchableOpacity onPress={() => onDelete(namespace.id || namespace.namespaceId)}>
                 <Icon name="ios-remove-circle-outline" size={20} style={styles.actionIcon} />
