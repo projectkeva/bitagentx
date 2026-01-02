@@ -1466,7 +1466,6 @@ class OtherNamespaces extends React.Component {
                   data={data}
                   active={active}
                   navigation={navigation}
-                  canDelete={true}
                   isOther={true}
                   namespaceList={namespaceList}
                   canChat={true}
