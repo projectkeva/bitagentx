@@ -1532,6 +1532,20 @@ class Namespaces extends React.Component {
     });
   }
 
+  unfollowNamespace = async namespaceId => {
+    const { dispatch } = this.props;
+    if (!namespaceId) {
+      return;
+    }
+    LayoutAnimation.configureNext({
+      duration: 300,
+      update: { type: LayoutAnimation.Types.easeInEaseOut },
+    });
+    dispatch(deleteOtherNamespace(namespaceId));
+    dispatch(setKeyValueList(namespaceId));
+    await removeConversationMetadataForPeer(namespaceId);
+  }
+
   openTransfer = (namespace) => {
     const { navigation } = this.props;
     if (!navigation || !namespace) {
@@ -1650,14 +1664,13 @@ class Namespaces extends React.Component {
     this.setState({ codeErr: null, isModalVisible: false, nsIsOther: false });
   }
 
-  onUnfollowFromModal = (nsData) => {
+  onUnfollowFromModal = async nsData => {
     const namespaceId = nsData?.id || nsData?.namespaceId;
     if (!namespaceId) {
       return;
     }
-    this._namespaceId = namespaceId;
     this.setState({ isModalVisible: false, nsIsOther: false });
-    this.onDeleteConfirm(0);
+    await this.unfollowNamespace(namespaceId);
   }
 
   getPendingModal() {
