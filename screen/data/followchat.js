@@ -23,7 +23,7 @@ import { BlueNavigationStyle } from '../../BlueComponents';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, showStatus, stringToColor, timeConverter, toastError } from '../../util';
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
-import { getHashtagScriptHash, getNamespaceScriptHash, replyKeyValue, toScriptHash } from '../../class/keva-ops';
+import { decodeBase64, getHashtagScriptHash, getNamespaceScriptHash, replyKeyValue, toScriptHash } from '../../class/keva-ops';
 import ActionSheet from '../ActionSheet';
 import {
   CHAT_DIR,
@@ -68,6 +68,7 @@ class FollowChat extends React.Component {
     this.didInitialScroll = false;
     this.shouldScrollToEnd = false;
     this.conversationId = null;
+    this.welcomeCheckedFor = null;
   }
 
   static navigationOptions = ({ navigation }) => {
@@ -166,11 +167,36 @@ class FollowChat extends React.Component {
       () => {
         this.scrollToEnd(false);
         this.syncFromChain({ reset: true });
+        this.maybeSendWelcomeMessage();
         if (!this.state.replyFromNamespaceId) {
           this.autoPickNamespaceForRead();
         }
-        },
+      },
     );
+  };
+
+  decodeKeyValueEntry = kv => {
+    if (!kv) {
+      return kv;
+    }
+    let key = kv.key;
+    let value = kv.value;
+
+    try {
+      key = kv.key ? decodeBase64(kv.key) : kv.key;
+    } catch (error) {
+      key = kv.key;
+    }
+
+    if (value) {
+      try {
+        value = b64decode(value);
+      } catch (error) {
+        value = kv.value;
+      }
+    }
+
+    return { ...kv, key, value };
   };
 
   getChatFilePath = conversationId => `${CHAT_DIR}/${conversationId || 'default'}.json`;
@@ -274,6 +300,7 @@ class FollowChat extends React.Component {
       () => {
         this.scrollToEnd(false);
         this.syncFromChain({ reset: true });
+        this.maybeSendWelcomeMessage();
       },
     );
   };
@@ -315,6 +342,77 @@ class FollowChat extends React.Component {
       visibleCount: PAGE_SIZE,
       chatOldestCursor: -1,
     });
+  };
+
+  hasMessageWithText = text => {
+    const normalized = (text || '').trim();
+    if (!normalized) {
+      return true;
+    }
+    return this.state.allMessages.some(message => (message?.text || '').trim() === normalized);
+  };
+
+  fetchPeerWelcomeValue = async peerNamespaceId => {
+    if (!peerNamespaceId) {
+      return null;
+    }
+
+    const { namespaceList, otherNamespaceList } = this.props;
+    const peerNamespace =
+      namespaceList?.namespaces?.[peerNamespaceId] || otherNamespaceList?.namespaces?.[peerNamespaceId] || {};
+    const scriptHash = peerNamespace.rootAddress
+      ? toScriptHash(peerNamespace.rootAddress)
+      : getNamespaceScriptHash(peerNamespaceId);
+
+    try {
+      await BlueElectrum.ping();
+      const response = await this.withTimeout(
+        BlueElectrum.blockchainKeva_getKeyValues(scriptHash, -1),
+        8000,
+      );
+      const keyvalues = Array.isArray(response) ? response : response?.keyvalues || [];
+      if (!keyvalues.length) {
+        return null;
+      }
+
+      const welcomeEntry = keyvalues
+        .map(this.decodeKeyValueEntry)
+        .reverse()
+        .find(entry => entry?.key === 'welcome' && entry.value);
+
+      if (!welcomeEntry) {
+        return null;
+      }
+
+      const parsedValue = this.parseEnvelope(welcomeEntry.value);
+      const welcomeText = typeof parsedValue === 'string'
+        ? parsedValue.trim()
+        : String(parsedValue || '').trim();
+
+      return welcomeText || null;
+    } catch (error) {
+      console.warn('FollowChat: failed to load welcome message', error);
+      return null;
+    }
+  };
+
+  maybeSendWelcomeMessage = async () => {
+    const { peerNamespaceId } = this.state;
+    const conversationId = this.conversationId;
+
+    if (!peerNamespaceId || !conversationId || this.welcomeCheckedFor === conversationId) {
+      return;
+    }
+
+    const welcomeText = await this.fetchPeerWelcomeValue(peerNamespaceId);
+
+    if (!welcomeText || this.hasMessageWithText(welcomeText)) {
+      this.welcomeCheckedFor = conversationId;
+      return;
+    }
+
+    this.appendMessage(this.buildMessage(welcomeText, 'peer', { direction: 'in' }));
+    this.welcomeCheckedFor = conversationId;
   };
 
   openNamespaceModal = () => {
