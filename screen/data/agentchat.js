@@ -639,7 +639,7 @@ class AgentChat extends React.Component {
         throw new Error(result.message || 'Broadcast failed');
       }
       await BlueApp.saveToDisk();
-      this.replyFromAgent('Saved welcome message to your agent space.');
+      this.replyFromAgent('Welcome message anchored on-chain and stored permanently.');
     } catch (error) {
       console.warn('AgentChat: failed to save welcome message', error);
       this.replyFromAgent('Failed to save welcome message.');
