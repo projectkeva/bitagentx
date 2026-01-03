@@ -3,6 +3,18 @@ import RNFS from 'react-native-fs';
 export const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/follow_chats`;
 const META_FILE = `${CHAT_DIR}/metadata.json`;
 
+const parseConversationIdFromName = name => {
+  if (!name || typeof name !== 'string') {
+    return null;
+  }
+  const cleaned = name.replace(/\.json$/, '');
+  const [myNamespaceId, peerNamespaceId] = cleaned.split('__');
+  if (!myNamespaceId || !peerNamespaceId) {
+    return null;
+  }
+  return { myNamespaceId, peerNamespaceId };
+};
+
 export const buildConversationId = (myNamespaceId, peerNamespaceId) => {
   const safeMine = myNamespaceId || 'me';
   const safePeer = peerNamespaceId || 'peer';
@@ -101,5 +113,81 @@ export const removeConversationMetadataForPeer = async peerNamespaceId => {
   });
   if (changed) {
     await writeMetadataMap(map);
+  }
+  await removeChatHistoryForPeer(peerNamespaceId);
+};
+
+export const findLatestConversationForPeer = async peerNamespaceId => {
+  if (!peerNamespaceId) {
+    return null;
+  }
+
+  try {
+    const exists = await RNFS.exists(CHAT_DIR);
+    if (!exists) {
+      return null;
+    }
+
+    const entries = await RNFS.readDir(CHAT_DIR);
+    const normalizedPeer = String(peerNamespaceId);
+    let latest = null;
+
+    for (const entry of entries) {
+      if (!entry?.isFile() || !entry.name) {
+        continue;
+      }
+      const parsed = parseConversationIdFromName(entry.name);
+      if (!parsed || parsed.peerNamespaceId !== normalizedPeer) {
+        continue;
+      }
+      if (!parsed.myNamespaceId) {
+        continue;
+      }
+      if (!latest || (entry.mtime && entry.mtime > latest.mtime)) {
+        latest = {
+          conversationId: `${parsed.myNamespaceId}__${parsed.peerNamespaceId}`,
+          myNamespaceId: parsed.myNamespaceId,
+          mtime: entry.mtime,
+        };
+      }
+    }
+
+    if (latest) {
+      return { conversationId: latest.conversationId, myNamespaceId: latest.myNamespaceId };
+    }
+  } catch (error) {
+    console.warn('Failed to find local follow chat history', error);
+  }
+
+  return null;
+};
+
+export const removeChatHistoryForPeer = async peerNamespaceId => {
+  if (!peerNamespaceId) {
+    return;
+  }
+
+  try {
+    const exists = await RNFS.exists(CHAT_DIR);
+    if (!exists) {
+      return;
+    }
+    const entries = await RNFS.readDir(CHAT_DIR);
+    const normalizedPeer = String(peerNamespaceId);
+    for (const entry of entries) {
+      if (!entry?.isFile() || !entry.name) {
+        continue;
+      }
+      const parsed = parseConversationIdFromName(entry.name);
+      if (parsed?.peerNamespaceId === normalizedPeer) {
+        try {
+          await RNFS.unlink(entry.path);
+        } catch (err) {
+          console.warn('Failed to remove follow chat history file', entry.path, err);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to clear follow chat history for peer', error);
   }
 };
