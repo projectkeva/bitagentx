@@ -1349,11 +1349,6 @@ loadOlderFromChain = async () => {
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
           <View style={styles.chatContainer}>
-            {mode === 'send_only' && (
-              <View style={styles.oneWayBanner}>
-                <Text style={styles.oneWayText}>One-way delivery</Text>
-              </View>
-            )}
             {needsBinding && (
               <View style={styles.bindContainer}>
                 <Text style={styles.bindTitle}>Select a space to reply</Text>
@@ -1501,21 +1496,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 16,
     paddingTop: 16,
-  },
-  oneWayBanner: {
-    alignSelf: 'flex-start',
-    marginBottom: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#1f2a44',
-    backgroundColor: '#0f172a',
-  },
-  oneWayText: {
-    color: '#fbbf24',
-    fontSize: 12,
-    fontWeight: '600',
   },
   bindContainer: {
     backgroundColor: '#0f172a',
