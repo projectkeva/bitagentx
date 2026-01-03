@@ -502,6 +502,9 @@
 const timelineEl = document.getElementById('timeline');
 const STATUS_ID = 'status';
 const BLOCK_INTERVAL_MS = 2 * 60 * 1000;
+const DEFAULT_REFERENCE_BLOCK_HEIGHT = 1500000;
+const DEFAULT_REFERENCE_BLOCK_TIMESTAMP = 1711929600; // 2024-04-01 00:00:00 UTC
+const DEFAULT_REFERENCE_BLOCK_LABEL = 'Reference snapshot';
 const GETAGENTS_NAMESPACE_NAME = 'Agent';
 const NAMESPACE_CLICK_THROTTLE_MS = 1000;
 const NAMESPACE_BUTTON_BUSY_LABEL = 'Creating…';
@@ -635,6 +638,26 @@ function renderCachedTimeline() {
     console.error('Get Agents: failed to render cached timeline', error);
     return false;
   }
+}
+
+function renderReferenceTimeline() {
+  try {
+    applyTimelineData(DEFAULT_REFERENCE_BLOCK_HEIGHT, DEFAULT_REFERENCE_BLOCK_TIMESTAMP);
+    markTimelineReady();
+    const syncDate = new Date(DEFAULT_REFERENCE_BLOCK_TIMESTAMP * 1000);
+    addOfflineNotice(syncDate, DEFAULT_REFERENCE_BLOCK_LABEL);
+    return true;
+  } catch (error) {
+    console.error('Get Agents: failed to render reference timeline', error);
+    return false;
+  }
+}
+
+function renderOfflineTimeline() {
+  if (renderCachedTimeline()) {
+    return true;
+  }
+  return renderReferenceTimeline();
 }
 
 function getParentReactNativeBridge() {
@@ -1889,8 +1912,6 @@ function requestTimelineFromNative() {
     return;
   }
 
-  showStatus('Loading block data via Kevacoin Electrum service…');
-  appendBootLine('NET> Awaiting Electrum handshake from Kevacoin app…');
   try {
     const message = JSON.stringify({ type: 'getagents_latest_block_request' });
     let delivered = false;
@@ -1905,20 +1926,20 @@ function requestTimelineFromNative() {
       throw new Error('Native bridge unavailable');
     }
     clearNativeTimeout();
-    nativeRequestTimeoutId = setTimeout(() => {
-      nativeRequestTimeoutId = null;
-      if (!hasRenderedTimeline) {
-        console.warn('Get Agents Electrum bridge timed out');
-        const recovered = renderCachedTimeline();
-        if (!recovered) {
-          failBootOverlay('Electrum bridge timeout. Please reopen Get Agents.');
-          showStatus('Electrum bridge timeout. Please reopen Get Agents.', true);
+      nativeRequestTimeoutId = setTimeout(() => {
+        nativeRequestTimeoutId = null;
+        if (!hasRenderedTimeline) {
+          console.warn('Get Agents Electrum bridge timed out');
+          const recovered = renderOfflineTimeline();
+          if (!recovered) {
+            failBootOverlay('Electrum bridge timeout. Please reopen Get Agents.');
+            showStatus('Electrum bridge timeout. Please reopen Get Agents.', true);
+          }
         }
-      }
     }, NATIVE_TIMEOUT_MS);
   } catch (error) {
     console.error('Failed to request Electrum data from native bridge', error);
-    const recovered = renderCachedTimeline();
+    const recovered = renderOfflineTimeline();
     if (!recovered) {
       failBootOverlay('Unable to reach Kevacoin app bridge.');
       showStatus('Unable to load block data via native Electrum service.', true);
@@ -1927,11 +1948,14 @@ function requestTimelineFromNative() {
 }
 
 function initializeTimeline() {
+  const hasOfflineView = renderOfflineTimeline();
   if (usesNativeBridge) {
     requestTimelineFromNative();
   } else {
     failBootOverlay('Native bridge offline. Launch via Kevacoin app.');
-    showStatus('Get Agents requires the Kevacoin app.', true);
+    if (!hasOfflineView) {
+      showStatus('Get Agents requires the Kevacoin app.', true);
+    }
   }
 }
 
