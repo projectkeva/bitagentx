@@ -29,6 +29,7 @@ import {
   CHAT_DIR,
   buildConversationId,
   ensureChatStorage,
+  findLatestConversationForPeer,
   listConversationMetadataForPeer,
   setConversationMetadata,
 } from './followChatStorage';
@@ -125,14 +126,23 @@ class FollowChat extends React.Component {
     const peerNamespaceId = params.peerNamespaceId || null;
     const peerShortCode = params.peerShortCode || params.shortCode || null;
     const mode = params.mode === 'send_only' ? 'send_only' : 'mutual';
+    await ensureChatStorage();
     const boundEntries = peerNamespaceId ? await listConversationMetadataForPeer(peerNamespaceId) : [];
-    const boundNamespaceIds = boundEntries
+    let boundNamespaceIds = boundEntries
       .map(entry => entry.replyFromNamespaceId)
       .filter(Boolean);
-    const replyFromNamespaceId =
+    let replyFromNamespaceId =
       params.replyFromNamespaceId || (boundNamespaceIds.length === 1 ? boundNamespaceIds[0] : null);
+    if (!replyFromNamespaceId && peerNamespaceId) {
+      const recent = await findLatestConversationForPeer(peerNamespaceId);
+      if (recent?.myNamespaceId) {
+        replyFromNamespaceId = recent.myNamespaceId;
+        if (!boundNamespaceIds.includes(recent.myNamespaceId)) {
+          boundNamespaceIds = [recent.myNamespaceId, ...boundNamespaceIds];
+        }
+      }
+    }
     const conversationId = replyFromNamespaceId ? buildConversationId(replyFromNamespaceId, peerNamespaceId) : null;
-    await ensureChatStorage();
     const history = conversationId ? await this.readHistory(conversationId) : [];
     if (!this._isMounted) {
       return;
@@ -439,20 +449,23 @@ class FollowChat extends React.Component {
     this.setState({ inputValue: '' });
     try {
       await this.sendOnChain(text);
-      const { pendingReplyFromNamespaceId, replyFromNamespaceId, peerNamespaceId, availableBoundNamespaceIds } = this.state;
-      if (!replyFromNamespaceId && pendingReplyFromNamespaceId && peerNamespaceId) {
-        const conversationId = buildConversationId(pendingReplyFromNamespaceId, peerNamespaceId);
+      const { peerNamespaceId } = this.state;
+      const fromNamespaceId = activeNamespaceId;
+      if (peerNamespaceId && fromNamespaceId) {
+        const conversationId = buildConversationId(fromNamespaceId, peerNamespaceId);
         await setConversationMetadata(conversationId, {
           peerNamespaceId,
-          replyFromNamespaceId: pendingReplyFromNamespaceId,
+          replyFromNamespaceId: fromNamespaceId,
           isMutual: true,
           boundAt: Date.now(),
         });
-        this.setState({
-          replyFromNamespaceId: pendingReplyFromNamespaceId,
+        this.setState(prevState => ({
+          replyFromNamespaceId: fromNamespaceId,
           pendingReplyFromNamespaceId: null,
-          availableBoundNamespaceIds: Array.from(new Set([...availableBoundNamespaceIds, pendingReplyFromNamespaceId])),
-        });
+          availableBoundNamespaceIds: Array.from(
+            new Set([...(prevState.availableBoundNamespaceIds || []), fromNamespaceId]),
+          ),
+        }));
       }
       await this.syncFromChain();
     } catch (error) {
