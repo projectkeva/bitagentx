@@ -1949,13 +1949,24 @@ function requestTimelineFromNative() {
 
 function initializeTimeline() {
   const hasOfflineView = renderOfflineTimeline();
-  if (usesNativeBridge) {
-    requestTimelineFromNative();
-  } else {
-    failBootOverlay('Native bridge offline. Launch via Kevacoin app.');
-    if (!hasOfflineView) {
-      showStatus('Get Agents requires the Kevacoin app.', true);
+  const startNativeRequest = () => {
+    if (usesNativeBridge) {
+      requestTimelineFromNative();
+    } else {
+      failBootOverlay('Native bridge offline. Launch via Kevacoin app.');
+      if (!hasOfflineView) {
+        showStatus('Get Agents requires the Kevacoin app.', true);
+      }
     }
+  };
+
+  // Defer Electrum bridge work until the offline timeline is painted so the
+  // transition from the boot animation to the main view stays smooth.
+  if (hasOfflineView && typeof window !== 'undefined') {
+    const schedule = window.requestAnimationFrame || window.setTimeout;
+    schedule(() => setTimeout(startNativeRequest, 0));
+  } else {
+    startNativeRequest();
   }
 }
 
