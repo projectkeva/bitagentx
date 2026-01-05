@@ -1330,6 +1330,7 @@ class KeyValues extends React.Component {
     }
     const avatarCandidateUri = selectAvatarCandidateUri(avatarCandidateUris, avatarFailedUris, generatedAvatarUri);
     const shouldProbeAvatar = !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
+    const canEditProfile = !isOther && !this.state.price;
 
     let listHeader = null;
     if (mergeList) {
@@ -1359,15 +1360,34 @@ class KeyValues extends React.Component {
         <View style={styles.container}>
           <View style={[styles.keyContainer, alphaBackgroundColor ? { backgroundColor: alphaBackgroundColor, borderColor: alphaBackgroundColor } : null]}>
             <View style={styles.avatarWrapper}>
-              {shouldProbeAvatar && (
-                <Image
-                  source={{ uri: avatarCandidateUri }}
-                  style={styles.avatarProbe}
-                  onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
-                  onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
-                />
+              {canEditProfile ? (
+                <TouchableOpacity
+                  onPress={() => this.onEditProfile(namespaceId, namespaceInfo[namespaceId])}
+                  activeOpacity={0.7}
+                >
+                  {shouldProbeAvatar && (
+                    <Image
+                      source={{ uri: avatarCandidateUri }}
+                      style={styles.avatarProbe}
+                      onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
+                      onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
+                    />
+                  )}
+                  {avatarContent}
+                </TouchableOpacity>
+              ) : (
+                <>
+                  {shouldProbeAvatar && (
+                    <Image
+                      source={{ uri: avatarCandidateUri }}
+                      style={styles.avatarProbe}
+                      onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
+                      onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
+                    />
+                  )}
+                  {avatarContent}
+                </>
               )}
-              {avatarContent}
             </View>
             <View style={{paddingRight: 10, flexShrink: 1}}>
               <View style={{flexDirection: 'row', marginBottom: 5}}>
