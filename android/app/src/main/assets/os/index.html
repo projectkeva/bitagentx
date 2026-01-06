@@ -295,12 +295,13 @@ window.addEventListener('load', updateDesktopScale);
 <body>
 <div class="main-window">
   <div class="desktop-area">
-    <div class="desktop-icons" id="icons">
-      <div class="icon" data-app="keva"><img src="theme/retro/icons/keva.png"/><span>Node</span></div>
-      <div class="icon" data-app="wallet"><img src="theme/retro/icons/wallet.png"/><span>Wallet</span></div>
-      <div class="icon" data-app="message"><img src="theme/retro/icons/gm.png"/><span>Message</span></div>
-      <div class="icon" data-app="download"><img src="theme/retro/icons/download.png"/><span>Download</span></div>
-      <div class="icon" data-app="id"><img src="theme/retro/icons/id.png"/><span>Agents ID</span></div>
+      <div class="desktop-icons" id="icons">
+        <div class="icon" data-app="keva"><img src="theme/retro/icons/keva.png"/><span>Node</span></div>
+        <div class="icon" data-app="wallet"><img src="theme/retro/icons/wallet.png"/><span>Wallet</span></div>
+        <div class="icon" data-app="chat"><img src="theme/retro/icons/chat.png"/><span>Chat</span></div>
+        <div class="icon" data-app="message"><img src="theme/retro/icons/gm.png"/><span>Message</span></div>
+        <div class="icon" data-app="download"><img src="theme/retro/icons/download.png"/><span>Download</span></div>
+        <div class="icon" data-app="id"><img src="theme/retro/icons/id.png"/><span>Agents ID</span></div>
       <div class="icon" data-app="getagents"><img src="theme/retro/icons/getagents.gif"/><span>Get Agents</span></div>
       <div class="icon" data-app="alpha"><img src="theme/retro/icons/alpha.png"/><span>Alpha</span></div>
       <div class="icon" data-app="setting"><img src="theme/retro/icons/setting.png"/><span>Setting</span></div>
@@ -369,6 +370,7 @@ window.addEventListener('load', updateDesktopScale);
           <label><input type="checkbox" data-app="monero" data-visibility-toggle> Monero</label>
           <label><input type="checkbox" data-app="kevacoin" data-visibility-toggle> Kevacoin</label>
           <label><input type="checkbox" data-app="ravencoin" data-visibility-toggle> Ravencoin</label>
+          <label><input type="checkbox" data-app="chat" data-visibility-toggle checked> Chat</label>
           <label><input type="checkbox" data-app="message" data-visibility-toggle checked> Message</label>
         </form>
         <div class="custom-links-section">
@@ -393,6 +395,7 @@ window.addEventListener('load', updateDesktopScale);
         <label><input type="checkbox" data-app="readme" data-visibility-toggle checked> Read mee！</label>
         <label><input type="checkbox" data-app="download" data-visibility-toggle checked> Download</label>
         <label><input type="checkbox" data-app="wallet" data-visibility-toggle checked> Wallet</label>
+        <label><input type="checkbox" data-app="chat" data-visibility-toggle checked> Chat</label>
         <label><input type="checkbox" data-app="message" data-visibility-toggle checked> Message</label>
       </form>
     </div>
@@ -481,6 +484,14 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
         window.ReactNativeWebView.postMessage('open_guest_following');
       } else {
         alert('Guest messages are only available inside the Kevacoin app.');
+      }
+      return;
+    }
+    if(app==='chat'){
+      if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
+        window.ReactNativeWebView.postMessage('open_following');
+      } else {
+        alert('Files are only available inside the Kevacoin app.');
       }
       return;
     }
@@ -650,8 +661,8 @@ window.addEventListener('load', () => {
     document.documentElement.lang=lang;
     langBtn.textContent=(lang==='en')?'中':'EN';
     const map={
-      en:{keva:'Node',id:'Agents ID',getagents:'Get Agents',alpha:'Alpha',readme:'Read mee！',download:'Download',message:'Message',startBtn:'Start'},
-      zh:{keva:'网络节点',id:'代理人 ID',getagents:'获取代理',alpha:'Alpha',readme:'读我！',download:'下载文件夹',message:'消息',startBtn:'开始'}
+      en:{keva:'Node',id:'Agents ID',getagents:'Get Agents',alpha:'Alpha',readme:'Read mee！',download:'Download',message:'Message',chat:'Chat',startBtn:'Start'},
+      zh:{keva:'网络节点',id:'代理人 ID',getagents:'获取代理',alpha:'Alpha',readme:'读我！',download:'下载文件夹',message:'消息',chat:'聊天',startBtn:'开始'}
     };
     for(const k in map[lang]){
       if(k==='startBtn')continue;
