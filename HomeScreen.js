@@ -20,6 +20,9 @@ export default function HomeScreen() {
       } else if (msg === 'open_agents' || msg === 'open_getagents') {
         navigation.navigate('GetAgents');
         return;
+      } else if (msg === 'open_guest_following') {
+        navigation.navigate('Namespaces', { initialTab: 'following', openGuest: true });
+        return;
       } else if (msg === 'open_readme') {
         navigation.navigate('Readme');
         return;

@@ -1514,6 +1514,8 @@ class Namespaces extends React.Component {
 
   async componentDidMount() {
     const { dispatch, reactions } = this.props;
+    this.focusListener = this.props.navigation.addListener('willFocus', this.handleNavigationParams);
+    this.handleNavigationParams();
     InteractionManager.runAfterInteractions(async () => {
       if (!reactions.populated) {
         const allReactions = populateReactions();
@@ -1521,6 +1523,24 @@ class Namespaces extends React.Component {
       }
     });
   }
+
+  componentWillUnmount() {
+    if (this.focusListener && this.focusListener.remove) {
+      this.focusListener.remove();
+    }
+  }
+
+  handleNavigationParams = () => {
+    const { navigation } = this.props;
+    const targetTab = navigation.getParam('initialTab');
+    if (targetTab === 'following' && this.state.index !== 1) {
+      this.setState({ index: 1 });
+    }
+    if (navigation.getParam('openGuest')) {
+      navigation.setParams({ openGuest: false });
+      navigation.push('GuestChat', { mode: 'guest' });
+    }
+  };
 
   onNSInfo = (nsData, isOther = false) => {
     this.setState({
