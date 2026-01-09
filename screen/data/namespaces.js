@@ -2179,7 +2179,7 @@ var styles = StyleSheet.create({
     flexWrap: 'wrap',
     paddingHorizontal: 6,
     paddingBottom: 2,
-    gap: 8,
+    gap: 12,
   },
   spaceActionButton: {
     backgroundColor: 'rgba(125, 211, 252, 0.15)',
