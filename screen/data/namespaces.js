@@ -1554,6 +1554,12 @@ class Namespaces extends React.Component {
     if (targetTab === 'following' && this.state.index !== 1) {
       this.setState({ index: 1 });
     }
+    if (targetTab === 'me' && this.state.index !== 0) {
+      this.setState({ index: 0 });
+    }
+    if (targetTab) {
+      navigation.setParams({ initialTab: null });
+    }
     if (navigation.getParam('openGuest')) {
       navigation.setParams({ openGuest: false });
       navigation.push('GuestChat', { mode: 'guest' });
