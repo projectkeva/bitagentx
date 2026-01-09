@@ -2178,8 +2178,8 @@ var styles = StyleSheet.create({
     alignItems: 'center',
     flexWrap: 'wrap',
     paddingHorizontal: 6,
+    marginTop: 8,
     paddingBottom: 2,
-    gap: 12,
   },
   spaceActionButton: {
     backgroundColor: 'rgba(125, 211, 252, 0.15)',
@@ -2188,6 +2188,8 @@ var styles = StyleSheet.create({
     borderColor: 'rgba(125, 211, 252, 0.6)',
     paddingHorizontal: 10,
     paddingVertical: 4,
+    marginRight: 8,
+    marginBottom: 8,
   },
   spaceActionButtonDisabled: {
     backgroundColor: 'rgba(125, 211, 252, 0.08)',
