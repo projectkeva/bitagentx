@@ -143,6 +143,7 @@ class Namespace extends React.Component {
       avatarCandidateRequestId: 0,
       avatarFailedUris: [],
       generatedAvatarUri: null,
+      showMoreActions: false,
     };
 
     this._avatarRequestId = 0;
@@ -260,6 +261,10 @@ class Namespace extends React.Component {
   onWait = () => {
     const {data, onWait, refresh} = this.props;
     onWait(data.id, data.displayName, refresh);
+  }
+
+  toggleMoreActions = () => {
+    this.setState(prevState => ({ showMoreActions: !prevState.showMoreActions }));
   }
 
   getAvatar = name => {
@@ -421,6 +426,7 @@ class Namespace extends React.Component {
     const levelLabelText = Number.isFinite(shortCodeLevel)
       ? `[ Lv.${shortCodeLevel} ]${alphaLabelText ? ` ${alphaLabelText}` : ''}`
       : null;
+    const isMyCard = !this.props.isOther;
     const canChat = this.props.canChat;
     const {
       avatarCandidateUris,
@@ -442,6 +448,22 @@ class Namespace extends React.Component {
         <Text style={styles.fallbackAvatarLabel}>{titleAvatar}</Text>
       </View>
     );
+    const renderActionButton = ({ label, disabled, onPress }) => {
+      if (disabled) {
+        return (
+          <View key={label} style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
+            <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>{label}</Text>
+          </View>
+        );
+      }
+
+      return (
+        <TouchableOpacity key={label} style={styles.spaceActionButton} onPress={onPress}>
+          <Text style={styles.spaceActionText}>{label}</Text>
+        </TouchableOpacity>
+      );
+    };
+    const moreLabel = this.state.showMoreActions ? 'Less' : 'More';
 
     return (
       <Animated.View style={[this._style, styles.cardContainer]}>
@@ -505,29 +527,59 @@ class Namespace extends React.Component {
               end={{ x: 1, y: 0 }}
               style={styles.accentLine}
             />
-            <View style={styles.spaceActionRow}>
-              <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-                <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Room</Text>
-              </View>
-              {canChat ? (
-                <TouchableOpacity style={styles.spaceActionButton} onPress={this.onChat}>
-                  <Text style={styles.spaceActionText}>Chat</Text>
-                </TouchableOpacity>
-              ) : (
-                <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-                  <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Chat</Text>
+            {isMyCard ? (
+              <View style={styles.spaceActionGrid}>
+                <View style={styles.spaceActionRowMulti}>
+                  {renderActionButton({ label: 'Story', disabled: true })}
+                  {renderActionButton({ label: 'Inbox', disabled: true })}
+                  {renderActionButton({ label: 'Chat', disabled: !canChat, onPress: this.onChat })}
+                  {renderActionButton({ label: 'Task', disabled: true })}
+                  {renderActionButton({ label: moreLabel, disabled: false, onPress: this.toggleMoreActions })}
                 </View>
-              )}
-              <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-                <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Task</Text>
+                {this.state.showMoreActions && (
+                  <View style={styles.spaceActionRowMulti}>
+                    {renderActionButton({ label: 'Profile', disabled: true })}
+                    {renderActionButton({ label: 'Role', disabled: true })}
+                    {renderActionButton({ label: 'Room', disabled: true })}
+                    {renderActionButton({ label: 'DNA', disabled: true })}
+                    {renderActionButton({ label: 'Wallet', disabled: true })}
+                  </View>
+                )}
+                {this.state.showMoreActions && (
+                  <View style={styles.spaceActionRowMulti}>
+                    {renderActionButton({ label: 'Market', disabled: true })}
+                    {renderActionButton({ label: 'Asset', disabled: true })}
+                    {renderActionButton({ label: 'Game', disabled: true })}
+                    {renderActionButton({ label: 'Link', disabled: true })}
+                    {renderActionButton({ label: 'Log', disabled: true })}
+                  </View>
+                )}
               </View>
-              <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-                <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Game</Text>
+            ) : (
+              <View style={styles.spaceActionRow}>
+                <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
+                  <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Room</Text>
+                </View>
+                {canChat ? (
+                  <TouchableOpacity style={styles.spaceActionButton} onPress={this.onChat}>
+                    <Text style={styles.spaceActionText}>Chat</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
+                    <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Chat</Text>
+                  </View>
+                )}
+                <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
+                  <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Task</Text>
+                </View>
+                <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
+                  <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Game</Text>
+                </View>
+                <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
+                  <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Wallet</Text>
+                </View>
               </View>
-              <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-                <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Wallet</Text>
-              </View>
-            </View>
+            )}
           </View>
         </LinearGradient>
       </Animated.View>
@@ -2186,6 +2238,17 @@ var styles = StyleSheet.create({
     paddingHorizontal: 6,
     marginTop: 8,
     paddingBottom: 2,
+  },
+  spaceActionGrid: {
+    paddingHorizontal: 6,
+    marginTop: 8,
+    paddingBottom: 2,
+  },
+  spaceActionRowMulti: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+    marginBottom: 6,
   },
   spaceActionButton: {
     backgroundColor: 'rgba(125, 211, 252, 0.15)',
