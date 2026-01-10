@@ -466,7 +466,13 @@ class Namespace extends React.Component {
     const moreLabel = this.state.showMoreActions ? 'Less' : 'More';
 
     return (
-      <Animated.View style={[this._style, styles.cardContainer]}>
+      <Animated.View
+        style={[
+          this._style,
+          styles.cardContainer,
+          this.state.showMoreActions && styles.cardContainerExpanded,
+        ]}
+      >
         <LinearGradient
           colors={['#0b1224', '#0f162b', '#0b1224']}
           start={{ x: 0, y: 0 }}
@@ -1977,6 +1983,9 @@ var styles = StyleSheet.create({
   cardContainer: {
     marginHorizontal: 10,
     marginTop: 10,
+  },
+  cardContainerExpanded: {
+    marginBottom: 12,
   },
   neonCard: {
     borderRadius: 16,
