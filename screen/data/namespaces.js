@@ -470,6 +470,7 @@ class Namespace extends React.Component {
     };
     const showMoreActions = this.props.showMoreActions ?? this.state.showMoreActions;
     const moreLabel = showMoreActions ? 'Less' : 'More';
+    const cardZIndex = showMoreActions ? 999 : 0;
 
     return (
       <Animated.View
@@ -477,6 +478,7 @@ class Namespace extends React.Component {
           this._style,
           styles.cardContainer,
           showMoreActions && styles.cardContainerExpanded,
+          { zIndex: cardZIndex, elevation: cardZIndex },
         ]}
       >
         <LinearGradient
@@ -1054,13 +1056,9 @@ class MyNamespaces extends React.Component {
       update: { type: LayoutAnimation.Types.easeInEaseOut },
     });
     this.setState(prevState => {
-      const expandedNamespaces = { ...prevState.expandedNamespaces };
-      if (expandedNamespaces[namespaceId]) {
-        delete expandedNamespaces[namespaceId];
-      } else {
-        expandedNamespaces[namespaceId] = true;
-      }
-      return { expandedNamespaces };
+      const expandedNamespaces = prevState.expandedNamespaces || {};
+      const isOpen = !!expandedNamespaces[namespaceId];
+      return { expandedNamespaces: isOpen ? {} : { [namespaceId]: true } };
     });
   }
 
@@ -2017,9 +2015,14 @@ var styles = StyleSheet.create({
   cardContainer: {
     marginHorizontal: 10,
     marginTop: 10,
+    position: 'relative',
+    zIndex: 0,
+    elevation: 0,
   },
   cardContainerExpanded: {
     marginBottom: 12,
+    zIndex: 999,
+    elevation: 999,
   },
   neonCard: {
     borderRadius: 16,
