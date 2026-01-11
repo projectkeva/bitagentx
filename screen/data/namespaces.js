@@ -108,6 +108,8 @@ const computeAlphaValue = id => {
   }
 };
 
+const avatarUriCache = new Map();
+
 const selectAvatarCandidateUri = (candidateUris = [], failedUris = [], generatedUri = null) => {
   if (generatedUri) return null; 
   for (const candidate of candidateUris) {
@@ -155,6 +157,7 @@ class Namespace extends React.Component {
     this._avatarRequestId = 0;
     this._avatarHandle = null;
     this._isMounted = false;
+    this._avatarShortCode = null;
 
     this._active = new Animated.Value(0);
     this._style = {
@@ -294,6 +297,7 @@ class Namespace extends React.Component {
     }
 
     const shortCode = namespace && namespace.shortCode;
+    this._avatarShortCode = shortCode || null;
     if (!shortCode) {
       if (this._isMounted) {
         this.setState({
@@ -325,15 +329,20 @@ class Namespace extends React.Component {
         return;
       }
       this.setState(prevState => {
+        const cachedUri = avatarUriCache.get(shortCode);
+        const cachedIsValid = cachedUri && candidateUris.includes(cachedUri);
         const prevCandidateUris = prevState.avatarCandidateUris || [];
         const sameCandidates =
           prevCandidateUris.length === candidateUris.length &&
           prevCandidateUris.every((uri, idx) => uri === candidateUris[idx]);
+        const retainedGeneratedUri = sameCandidates
+          ? prevState.generatedAvatarUri || (cachedIsValid ? cachedUri : null)
+          : cachedIsValid ? cachedUri : null;
         return {
           avatarCandidateUris: candidateUris,
           avatarCandidateRequestId: requestId,
           avatarFailedUris: sameCandidates ? prevState.avatarFailedUris || [] : [],
-          generatedAvatarUri: sameCandidates ? prevState.generatedAvatarUri : null,
+          generatedAvatarUri: retainedGeneratedUri,
         };
       });
     };
@@ -353,6 +362,9 @@ class Namespace extends React.Component {
     if (!this._isMounted || requestId !== this._avatarRequestId) {
       return;
     }
+    if (this._avatarShortCode) {
+      avatarUriCache.set(this._avatarShortCode, uri);
+    }
     this.setState({
       generatedAvatarUri: uri,
       avatarFailedUris: [],
@@ -362,6 +374,9 @@ class Namespace extends React.Component {
   onAvatarLoadError = (uri, requestId) => {
     if (!this._isMounted || requestId !== this._avatarRequestId) {
       return;
+    }
+    if (this._avatarShortCode && avatarUriCache.get(this._avatarShortCode) === uri) {
+      avatarUriCache.delete(this._avatarShortCode);
     }
     this.setState(prevState => {
       const prevFailed = prevState.avatarFailedUris || [];
