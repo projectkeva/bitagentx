@@ -405,6 +405,7 @@ class AgentChat extends React.Component {
     this.loadingMore = false;
     this.didInitialScroll = false;
     this.shouldScrollToEnd = false;
+    this.hasAutoCommandRun = false;
   }
 
   static navigationOptions = ({ navigation }) => {
@@ -469,6 +470,7 @@ class AgentChat extends React.Component {
       () => {
         this.ensureIntroMessage();
         this.scrollToEnd(false);
+        this.runAutoCommand();
       },
     );
   };
@@ -605,6 +607,26 @@ class AgentChat extends React.Component {
     if (normalized === '/BLOCK') {
       await this.replyWithCurrentBlock();
     }
+  };
+
+  runAutoCommand = async () => {
+    if (this.hasAutoCommandRun) {
+      return;
+    }
+    const { navigation } = this.props;
+    const { autoCommand } = navigation?.state?.params || {};
+    if (!autoCommand) {
+      return;
+    }
+    const commandText = autoCommand.trim();
+    if (!commandText) {
+      return;
+    }
+    this.hasAutoCommandRun = true;
+    this.appendMessage(this.buildMessage(commandText, 'user'));
+    this.setState({ inputValue: '' });
+    await this.handleTriggers(commandText);
+    navigation?.setParams?.({ autoCommand: null });
   };
 
   handleWelcomeCommand = async rawValue => {

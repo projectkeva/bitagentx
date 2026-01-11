@@ -282,6 +282,8 @@ class Namespace extends React.Component {
     switch (label) {
       case 'Chat':
         return this.onChat?.();
+      case 'Story':
+        return this.onStory?.();
       default:
         return;
     }
@@ -390,7 +392,18 @@ class Namespace extends React.Component {
     });
   }
 
-  onChat = () => {
+  onStory = () => {
+    const { isOther } = this.props;
+    if (isOther) {
+      return;
+    }
+    if (!this.props.canChat) {
+      return;
+    }
+    this.onChat({ autoCommand: '/d' });
+  }
+
+  onChat = (options = {}) => {
     const { data, navigation, isMutual, isOther } = this.props;
     if (!navigation || typeof navigation.push !== 'function') {
       return;
@@ -399,6 +412,7 @@ class Namespace extends React.Component {
       return;
     }
     const namespaceId = data.id || data.namespaceId;
+    const { autoCommand } = options;
 
     if (!isOther) {
       navigation.push('AgentChat', {
@@ -412,6 +426,7 @@ class Namespace extends React.Component {
         desc: data.desc,
         addr: data.addr,
         profile: data.profile,
+        autoCommand,
       });
       return;
     }
@@ -566,7 +581,8 @@ class Namespace extends React.Component {
               <View style={styles.spaceActionGrid}>
                 <View style={styles.spaceActionRowMulti}>
                   {ACTION_PAGES[this.state.actionPageIndex].map(label => {
-                    const disabled = label !== 'Chat' ? true : !canChat;
+                    const isChatAction = label === 'Chat' || label === 'Story';
+                    const disabled = !isChatAction || !canChat;
                     const onPress = disabled ? undefined : () => this.onPressAction(label);
                     return renderActionButton({ label, disabled, onPress });
                   })}
