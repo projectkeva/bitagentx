@@ -264,6 +264,11 @@ class Namespace extends React.Component {
   }
 
   toggleMoreActions = () => {
+    const namespaceId = this.props.data?.id || this.props.data?.namespaceId;
+    if (this.props.onToggleMoreActions && namespaceId) {
+      this.props.onToggleMoreActions(namespaceId);
+      return;
+    }
     this.setState(prevState => ({ showMoreActions: !prevState.showMoreActions }));
   }
 
@@ -463,14 +468,15 @@ class Namespace extends React.Component {
         </TouchableOpacity>
       );
     };
-    const moreLabel = this.state.showMoreActions ? 'Less' : 'More';
+    const showMoreActions = this.props.showMoreActions ?? this.state.showMoreActions;
+    const moreLabel = showMoreActions ? 'Less' : 'More';
 
     return (
       <Animated.View
         style={[
           this._style,
           styles.cardContainer,
-          this.state.showMoreActions && styles.cardContainerExpanded,
+          showMoreActions && styles.cardContainerExpanded,
         ]}
       >
         <LinearGradient
@@ -542,7 +548,7 @@ class Namespace extends React.Component {
                   {renderActionButton({ label: 'Task', disabled: true })}
                   {renderActionButton({ label: moreLabel, disabled: false, onPress: this.toggleMoreActions })}
                 </View>
-                {this.state.showMoreActions && (
+                {showMoreActions && (
                   <View style={styles.spaceActionRowMulti}>
                     {renderActionButton({ label: 'Profile', disabled: true })}
                     {renderActionButton({ label: 'Role', disabled: true })}
@@ -551,7 +557,7 @@ class Namespace extends React.Component {
                     {renderActionButton({ label: 'Wallet', disabled: true })}
                   </View>
                 )}
-                {this.state.showMoreActions && (
+                {showMoreActions && (
                   <View style={styles.spaceActionRowMulti}>
                     {renderActionButton({ label: 'Market', disabled: true })}
                     {renderActionButton({ label: 'Asset', disabled: true })}
@@ -669,6 +675,7 @@ class MyNamespaces extends React.Component {
       inputMode: false,
       lockedFund: {},
       latestBlockHeight: undefined,
+      expandedNamespaces: {},
     };
   }
 
@@ -1041,11 +1048,36 @@ class MyNamespaces extends React.Component {
     });
   }
 
+  toggleNamespaceActions = (namespaceId) => {
+    LayoutAnimation.configureNext({
+      duration: 150,
+      update: { type: LayoutAnimation.Types.easeInEaseOut },
+    });
+    this.setState(prevState => {
+      const expandedNamespaces = { ...prevState.expandedNamespaces };
+      if (expandedNamespaces[namespaceId]) {
+        delete expandedNamespaces[namespaceId];
+      } else {
+        expandedNamespaces[namespaceId] = true;
+      }
+      return { expandedNamespaces };
+    });
+  }
+
   render() {
     const { navigation, namespaceList, onInfo, onWait } = this.props;
     const canAdd = this.state.nsName && this.state.nsName.length > 0;
     const inputMode = this.state.inputMode;
     const hasLockedFund = this.state.lockedAmount > 0;
+    const namespaceData = { ...namespaceList.namespaces };
+    Object.keys(this.state.expandedNamespaces).forEach(namespaceId => {
+      if (namespaceList.namespaces[namespaceId]) {
+        namespaceData[namespaceId] = {
+          ...namespaceList.namespaces[namespaceId],
+          showMoreActions: true,
+        };
+      }
+    });
     return (
       <View style={styles.container}>
         {this.getNSCreationModal()}
@@ -1100,7 +1132,7 @@ class MyNamespaces extends React.Component {
           <SortableListView
             style={styles.listStyle}
             contentContainerStyle={{paddingBottom: 400}}
-            data={namespaceList.namespaces}
+            data={namespaceData}
             order={namespaceList.order}
             onChangeOrder={this.onChangeOrder}
             refreshControl={
@@ -1119,6 +1151,8 @@ class MyNamespaces extends React.Component {
                   namespaceList={namespaceList}
                   myNamespaceId={namespaceList.order[0]}
                   canChat={true}
+                  showMoreActions={data.showMoreActions}
+                  onToggleMoreActions={this.toggleNamespaceActions}
                   key={key}
                 />
               );
