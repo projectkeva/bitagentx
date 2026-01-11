@@ -123,6 +123,12 @@ const GUEST_ORDER_STORAGE_KEY = 'guest_inbox_order_index';
 const TAG_DM_PREFIX = '#DM';
 const TAG_CHAT_PREFIX = '#CHAT';
 const TAG_GLOBAL_CHAT = '#chatxkeva';
+const ACTION_PAGES = [
+  ['Story', 'Inbox', 'Chat', 'Task'],
+  ['Profile', 'Role', 'Room', 'DNA'],
+  ['Wallet', 'Market', 'Asset', 'Game'],
+  ['Link', 'Log', 'Inbox', 'Task'],
+];
 
 const normalizeShortCode = shortCode => {
   if (shortCode === null || typeof shortCode === 'undefined') {
@@ -143,7 +149,7 @@ class Namespace extends React.Component {
       avatarCandidateRequestId: 0,
       avatarFailedUris: [],
       generatedAvatarUri: null,
-      showMoreActions: false,
+      actionPageIndex: 0,
     };
 
     this._avatarRequestId = 0;
@@ -263,13 +269,19 @@ class Namespace extends React.Component {
     onWait(data.id, data.displayName, refresh);
   }
 
-  toggleMoreActions = () => {
-    const namespaceId = this.props.data?.id || this.props.data?.namespaceId;
-    if (this.props.onToggleMoreActions && namespaceId) {
-      this.props.onToggleMoreActions(namespaceId);
-      return;
+  cycleActionPage = () => {
+    this.setState(prevState => ({
+      actionPageIndex: (prevState.actionPageIndex + 1) % ACTION_PAGES.length,
+    }));
+  }
+
+  onPressAction = label => {
+    switch (label) {
+      case 'Chat':
+        return this.onChat?.();
+      default:
+        return;
     }
-    this.setState(prevState => ({ showMoreActions: !prevState.showMoreActions }));
   }
 
   getAvatar = name => {
@@ -468,17 +480,11 @@ class Namespace extends React.Component {
         </TouchableOpacity>
       );
     };
-    const showMoreActions = this.props.showMoreActions ?? this.state.showMoreActions;
-    const moreLabel = showMoreActions ? 'Less' : 'More';
-    const cardZIndex = showMoreActions ? 999 : 0;
-
     return (
       <Animated.View
         style={[
           this._style,
           styles.cardContainer,
-          showMoreActions && styles.cardContainerExpanded,
-          { zIndex: cardZIndex, elevation: cardZIndex },
         ]}
       >
         <LinearGradient
@@ -544,30 +550,17 @@ class Namespace extends React.Component {
             {isMyCard ? (
               <View style={styles.spaceActionGrid}>
                 <View style={styles.spaceActionRowMulti}>
-                  {renderActionButton({ label: 'Story', disabled: true })}
-                  {renderActionButton({ label: 'Inbox', disabled: true })}
-                  {renderActionButton({ label: 'Chat', disabled: !canChat, onPress: this.onChat })}
-                  {renderActionButton({ label: 'Task', disabled: true })}
-                  {renderActionButton({ label: moreLabel, disabled: false, onPress: this.toggleMoreActions })}
+                  {ACTION_PAGES[this.state.actionPageIndex].map(label => {
+                    const disabled = label !== 'Chat' ? true : !canChat;
+                    const onPress = disabled ? undefined : () => this.onPressAction(label);
+                    return renderActionButton({ label, disabled, onPress });
+                  })}
+                  {renderActionButton({
+                    label: 'More',
+                    disabled: false,
+                    onPress: this.cycleActionPage,
+                  })}
                 </View>
-                {showMoreActions && (
-                  <View style={styles.spaceActionRowMulti}>
-                    {renderActionButton({ label: 'Profile', disabled: true })}
-                    {renderActionButton({ label: 'Role', disabled: true })}
-                    {renderActionButton({ label: 'Room', disabled: true })}
-                    {renderActionButton({ label: 'DNA', disabled: true })}
-                    {renderActionButton({ label: 'Wallet', disabled: true })}
-                  </View>
-                )}
-                {showMoreActions && (
-                  <View style={styles.spaceActionRowMulti}>
-                    {renderActionButton({ label: 'Market', disabled: true })}
-                    {renderActionButton({ label: 'Asset', disabled: true })}
-                    {renderActionButton({ label: 'Game', disabled: true })}
-                    {renderActionButton({ label: 'Link', disabled: true })}
-                    {renderActionButton({ label: 'Log', disabled: true })}
-                  </View>
-                )}
               </View>
             ) : (
               <View style={styles.spaceActionRow}>
@@ -677,7 +670,6 @@ class MyNamespaces extends React.Component {
       inputMode: false,
       lockedFund: {},
       latestBlockHeight: undefined,
-      expandedNamespaces: {},
     };
   }
 
@@ -1050,32 +1042,11 @@ class MyNamespaces extends React.Component {
     });
   }
 
-  toggleNamespaceActions = (namespaceId) => {
-    LayoutAnimation.configureNext({
-      duration: 150,
-      update: { type: LayoutAnimation.Types.easeInEaseOut },
-    });
-    this.setState(prevState => {
-      const expandedNamespaces = prevState.expandedNamespaces || {};
-      const isOpen = !!expandedNamespaces[namespaceId];
-      return { expandedNamespaces: isOpen ? {} : { [namespaceId]: true } };
-    });
-  }
-
   render() {
     const { navigation, namespaceList, onInfo, onWait } = this.props;
     const canAdd = this.state.nsName && this.state.nsName.length > 0;
     const inputMode = this.state.inputMode;
     const hasLockedFund = this.state.lockedAmount > 0;
-    const namespaceData = { ...namespaceList.namespaces };
-    Object.keys(this.state.expandedNamespaces).forEach(namespaceId => {
-      if (namespaceList.namespaces[namespaceId]) {
-        namespaceData[namespaceId] = {
-          ...namespaceList.namespaces[namespaceId],
-          showMoreActions: true,
-        };
-      }
-    });
     return (
       <View style={styles.container}>
         {this.getNSCreationModal()}
@@ -1130,7 +1101,7 @@ class MyNamespaces extends React.Component {
           <SortableListView
             style={styles.listStyle}
             contentContainerStyle={{paddingBottom: 400}}
-            data={namespaceData}
+            data={namespaceList.namespaces}
             order={namespaceList.order}
             onChangeOrder={this.onChangeOrder}
             refreshControl={
@@ -1149,8 +1120,6 @@ class MyNamespaces extends React.Component {
                   namespaceList={namespaceList}
                   myNamespaceId={namespaceList.order[0]}
                   canChat={true}
-                  showMoreActions={data.showMoreActions}
-                  onToggleMoreActions={this.toggleNamespaceActions}
                   key={key}
                 />
               );
@@ -2018,11 +1987,6 @@ var styles = StyleSheet.create({
     position: 'relative',
     zIndex: 0,
     elevation: 0,
-  },
-  cardContainerExpanded: {
-    marginBottom: 12,
-    zIndex: 999,
-    elevation: 999,
   },
   neonCard: {
     borderRadius: 16,
