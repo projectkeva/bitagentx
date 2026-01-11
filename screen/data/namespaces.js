@@ -579,9 +579,6 @@ class Namespace extends React.Component {
               </View>
             ) : (
               <View style={styles.spaceActionRow}>
-                <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-                  <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Room</Text>
-                </View>
                 {canChat ? (
                   <TouchableOpacity style={styles.spaceActionButton} onPress={this.onChat}>
                     <Text style={styles.spaceActionText}>Chat</Text>
@@ -592,13 +589,7 @@ class Namespace extends React.Component {
                   </View>
                 )}
                 <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-                  <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Task</Text>
-                </View>
-                <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-                  <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Game</Text>
-                </View>
-                <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-                  <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Wallet</Text>
+                  <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Link</Text>
                 </View>
               </View>
             )}
