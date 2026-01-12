@@ -281,7 +281,7 @@ class Namespace extends React.Component {
   onPressAction = label => {
     switch (label) {
       case 'Chat':
-        return this.onChat?.({ autoCommand: '/linkstart <@U09QR651E82>' });
+        return this.onChat?.({ autoCommand: '/linkstart' });
       case 'Story':
         return this.onStory?.();
       default:
