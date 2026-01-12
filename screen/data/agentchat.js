@@ -469,7 +469,13 @@ class AgentChat extends React.Component {
       },
       () => {
         this.ensureIntroMessage();
+        this.shouldScrollToEnd = true;
         this.scrollToEnd(false);
+        setTimeout(() => {
+          if (this._isMounted) {
+            this.scrollToEnd(false);
+          }
+        }, 0);
         this.runAutoCommand();
       },
     );
