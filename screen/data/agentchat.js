@@ -505,7 +505,7 @@ class AgentChat extends React.Component {
       const content = await RNFS.readFile(path, 'utf8');
       const parsed = JSON.parse(content);
       if (Array.isArray(parsed)) {
-        return parsed;
+        return parsed.filter(message => !message?.hidden);
       }
     } catch (error) {
       console.warn('Failed to read chat history', error);
@@ -523,12 +523,11 @@ class AgentChat extends React.Component {
     }
   };
 
-  buildMessage = (text, sender = 'user', options = {}) => ({
+  buildMessage = (text, sender = 'user') => ({
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     text,
     sender,
     timestamp: Date.now(),
-    hidden: options.hidden === true,
   });
 
   appendMessage = message => {
@@ -698,8 +697,7 @@ class AgentChat extends React.Component {
 
   replyFromAgent = text => {
     const reply = this.buildMessage(text, 'agent');
-    const hiddenAck = this.buildMessage('', 'user', { hidden: true });
-    this.appendMessages([reply, hiddenAck]);
+    this.appendMessage(reply);
   };
 
   formatSubmitTitle = () => {
@@ -935,9 +933,6 @@ class AgentChat extends React.Component {
   };
 
   renderMessage = ({ item, index }) => {
-    if (item.hidden) {
-      return <View style={styles.hiddenMessage} />;
-    }
     const isUser = item.sender === 'user';
     return (
       <>
@@ -1068,10 +1063,6 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingBottom: 12,
-  },
-  hiddenMessage: {
-    height: 1,
-    opacity: 0,
   },
   messageRow: {
     flexDirection: 'row',
