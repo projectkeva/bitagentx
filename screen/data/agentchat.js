@@ -523,11 +523,12 @@ class AgentChat extends React.Component {
     }
   };
 
-  buildMessage = (text, sender = 'user') => ({
+  buildMessage = (text, sender = 'user', options = {}) => ({
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     text,
     sender,
     timestamp: Date.now(),
+    hidden: options.hidden === true,
   });
 
   appendMessage = message => {
@@ -697,7 +698,8 @@ class AgentChat extends React.Component {
 
   replyFromAgent = text => {
     const reply = this.buildMessage(text, 'agent');
-    this.appendMessage(reply);
+    const hiddenAck = this.buildMessage('', 'user', { hidden: true });
+    this.appendMessages([reply, hiddenAck]);
   };
 
   formatSubmitTitle = () => {
@@ -933,6 +935,9 @@ class AgentChat extends React.Component {
   };
 
   renderMessage = ({ item, index }) => {
+    if (item.hidden) {
+      return <View style={styles.hiddenMessage} />;
+    }
     const isUser = item.sender === 'user';
     return (
       <>
@@ -1063,6 +1068,10 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingBottom: 12,
+  },
+  hiddenMessage: {
+    height: 1,
+    opacity: 0,
   },
   messageRow: {
     flexDirection: 'row',
