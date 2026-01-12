@@ -592,6 +592,11 @@ class AgentChat extends React.Component {
 
   handleTriggers = async text => {
     const trimmed = text.trim();
+    const clearMatch = /^\/(c|clear)\b/i.exec(trimmed);
+    if (clearMatch) {
+      await this.clearChatHistory();
+      return;
+    }
     const linkStartMatch = /^\/linkstart\b/i.exec(trimmed);
     if (linkStartMatch) {
       this.ensureIntroMessage();
@@ -617,6 +622,18 @@ class AgentChat extends React.Component {
     if (normalized === '/BLOCK') {
       await this.replyWithCurrentBlock();
     }
+  };
+
+  clearChatHistory = async () => {
+    this.shouldScrollToEnd = true;
+    this.setState(
+      {
+        allMessages: [],
+        visibleCount: 0,
+        messages: [],
+      },
+      () => this.persistMessages([]),
+    );
   };
 
   runAutoCommand = async () => {
