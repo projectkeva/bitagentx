@@ -401,13 +401,11 @@ class AgentChat extends React.Component {
       messages: [],
       visibleCount: PAGE_SIZE,
       inputValue: '',
-      showMentionTag: false,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
     this.shouldScrollToEnd = false;
     this.hasAutoCommandRun = false;
-    this.mentionTimeout = null;
   }
 
   static navigationOptions = ({ navigation }) => {
@@ -453,10 +451,6 @@ class AgentChat extends React.Component {
 
   componentWillUnmount() {
     this._isMounted = false;
-    if (this.mentionTimeout) {
-      clearTimeout(this.mentionTimeout);
-      this.mentionTimeout = null;
-    }
   }
 
   initializeChat = async () => {
@@ -474,7 +468,6 @@ class AgentChat extends React.Component {
         messages: history.slice(-visibleCount),
       },
       () => {
-        this.ensureIntroMessage();
         this.shouldScrollToEnd = true;
         this.scrollToEnd(false);
         setTimeout(() => {
@@ -538,7 +531,6 @@ class AgentChat extends React.Component {
 
   appendMessage = message => {
     this.shouldScrollToEnd = true;
-    this.triggerMentionTag();
     this.setState(
       prevState => {
         const allMessages = [...prevState.allMessages, message];
@@ -555,7 +547,6 @@ class AgentChat extends React.Component {
 
   appendMessages = messages => {
     this.shouldScrollToEnd = true;
-    this.triggerMentionTag();
     this.setState(
       prevState => {
         const allMessages = [...prevState.allMessages, ...messages];
@@ -601,6 +592,11 @@ class AgentChat extends React.Component {
 
   handleTriggers = async text => {
     const trimmed = text.trim();
+    const linkStartMatch = /^\/linkstart\b/i.exec(trimmed);
+    if (linkStartMatch) {
+      this.ensureIntroMessage();
+      return;
+    }
     const welcomeMatch = /^\/welcome\s+(.+)/i.exec(trimmed);
     if (welcomeMatch) {
       await this.handleWelcomeCommand(welcomeMatch[1]);
@@ -706,18 +702,6 @@ class AgentChat extends React.Component {
   replyFromAgent = text => {
     const reply = this.buildMessage(text, 'agent');
     this.appendMessage(reply);
-  };
-
-  triggerMentionTag = () => {
-    if (this.mentionTimeout) {
-      clearTimeout(this.mentionTimeout);
-    }
-    this.setState({ showMentionTag: true });
-    this.mentionTimeout = setTimeout(() => {
-      if (this._isMounted) {
-        this.setState({ showMentionTag: false });
-      }
-    }, 1600);
   };
 
   formatSubmitTitle = () => {
@@ -1034,11 +1018,6 @@ class AgentChat extends React.Component {
             />
           </View>
           <View style={styles.inputContainer}>
-            {this.state.showMentionTag && (
-              <View style={styles.mentionContainer}>
-                <Text style={styles.mentionText}>{'<@U09QR651E82>'}</Text>
-              </View>
-            )}
             <TextInput
               style={styles.input}
               value={this.state.inputValue}
@@ -1195,20 +1174,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#1f2a44',
     backgroundColor: '#0b1224',
-  },
-  mentionContainer: {
-    position: 'absolute',
-    top: -24,
-    left: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    backgroundColor: '#1f2a44',
-  },
-  mentionText: {
-    color: '#9aa4b2',
-    fontSize: 12,
-    fontWeight: '600',
   },
   input: {
     flex: 1,
