@@ -612,10 +612,10 @@ class AgentChat extends React.Component {
     if (normalized === '/D') {
       const { namespaceId, shortCode } = this.props.navigation.state.params || {};
       const agentId = shortCode || namespaceId;
-      this.replyFromAgent(buildDestinySeedPrompt(agentId));
-      this.replyFromAgent(
-        'Long press to copy, then paste into GPT, Grok, DeepSeek, or any base model to start the interactive Destiny story game. When you finish the run, paste the result here to commit it on-chain for your next level. Have fun!',
-      );
+      const seedPrompt = buildDestinySeedPrompt(agentId);
+      const cardText = `Destiny Seed Card\nAgent ID: ${agentId || 'Unknown'}\nReady to copy the full card.`;
+      this.replyFromAgentSeedCard(cardText, seedPrompt);
+      this.replyFromAgent('Click the link above to cooy <@U09QR651E82>');
       return;
     }
 
@@ -718,6 +718,15 @@ class AgentChat extends React.Component {
 
   replyFromAgent = text => {
     const reply = this.buildMessage(text, 'agent');
+    this.appendMessage(reply);
+  };
+
+  replyFromAgentSeedCard = (text, copyText) => {
+    const reply = {
+      ...this.buildMessage(text, 'agent'),
+      copyText,
+      linkLabel: 'Copy full Destiny Seed Card',
+    };
     this.appendMessage(reply);
   };
 
@@ -955,6 +964,7 @@ class AgentChat extends React.Component {
 
   renderMessage = ({ item, index }) => {
     const isUser = item.sender === 'user';
+    const hasCopyLink = Boolean(item.copyText && item.linkLabel);
     return (
       <>
         {this.shouldShowTimestamp(index) && (
@@ -977,11 +987,20 @@ class AgentChat extends React.Component {
             <TouchableOpacity
               accessibilityLabel="Chat message"
               activeOpacity={0.7}
-              onPress={() => this.handleMessagePress(item.text)}
-              onLongPress={() => this.handleMessageLongPress(item.text)}
+              onPress={hasCopyLink ? undefined : () => this.handleMessagePress(item.text)}
+              onLongPress={hasCopyLink ? undefined : () => this.handleMessageLongPress(item.text)}
               style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}
             >
               <Text style={[styles.messageText, isUser ? styles.userText : styles.agentText]}>{item.text}</Text>
+              {hasCopyLink && (
+                <TouchableOpacity
+                  accessibilityLabel="Copy destiny seed card"
+                  activeOpacity={0.7}
+                  onPress={() => this.handleMessagePress(item.copyText)}
+                >
+                  <Text style={[styles.messageText, styles.linkText]}>{item.linkLabel}</Text>
+                </TouchableOpacity>
+              )}
             </TouchableOpacity>
           </View>
           {isUser && (
@@ -1129,6 +1148,11 @@ const styles = StyleSheet.create({
   },
   agentText: {
     color: '#d2d7e0',
+  },
+  linkText: {
+    color: '#6aa9ff',
+    textDecorationLine: 'underline',
+    marginTop: 6,
   },
   timestampContainer: {
     alignItems: 'center',
