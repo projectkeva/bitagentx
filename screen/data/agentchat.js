@@ -615,7 +615,9 @@ class AgentChat extends React.Component {
       const seedPrompt = buildDestinySeedPrompt(agentId);
       const cardText = `Destiny Seed Card\nAgent ID: ${agentId || 'Unknown'}\nReady to copy the full card.`;
       this.replyFromAgentSeedCard(cardText, seedPrompt);
-      this.replyFromAgent('Click the link above to cooy <@U09QR651E82>');
+      this.replyFromAgent(
+        'Click the link above to copy. Paste into GPT, Grok, DeepSeek, or any base model to start the Interactive Destiny story game. When you finish the run, paste the result here to commit it on-chain for your next level. Have fun!',
+      );
       return;
     }
 
