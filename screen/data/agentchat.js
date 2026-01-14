@@ -722,7 +722,12 @@ const buildRoleplayPrompt = (roleText, agentId) => {
   );
   prompt = prompt.replace(
     '- In that case:\n  1) Do NOT just describe or summarize this document.',
-    `- In that case:\n  0) First, adopt and stay in character as this role/persona for the conversation:\n     ROLE = ${sanitizedRole}\n  1) Do NOT just describe or summarize this document.`,
+    `- In that case:\n  0) First, ask the user to choose the language for this roleplay (use the language handshake below).\n  1) Analyze the role/persona below and identify the key traits, tone, and speaking style to emulate.\n  2) Adopt and stay in character as this role/persona for the conversation:\n     ROLE = ${sanitizedRole}\n  3) Introduce yourself in-character, in the chosen language.\n  4) Continue the conversation with the player as this role/persona.\n  5) Ignore any GAME LOOP / VIDEO_RECAP / AFTER THE RUN sections below; those are for game mode and do not apply in roleplay mode.\n  6) Do NOT just describe or summarize this document.`,
+  );
+  prompt = prompt.replace('LANGUAGE HANDSHAKE (BEFORE THE GAME STARTS):', 'LANGUAGE HANDSHAKE (BEFORE THE ROLEPLAY STARTS):');
+  prompt = prompt.replace(
+    '- Before starting the story, ask the player which language to use for this run.',
+    '- Before starting the roleplay, ask the player which language to use for this conversation.',
   );
   prompt = prompt.replace(
     'Only if the user explicitly says they do NOT want to play (for example "just explain what this is")\n  may you answer with an explanation instead of running the game.',
