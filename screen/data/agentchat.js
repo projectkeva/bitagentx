@@ -31,7 +31,7 @@ const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
   'Loading the on-device LLM… (not deployed yet)',
-  'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain, or type /d to load a Destiny Seed Card, /h for help.',
+  'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain, or type /d to load a Destiny Seed Card, /r <text> to set a role, /h for help.',
 ];
 const COMMAND_HELP_MESSAGES = {
   en: [
@@ -39,6 +39,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Send the three opening hints.',
     '/c, /clear — Clear all chat history.',
     '/block — Check the current block height.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Save a welcome message on-chain.',
     '/h — Show all command descriptions.',
   ].join('\n'),
@@ -47,6 +48,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — 发送开场三句提示。',
     '/c, /clear — 清除所有聊天记录。',
     '/block — 查询当前区块高度。',
+    '/r <text> — 生成角色扮演提示词，<text>为角色设定。',
     '/welcome <text> — 将欢迎语上链保存。',
     '/h — 显示所有命令说明。',
   ].join('\n'),
@@ -55,6 +57,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — 發送開場三句提示。',
     '/c, /clear — 清除所有聊天記錄。',
     '/block — 查詢目前區塊高度。',
+    '/r <text> — 產生角色扮演提示詞，<text>為角色設定。',
     '/welcome <text> — 將歡迎語上鏈保存。',
     '/h — 顯示所有命令說明。',
   ].join('\n'),
@@ -63,6 +66,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Stuur die drie openingswenke.',
     '/c, /clear — Vee alle kletsgeskiedenis uit.',
     '/block — Kontroleer die huidige blokhoogte.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Stoor ’n welkomboodskap on-chain.',
     '/h — Wys alle opdragbeskrywings.',
   ].join('\n'),
@@ -71,6 +75,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Thumela iingcebiso ezintathu zokuqalisa.',
     '/c, /clear — Susa yonke imbali yencoko.',
     '/block — Jonga ubude beblokhi yangoku.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Gcina umyalezo wokwamkela kwi-chain.',
     '/h — Bonisa zonke iinkcazo zeemiyalelo.',
   ].join('\n'),
@@ -79,6 +84,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Pošalji tri uvodne poruke.',
     '/c, /clear — Obriši svu povijest chata.',
     '/block — Provjeri trenutnu visinu bloka.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Spremi poruku dobrodošlice na lanac.',
     '/h — Prikaži opis svih naredbi.',
   ].join('\n'),
@@ -87,6 +93,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Pošli tři úvodní nápovědy.',
     '/c, /clear — Vymaž celou historii chatu.',
     '/block — Zjisti aktuální výšku bloku.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Ulož uvítací zprávu na chain.',
     '/h — Zobraz popis všech příkazů.',
   ].join('\n'),
@@ -95,6 +102,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Send de tre åbningshint.',
     '/c, /clear — Ryd al chat-historik.',
     '/block — Tjek den aktuelle blokhøjde.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Gem en velkomstbesked on-chain.',
     '/h — Vis alle kommandobeskrivelser.',
   ].join('\n'),
@@ -103,6 +111,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Sende die drei Start-Hinweise.',
     '/c, /clear — Gesamten Chatverlauf löschen.',
     '/block — Aktuelle Blockhöhe prüfen.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Begrüßungsnachricht on-chain speichern.',
     '/h — Alle Befehlsbeschreibungen anzeigen.',
   ].join('\n'),
@@ -111,6 +120,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Envía las tres frases de inicio.',
     '/c, /clear — Borra todo el historial del chat.',
     '/block — Consulta la altura de bloque actual.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Guarda un mensaje de bienvenida en la cadena.',
     '/h — Muestra la descripción de todos los comandos.',
   ].join('\n'),
@@ -119,6 +129,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Στείλε τις τρεις αρχικές οδηγίες.',
     '/c, /clear — Καθάρισε όλο το ιστορικό συνομιλίας.',
     '/block — Έλεγξε το τρέχον ύψος μπλοκ.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Αποθήκευσε μήνυμα καλωσορίσματος on-chain.',
     '/h — Εμφάνισε όλες τις περιγραφές εντολών.',
   ].join('\n'),
@@ -127,6 +138,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Invia le tre frasi iniziali.',
     '/c, /clear — Cancella tutta la cronologia della chat.',
     '/block — Controlla l’altezza del blocco corrente.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Salva un messaggio di benvenuto on-chain.',
     '/h — Mostra le descrizioni di tutti i comandi.',
   ].join('\n'),
@@ -135,6 +147,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Lähetä kolme aloitusvihjettä.',
     '/c, /clear — Tyhjennä koko chat-historia.',
     '/block — Tarkista nykyinen lohkokorkeus.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Tallenna tervetuloviesti ketjuun.',
     '/h — Näytä kaikkien komentojen kuvaukset.',
   ].join('\n'),
@@ -143,6 +156,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Envoie les trois phrases d’ouverture.',
     '/c, /clear — Efface tout l’historique du chat.',
     '/block — Vérifie la hauteur de bloc actuelle.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Enregistre un message de bienvenue on-chain.',
     '/h — Affiche la description de toutes les commandes.',
   ].join('\n'),
@@ -151,6 +165,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Kirim tiga petunjuk pembuka.',
     '/c, /clear — Hapus semua riwayat chat.',
     '/block — Periksa tinggi blok saat ini.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Simpan pesan sambutan on-chain.',
     '/h — Tampilkan semua deskripsi perintah.',
   ].join('\n'),
@@ -159,6 +174,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Küldd el a három nyitó tippet.',
     '/c, /clear — Töröld az összes chatelőzményt.',
     '/block — Ellenőrizd a jelenlegi blokkmagasságot.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Üdvözlő üzenet mentése on-chain.',
     '/h — Minden parancsleírás megjelenítése.',
   ].join('\n'),
@@ -167,6 +183,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — 開始用の3つのヒントを送信します。',
     '/c, /clear — すべてのチャット履歴を削除します。',
     '/block — 現在のブロック高を確認します。',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — ウェルカムメッセージをオンチェーンで保存します。',
     '/h — すべてのコマンド説明を表示します。',
   ].join('\n'),
@@ -175,6 +192,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Stuur de drie openingszinnen.',
     '/c, /clear — Wis alle chatgeschiedenis.',
     '/block — Controleer de huidige blokhoogte.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Sla een welkomstbericht on-chain op.',
     '/h — Toon alle opdrachtbeschrijvingen.',
   ].join('\n'),
@@ -183,6 +201,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Send de tre åpningshintene.',
     '/c, /clear — Slett hele chatloggen.',
     '/block — Sjekk gjeldende blokkhøyde.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Lagre en velkomstmelding on-chain.',
     '/h — Vis alle kommandobeskrivelser.',
   ].join('\n'),
@@ -191,6 +210,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Envie as três frases iniciais.',
     '/c, /clear — Limpe todo o histórico do chat.',
     '/block — Verifique a altura do bloco atual.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Salve uma mensagem de boas-vindas on-chain.',
     '/h — Mostre a descrição de todos os comandos.',
   ].join('\n'),
@@ -199,6 +219,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Envie as três frases iniciais.',
     '/c, /clear — Limpe todo o histórico do chat.',
     '/block — Verifique a altura do bloco atual.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Guarde uma mensagem de boas-vindas on-chain.',
     '/h — Mostre a descrição de todos os comandos.',
   ].join('\n'),
@@ -207,6 +228,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Отправь три стартовые подсказки.',
     '/c, /clear — Очисти всю историю чата.',
     '/block — Проверь текущую высоту блока.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Сохрани приветственное сообщение в цепочке.',
     '/h — Покажи описания всех команд.',
   ].join('\n'),
@@ -215,6 +237,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Skicka de tre inledande tipsen.',
     '/c, /clear — Rensa hela chatthistoriken.',
     '/block — Kontrollera aktuell blockhöjd.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Spara ett välkomstmeddelande on-chain.',
     '/h — Visa alla kommandobeskrivningar.',
   ].join('\n'),
@@ -223,6 +246,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — ส่งคำแนะนำเปิดเรื่อง 3 ข้อ.',
     '/c, /clear — ล้างประวัติแชททั้งหมด.',
     '/block — ตรวจสอบความสูงบล็อกปัจจุบัน.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — บันทึกข้อความต้อนรับบนเชน.',
     '/h — แสดงคำอธิบายคำสั่งทั้งหมด.',
   ].join('\n'),
@@ -231,6 +255,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Gửi ba gợi ý mở đầu.',
     '/c, /clear — Xóa toàn bộ lịch sử chat.',
     '/block — Kiểm tra chiều cao khối hiện tại.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Lưu lời chào lên chuỗi.',
     '/h — Hiển thị mô tả tất cả lệnh.',
   ].join('\n'),
@@ -239,6 +264,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Надішли три стартові підказки.',
     '/c, /clear — Очисти всю історію чату.',
     '/block — Перевір поточну висоту блоку.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Збережи вітальне повідомлення в ланцюгу.',
     '/h — Покажи описи всіх команд.',
   ].join('\n'),
@@ -247,6 +273,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Üç açılış ipucunu gönder.',
     '/c, /clear — Tüm sohbet geçmişini temizle.',
     '/block — Mevcut blok yüksekliğini kontrol et.',
+    '/r <text> — Create a roleplay prompt with persona <text>.',
     '/welcome <text> — Karşılama mesajını zincire kaydet.',
     '/h — Tüm komut açıklamalarını göster.',
   ].join('\n'),
@@ -674,6 +701,35 @@ const buildDestinySeedPrompt = agentId => {
   return DESTINY_SEED_PROMPT;
 };
 
+const buildRoleplayPrompt = (roleText, agentId) => {
+  let prompt = buildDestinySeedPrompt(agentId);
+  const sanitizedRole = (roleText || '').trim();
+  if (!sanitizedRole) {
+    return prompt;
+  }
+  prompt = prompt.replace(
+    'xKEVA D-CARD — Destiny Story Seed v0.1  (WEB PAGE VERSION)',
+    'xKEVA D-CARD — Destiny Story Seed v0.1  (ROLEPLAY MODE)',
+  );
+  prompt = prompt.replace('  • "run as game"', '  • "start roleplay"');
+  prompt = prompt.replace('  • "start the game"', '  • "start the roleplay"');
+  prompt = prompt.replace('  • "开始游戏"', '  • "开始角色扮演"');
+  prompt = prompt.replace('  • "运行去中心化代理人游戏协议"', '  • "开始对话"');
+  prompt = prompt.replace(
+    'then you MUST treat the text below as a direct command to run the\n  xKEVA decentralized agent story game (去中心化代理人游戏协议).',
+    'then you MUST treat the text below as a direct command to start a roleplay conversation (角色扮演对话).',
+  );
+  prompt = prompt.replace(
+    '- In that case:\n  1) Do NOT just describe or summarize this document.',
+    `- In that case:\n  0) First, adopt and stay in character as this role/persona for the conversation:\n     ROLE = ${sanitizedRole}\n  1) Do NOT just describe or summarize this document.`,
+  );
+  prompt = prompt.replace(
+    'Only if the user explicitly says they do NOT want to play (for example "just explain what this is")\n  may you answer with an explanation instead of running the game.',
+    'Only if the user explicitly says they do NOT want to roleplay (for example "just explain what this is")\n  may you answer with an explanation instead of roleplaying.',
+  );
+  return prompt;
+};
+
 class AgentChat extends React.Component {
   constructor(props) {
     super(props);
@@ -888,6 +944,11 @@ class AgentChat extends React.Component {
       this.ensureIntroMessage();
       return;
     }
+    const roleMatch = /^\/r\s+(.+)/i.exec(trimmed);
+    if (roleMatch) {
+      this.handleRoleCommand(roleMatch[1]);
+      return;
+    }
     const welcomeMatch = /^\/welcome\s+(.+)/i.exec(trimmed);
     if (welcomeMatch) {
       await this.handleWelcomeCommand(welcomeMatch[1]);
@@ -989,6 +1050,22 @@ class AgentChat extends React.Component {
     }
   };
 
+  handleRoleCommand = rawValue => {
+    const roleText = rawValue.trim().slice(0, 1000);
+    if (!roleText) {
+      this.replyFromAgent('Role text is empty.');
+      return;
+    }
+    const { namespaceId, shortCode } = this.props.navigation.state.params || {};
+    const agentId = shortCode || namespaceId;
+    const rolePrompt = buildRoleplayPrompt(roleText, agentId);
+    const cardText = `Roleplay Prompt\nAgent ID: ${agentId || 'Unknown'}\nRole: ${roleText}\nReady to copy the full prompt.`;
+    this.replyFromAgentSeedCard(cardText, rolePrompt, 'Copy full roleplay prompt');
+    this.replyFromAgent(
+      'Click the link above to copy. Paste into GPT, Grok, DeepSeek, or any base model to start a roleplay conversation as the role you provided.',
+    );
+  };
+
   replyWithCurrentBlock = async () => {
     try {
       await BlueElectrum.ping();
@@ -1009,11 +1086,11 @@ class AgentChat extends React.Component {
     this.appendMessage(reply);
   };
 
-  replyFromAgentSeedCard = (text, copyText) => {
+  replyFromAgentSeedCard = (text, copyText, linkLabel = 'Copy full Destiny Seed Card') => {
     const reply = {
       ...this.buildMessage(text, 'agent'),
       copyText,
-      linkLabel: 'Copy full Destiny Seed Card',
+      linkLabel,
     };
     this.appendMessage(reply);
   };
