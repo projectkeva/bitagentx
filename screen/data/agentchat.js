@@ -32,7 +32,7 @@ const COMMAND_TOKEN_REGEX = /\/[a-z][\w-]*(?:\s+<[^>]+>)?/gi;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
   'Loading the on-device LLM… (not deployed yet)',
-  'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain, or type /d to load a Destiny Seed Card, /r <text> to set a role, /h for help.',
+  'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain, or type /d to load a Destiny Seed Card, /h for help.',
 ];
 const COMMAND_HELP_MESSAGES = {
   en: [
