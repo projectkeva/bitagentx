@@ -32,6 +32,14 @@ const INTRO_MESSAGES = [
   'Loading the on-device LLM… (not deployed yet)',
   'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain, or type /d to load a Destiny Seed Card.',
 ];
+const COMMAND_HELP_MESSAGE = [
+  '/d — 生成 Destiny Seed Card 预览并提供复制链接。',
+  '/linkstart — 发送开场三句提示。',
+  '/c, /clear — 清除所有聊天记录。',
+  '/block — 查询当前区块高度。',
+  '/welcome <text> — 将欢迎语上链保存。',
+  '/h — 显示所有命令说明。',
+].join('\n');
 const PAGE_SIZE = 10;
 const ATTR_SEED_LABELS = [
   'scene',
@@ -595,6 +603,11 @@ class AgentChat extends React.Component {
     const clearMatch = /^\/(c|clear)\b/i.exec(trimmed);
     if (clearMatch) {
       await this.clearChatHistory();
+      return;
+    }
+    const helpMatch = /^\/h\b/i.exec(trimmed);
+    if (helpMatch) {
+      this.replyFromAgent(COMMAND_HELP_MESSAGE);
       return;
     }
     const linkStartMatch = /^\/linkstart\b/i.exec(trimmed);
