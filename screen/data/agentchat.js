@@ -20,6 +20,7 @@ let BlueApp = require('../../BlueApp');
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
+let loc = require('../../loc');
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
 import ActionSheet from '../ActionSheet';
@@ -32,14 +33,286 @@ const INTRO_MESSAGES = [
   'Loading the on-device LLM… (not deployed yet)',
   'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain, or type /d to load a Destiny Seed Card.',
 ];
-const COMMAND_HELP_MESSAGE = [
-  '/d — 生成 Destiny Seed Card 预览并提供复制链接。',
-  '/linkstart — 发送开场三句提示。',
-  '/c, /clear — 清除所有聊天记录。',
-  '/block — 查询当前区块高度。',
-  '/welcome <text> — 将欢迎语上链保存。',
-  '/h — 显示所有命令说明。',
-].join('\n');
+const COMMAND_HELP_MESSAGES = {
+  en: [
+    '/d — Generate a Destiny Seed Card preview and a copy link.',
+    '/linkstart — Send the three opening hints.',
+    '/c, /clear — Clear all chat history.',
+    '/block — Check the current block height.',
+    '/welcome <text> — Save a welcome message on-chain.',
+    '/h — Show all command descriptions.',
+  ].join('\n'),
+  'zh-cn': [
+    '/d — 生成 Destiny Seed Card 预览并提供复制链接。',
+    '/linkstart — 发送开场三句提示。',
+    '/c, /clear — 清除所有聊天记录。',
+    '/block — 查询当前区块高度。',
+    '/welcome <text> — 将欢迎语上链保存。',
+    '/h — 显示所有命令说明。',
+  ].join('\n'),
+  'zh-tw': [
+    '/d — 產生 Destiny Seed Card 預覽並提供複製連結。',
+    '/linkstart — 發送開場三句提示。',
+    '/c, /clear — 清除所有聊天記錄。',
+    '/block — 查詢目前區塊高度。',
+    '/welcome <text> — 將歡迎語上鏈保存。',
+    '/h — 顯示所有命令說明。',
+  ].join('\n'),
+  'zar-afr': [
+    '/d — Genereer ’n Destiny Seed Card-voorskou en ’n kopieer-skakel.',
+    '/linkstart — Stuur die drie openingswenke.',
+    '/c, /clear — Vee alle kletsgeskiedenis uit.',
+    '/block — Kontroleer die huidige blokhoogte.',
+    '/welcome <text> — Stoor ’n welkomboodskap on-chain.',
+    '/h — Wys alle opdragbeskrywings.',
+  ].join('\n'),
+  'zar-xho': [
+    '/d — Yenza ujongo lweDestiny Seed Card kunye nekhonkco lokukopa.',
+    '/linkstart — Thumela iingcebiso ezintathu zokuqalisa.',
+    '/c, /clear — Susa yonke imbali yencoko.',
+    '/block — Jonga ubude beblokhi yangoku.',
+    '/welcome <text> — Gcina umyalezo wokwamkela kwi-chain.',
+    '/h — Bonisa zonke iinkcazo zeemiyalelo.',
+  ].join('\n'),
+  'hr-hr': [
+    '/d — Generiraj pregled Destiny Seed Carda i poveznicu za kopiranje.',
+    '/linkstart — Pošalji tri uvodne poruke.',
+    '/c, /clear — Obriši svu povijest chata.',
+    '/block — Provjeri trenutnu visinu bloka.',
+    '/welcome <text> — Spremi poruku dobrodošlice na lanac.',
+    '/h — Prikaži opis svih naredbi.',
+  ].join('\n'),
+  'cs-cz': [
+    '/d — Vygeneruj náhled Destiny Seed Card a odkaz pro kopírování.',
+    '/linkstart — Pošli tři úvodní nápovědy.',
+    '/c, /clear — Vymaž celou historii chatu.',
+    '/block — Zjisti aktuální výšku bloku.',
+    '/welcome <text> — Ulož uvítací zprávu na chain.',
+    '/h — Zobraz popis všech příkazů.',
+  ].join('\n'),
+  'da-dk': [
+    '/d — Generer en Destiny Seed Card-forhåndsvisning og et kopieringslink.',
+    '/linkstart — Send de tre åbningshint.',
+    '/c, /clear — Ryd al chat-historik.',
+    '/block — Tjek den aktuelle blokhøjde.',
+    '/welcome <text> — Gem en velkomstbesked on-chain.',
+    '/h — Vis alle kommandobeskrivelser.',
+  ].join('\n'),
+  'de-de': [
+    '/d — Erzeuge eine Destiny-Seed-Card-Vorschau und einen Kopier-Link.',
+    '/linkstart — Sende die drei Start-Hinweise.',
+    '/c, /clear — Gesamten Chatverlauf löschen.',
+    '/block — Aktuelle Blockhöhe prüfen.',
+    '/welcome <text> — Begrüßungsnachricht on-chain speichern.',
+    '/h — Alle Befehlsbeschreibungen anzeigen.',
+  ].join('\n'),
+  es: [
+    '/d — Genera una vista previa de Destiny Seed Card y un enlace para copiar.',
+    '/linkstart — Envía las tres frases de inicio.',
+    '/c, /clear — Borra todo el historial del chat.',
+    '/block — Consulta la altura de bloque actual.',
+    '/welcome <text> — Guarda un mensaje de bienvenida en la cadena.',
+    '/h — Muestra la descripción de todos los comandos.',
+  ].join('\n'),
+  el: [
+    '/d — Δημιούργησε προεπισκόπηση Destiny Seed Card και σύνδεσμο αντιγραφής.',
+    '/linkstart — Στείλε τις τρεις αρχικές οδηγίες.',
+    '/c, /clear — Καθάρισε όλο το ιστορικό συνομιλίας.',
+    '/block — Έλεγξε το τρέχον ύψος μπλοκ.',
+    '/welcome <text> — Αποθήκευσε μήνυμα καλωσορίσματος on-chain.',
+    '/h — Εμφάνισε όλες τις περιγραφές εντολών.',
+  ].join('\n'),
+  it: [
+    '/d — Genera un’anteprima della Destiny Seed Card e un link di copia.',
+    '/linkstart — Invia le tre frasi iniziali.',
+    '/c, /clear — Cancella tutta la cronologia della chat.',
+    '/block — Controlla l’altezza del blocco corrente.',
+    '/welcome <text> — Salva un messaggio di benvenuto on-chain.',
+    '/h — Mostra le descrizioni di tutti i comandi.',
+  ].join('\n'),
+  'fi-fi': [
+    '/d — Luo Destiny Seed Card -esikatselu ja kopiointilinkki.',
+    '/linkstart — Lähetä kolme aloitusvihjettä.',
+    '/c, /clear — Tyhjennä koko chat-historia.',
+    '/block — Tarkista nykyinen lohkokorkeus.',
+    '/welcome <text> — Tallenna tervetuloviesti ketjuun.',
+    '/h — Näytä kaikkien komentojen kuvaukset.',
+  ].join('\n'),
+  'fr-fr': [
+    '/d — Génère un aperçu de Destiny Seed Card et un lien de copie.',
+    '/linkstart — Envoie les trois phrases d’ouverture.',
+    '/c, /clear — Efface tout l’historique du chat.',
+    '/block — Vérifie la hauteur de bloc actuelle.',
+    '/welcome <text> — Enregistre un message de bienvenue on-chain.',
+    '/h — Affiche la description de toutes les commandes.',
+  ].join('\n'),
+  'id-id': [
+    '/d — Buat pratinjau Destiny Seed Card dan tautan salin.',
+    '/linkstart — Kirim tiga petunjuk pembuka.',
+    '/c, /clear — Hapus semua riwayat chat.',
+    '/block — Periksa tinggi blok saat ini.',
+    '/welcome <text> — Simpan pesan sambutan on-chain.',
+    '/h — Tampilkan semua deskripsi perintah.',
+  ].join('\n'),
+  'hu-hu': [
+    '/d — Készíts Destiny Seed Card előnézetet és másolási linket.',
+    '/linkstart — Küldd el a három nyitó tippet.',
+    '/c, /clear — Töröld az összes chatelőzményt.',
+    '/block — Ellenőrizd a jelenlegi blokkmagasságot.',
+    '/welcome <text> — Üdvözlő üzenet mentése on-chain.',
+    '/h — Minden parancsleírás megjelenítése.',
+  ].join('\n'),
+  ja: [
+    '/d — Destiny Seed Card のプレビューとコピーリンクを生成します。',
+    '/linkstart — 開始用の3つのヒントを送信します。',
+    '/c, /clear — すべてのチャット履歴を削除します。',
+    '/block — 現在のブロック高を確認します。',
+    '/welcome <text> — ウェルカムメッセージをオンチェーンで保存します。',
+    '/h — すべてのコマンド説明を表示します。',
+  ].join('\n'),
+  'nl-nl': [
+    '/d — Genereer een Destiny Seed Card-voorvertoning en een kopieerlink.',
+    '/linkstart — Stuur de drie openingszinnen.',
+    '/c, /clear — Wis alle chatgeschiedenis.',
+    '/block — Controleer de huidige blokhoogte.',
+    '/welcome <text> — Sla een welkomstbericht on-chain op.',
+    '/h — Toon alle opdrachtbeschrijvingen.',
+  ].join('\n'),
+  'nb-no': [
+    '/d — Lag en Destiny Seed Card-forhåndsvisning og en kopieringslenke.',
+    '/linkstart — Send de tre åpningshintene.',
+    '/c, /clear — Slett hele chatloggen.',
+    '/block — Sjekk gjeldende blokkhøyde.',
+    '/welcome <text> — Lagre en velkomstmelding on-chain.',
+    '/h — Vis alle kommandobeskrivelser.',
+  ].join('\n'),
+  'pt-br': [
+    '/d — Gere uma prévia do Destiny Seed Card e um link para copiar.',
+    '/linkstart — Envie as três frases iniciais.',
+    '/c, /clear — Limpe todo o histórico do chat.',
+    '/block — Verifique a altura do bloco atual.',
+    '/welcome <text> — Salve uma mensagem de boas-vindas on-chain.',
+    '/h — Mostre a descrição de todos os comandos.',
+  ].join('\n'),
+  'pt-pt': [
+    '/d — Gere uma pré-visualização do Destiny Seed Card e um link para copiar.',
+    '/linkstart — Envie as três frases iniciais.',
+    '/c, /clear — Limpe todo o histórico do chat.',
+    '/block — Verifique a altura do bloco atual.',
+    '/welcome <text> — Guarde uma mensagem de boas-vindas on-chain.',
+    '/h — Mostre a descrição de todos os comandos.',
+  ].join('\n'),
+  ru: [
+    '/d — Создай превью Destiny Seed Card и ссылку для копирования.',
+    '/linkstart — Отправь три стартовые подсказки.',
+    '/c, /clear — Очисти всю историю чата.',
+    '/block — Проверь текущую высоту блока.',
+    '/welcome <text> — Сохрани приветственное сообщение в цепочке.',
+    '/h — Покажи описания всех команд.',
+  ].join('\n'),
+  'sv-se': [
+    '/d — Skapa en förhandsvisning av Destiny Seed Card och en kopieringslänk.',
+    '/linkstart — Skicka de tre inledande tipsen.',
+    '/c, /clear — Rensa hela chatthistoriken.',
+    '/block — Kontrollera aktuell blockhöjd.',
+    '/welcome <text> — Spara ett välkomstmeddelande on-chain.',
+    '/h — Visa alla kommandobeskrivningar.',
+  ].join('\n'),
+  'th-th': [
+    '/d — สร้างพรีวิว Destiny Seed Card และลิงก์สำหรับคัดลอก.',
+    '/linkstart — ส่งคำแนะนำเปิดเรื่อง 3 ข้อ.',
+    '/c, /clear — ล้างประวัติแชททั้งหมด.',
+    '/block — ตรวจสอบความสูงบล็อกปัจจุบัน.',
+    '/welcome <text> — บันทึกข้อความต้อนรับบนเชน.',
+    '/h — แสดงคำอธิบายคำสั่งทั้งหมด.',
+  ].join('\n'),
+  'vi-vn': [
+    '/d — Tạo bản xem trước Destiny Seed Card và liên kết sao chép.',
+    '/linkstart — Gửi ba gợi ý mở đầu.',
+    '/c, /clear — Xóa toàn bộ lịch sử chat.',
+    '/block — Kiểm tra chiều cao khối hiện tại.',
+    '/welcome <text> — Lưu lời chào lên chuỗi.',
+    '/h — Hiển thị mô tả tất cả lệnh.',
+  ].join('\n'),
+  ua: [
+    '/d — Створи прев’ю Destiny Seed Card і посилання для копіювання.',
+    '/linkstart — Надішли три стартові підказки.',
+    '/c, /clear — Очисти всю історію чату.',
+    '/block — Перевір поточну висоту блоку.',
+    '/welcome <text> — Збережи вітальне повідомлення в ланцюгу.',
+    '/h — Покажи описи всіх команд.',
+  ].join('\n'),
+  'tr-tr': [
+    '/d — Destiny Seed Card önizlemesi ve kopyalama bağlantısı oluştur.',
+    '/linkstart — Üç açılış ipucunu gönder.',
+    '/c, /clear — Tüm sohbet geçmişini temizle.',
+    '/block — Mevcut blok yüksekliğini kontrol et.',
+    '/welcome <text> — Karşılama mesajını zincire kaydet.',
+    '/h — Tüm komut açıklamalarını göster.',
+  ].join('\n'),
+};
+
+const COMMAND_HELP_ALIASES = {
+  'zh-hans': 'zh-cn',
+  'zh-hant': 'zh-tw',
+  'zh-cn': 'zh-cn',
+  'zh-tw': 'zh-tw',
+  'jp-jp': 'ja',
+  'ja-jp': 'ja',
+  ja: 'ja',
+  pt: 'pt-pt',
+  'pt-br': 'pt-br',
+  'pt-pt': 'pt-pt',
+  nb: 'nb-no',
+  no: 'nb-no',
+  sv: 'sv-se',
+  fi: 'fi-fi',
+  da: 'da-dk',
+  nl: 'nl-nl',
+  de: 'de-de',
+  fr: 'fr-fr',
+  it: 'it',
+  es: 'es',
+  ru: 'ru',
+  tr: 'tr-tr',
+  vi: 'vi-vn',
+  th: 'th-th',
+  id: 'id-id',
+  hu: 'hu-hu',
+  hr: 'hr-hr',
+  cs: 'cs-cz',
+  el: 'el',
+  af: 'zar-afr',
+  xh: 'zar-xho',
+  uk: 'ua',
+};
+
+const normalizeLocale = locale => (locale || '').toString().trim().toLowerCase().replace('_', '-');
+
+const getCommandHelpMessage = () => {
+  const interfaceLanguage =
+    (loc && typeof loc.getInterfaceLanguage === 'function' && loc.getInterfaceLanguage()) ||
+    (loc && typeof loc.getLanguage === 'function' && loc.getLanguage()) ||
+    'en';
+  const normalized = normalizeLocale(interfaceLanguage);
+  const directMatch = COMMAND_HELP_MESSAGES[normalized];
+  if (directMatch) {
+    return directMatch;
+  }
+  const aliasKey = COMMAND_HELP_ALIASES[normalized];
+  if (aliasKey && COMMAND_HELP_MESSAGES[aliasKey]) {
+    return COMMAND_HELP_MESSAGES[aliasKey];
+  }
+  const base = normalized.split('-')[0];
+  const baseAlias = COMMAND_HELP_ALIASES[base];
+  if (baseAlias && COMMAND_HELP_MESSAGES[baseAlias]) {
+    return COMMAND_HELP_MESSAGES[baseAlias];
+  }
+  if (COMMAND_HELP_MESSAGES[base]) {
+    return COMMAND_HELP_MESSAGES[base];
+  }
+  return COMMAND_HELP_MESSAGES.en;
+};
 const PAGE_SIZE = 10;
 const ATTR_SEED_LABELS = [
   'scene',
@@ -607,7 +880,7 @@ class AgentChat extends React.Component {
     }
     const helpMatch = /^\/h\b/i.exec(trimmed);
     if (helpMatch) {
-      this.replyFromAgent(COMMAND_HELP_MESSAGE);
+      this.replyFromAgent(getCommandHelpMessage());
       return;
     }
     const linkStartMatch = /^\/linkstart\b/i.exec(trimmed);
