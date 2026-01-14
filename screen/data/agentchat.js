@@ -28,6 +28,7 @@ import { updateKeyValue } from '../../class/keva-ops';
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
+const COMMAND_TOKEN_REGEX = /\/[a-z][\w-]*(?:\s+<[^>]+>)?/gi;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
   'Loading the on-device LLM… (not deployed yet)',
@@ -743,6 +744,7 @@ class AgentChat extends React.Component {
     this.didInitialScroll = false;
     this.shouldScrollToEnd = false;
     this.hasAutoCommandRun = false;
+    this.hasAutoLinkStartRun = false;
   }
 
   static navigationOptions = ({ navigation }) => {
@@ -812,7 +814,7 @@ class AgentChat extends React.Component {
             this.scrollToEnd(false);
           }
         }, 0);
-        this.runAutoCommand();
+        this.runAutoCommand().then(() => this.runAutoLinkStart());
       },
     );
   };
@@ -898,15 +900,20 @@ class AgentChat extends React.Component {
     );
   };
 
-  ensureIntroMessage = () => {
-    const { allMessages } = this.state;
-    const lastIndex = allMessages.length - INTRO_MESSAGES.length;
-    const hasIntroSequence =
+  hasIntroSequence = messages => {
+    const lastIndex = messages.length - INTRO_MESSAGES.length;
+    return (
       lastIndex >= 0 &&
       INTRO_MESSAGES.every((text, idx) => {
-        const message = allMessages[lastIndex + idx];
+        const message = messages[lastIndex + idx];
         return message?.text === text && message?.sender === 'agent';
-      });
+      })
+    );
+  };
+
+  ensureIntroMessage = () => {
+    const { allMessages } = this.state;
+    const hasIntroSequence = this.hasIntroSequence(allMessages);
 
     if (hasIntroSequence) {
       return;
@@ -925,6 +932,22 @@ class AgentChat extends React.Component {
     this.appendMessage(userMessage);
     this.setState({ inputValue: '' });
     await this.handleTriggers(text);
+  };
+
+  sendCommand = async commandText => {
+    const text = commandText.trim();
+    if (!text) {
+      return;
+    }
+    this.appendMessage(this.buildMessage(text, 'user'));
+    this.setState({ inputValue: '' });
+    await this.handleTriggers(text);
+    this.shouldScrollToEnd = true;
+    setTimeout(() => {
+      if (this._isMounted) {
+        this.scrollToEnd(false);
+      }
+    }, 0);
   };
 
   handleTriggers = async text => {
@@ -1009,6 +1032,17 @@ class AgentChat extends React.Component {
       }
     }, 0);
     navigation?.setParams?.({ autoCommand: null });
+  };
+
+  runAutoLinkStart = async () => {
+    if (this.hasAutoLinkStartRun) {
+      return;
+    }
+    this.hasAutoLinkStartRun = true;
+    if (this.hasIntroSequence(this.state.allMessages)) {
+      return;
+    }
+    await this.sendCommand('/linkstart');
   };
 
   handleWelcomeCommand = async rawValue => {
@@ -1103,6 +1137,31 @@ class AgentChat extends React.Component {
     if (messageText) {
       Clipboard.setString(messageText);
     }
+  };
+
+  getCommandSegments = text => {
+    if (!text) {
+      return [];
+    }
+    const segments = [];
+    const regex = new RegExp(COMMAND_TOKEN_REGEX);
+    let lastIndex = 0;
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        segments.push({ text: text.slice(lastIndex, match.index), isCommand: false });
+      }
+      segments.push({ text: match[0], isCommand: true });
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < text.length) {
+      segments.push({ text: text.slice(lastIndex), isCommand: false });
+    }
+    return segments;
+  };
+
+  handleCommandPress = commandText => {
+    this.sendCommand(commandText);
   };
 
   handleMessageLongPress = messageText => {
@@ -1330,6 +1389,10 @@ class AgentChat extends React.Component {
   renderMessage = ({ item, index }) => {
     const isUser = item.sender === 'user';
     const hasCopyLink = Boolean(item.copyText && item.linkLabel);
+    const commandSegments = this.getCommandSegments(item.text);
+    const hasCommandTokens = commandSegments.some(segment => segment.isCommand);
+    const messageTextStyle = [styles.messageText, isUser ? styles.userText : styles.agentText];
+    const commandTextStyle = isUser ? styles.commandTextUser : styles.commandText;
     return (
       <>
         {this.shouldShowTimestamp(index) && (
@@ -1352,11 +1415,29 @@ class AgentChat extends React.Component {
             <TouchableOpacity
               accessibilityLabel="Chat message"
               activeOpacity={0.7}
-              onPress={hasCopyLink ? undefined : () => this.handleMessagePress(item.text)}
+              onPress={hasCopyLink || hasCommandTokens ? undefined : () => this.handleMessagePress(item.text)}
               onLongPress={hasCopyLink ? undefined : () => this.handleMessageLongPress(item.text)}
               style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}
             >
-              <Text style={[styles.messageText, isUser ? styles.userText : styles.agentText]}>{item.text}</Text>
+              <Text style={messageTextStyle}>
+                {commandSegments.length === 0
+                  ? item.text
+                  : commandSegments.map((segment, segmentIndex) =>
+                      segment.isCommand ? (
+                        <Text
+                          key={`${item.id}-command-${segmentIndex}`}
+                          style={[messageTextStyle, commandTextStyle]}
+                          onPress={() => this.handleCommandPress(segment.text)}
+                        >
+                          {segment.text}
+                        </Text>
+                      ) : (
+                        <Text key={`${item.id}-text-${segmentIndex}`} style={messageTextStyle}>
+                          {segment.text}
+                        </Text>
+                      ),
+                    )}
+              </Text>
               {hasCopyLink && (
                 <TouchableOpacity
                   accessibilityLabel="Copy destiny seed card"
@@ -1518,6 +1599,13 @@ const styles = StyleSheet.create({
     color: '#6aa9ff',
     textDecorationLine: 'underline',
     marginTop: 6,
+  },
+  commandText: {
+    color: '#6aa9ff',
+    textDecorationLine: 'underline',
+  },
+  commandTextUser: {
+    textDecorationLine: 'underline',
   },
   timestampContainer: {
     alignItems: 'center',
