@@ -777,6 +777,7 @@ class AgentChat extends React.Component {
     this.loadingMore = false;
     this.didInitialScroll = false;
     this.shouldScrollToEnd = false;
+    this.isNearBottom = true;
     this.hasAutoCommandRun = false;
     this.hasAutoLinkStartRun = false;
     this.chatStorageKey = null;
@@ -844,12 +845,11 @@ class AgentChat extends React.Component {
       },
       () => {
         this.shouldScrollToEnd = true;
-        this.scrollToEnd(false);
-        setTimeout(() => {
+        requestAnimationFrame(() => {
           if (this._isMounted) {
             this.scrollToEnd(false);
           }
-        }, 0);
+        });
         this.runAutoCommand().then(() => this.runAutoLinkStart());
       },
     );
@@ -1442,10 +1442,15 @@ class AgentChat extends React.Component {
   };
 
   handleScroll = event => {
-    const { contentOffset } = event.nativeEvent;
+    const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
     if (contentOffset?.y <= 20) {
       this.loadMoreHistory();
     }
+    const paddingToBottom = 80;
+    const layoutHeight = layoutMeasurement?.height || 0;
+    const contentHeight = contentSize?.height || 0;
+    const offsetY = contentOffset?.y || 0;
+    this.isNearBottom = layoutHeight + offsetY >= contentHeight - paddingToBottom;
   };
 
   scrollToEnd = animated => {
@@ -1455,10 +1460,10 @@ class AgentChat extends React.Component {
   };
 
   handleContentSizeChange = () => {
-    if (this.shouldScrollToEnd) {
-      this.scrollToEnd(true);
-      this.shouldScrollToEnd = false;
+    if (this.shouldScrollToEnd && this.isNearBottom) {
+      requestAnimationFrame(() => this.scrollToEnd(true));
     }
+    this.shouldScrollToEnd = false;
   };
 
   shouldShowTimestamp = index => {
@@ -1661,10 +1666,9 @@ class AgentChat extends React.Component {
                   <Text style={styles.emptyText}>Start a conversation with this agent.</Text>
                 </View>
               )}
-              maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
               onContentSizeChange={this.handleContentSizeChange}
               onLayout={() => {
-                if (!this.didInitialScroll) {
+                if (!this.didInitialScroll && this.state.messages.length > 0) {
                   this.scrollToEnd(false);
                   this.didInitialScroll = true;
                 }
