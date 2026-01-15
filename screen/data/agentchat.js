@@ -34,6 +34,20 @@ const INTRO_MESSAGES = [
   'Loading the on-device LLM… (not deployed yet)',
   'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain, or type /d to load a Destiny Seed Card, /h for help.',
 ];
+const COMMAND_USAGE_MESSAGES = {
+  en: {
+    r: 'Usage: /r <text> — <text> is the role description for the persona.',
+    welcome: 'Usage: /welcome <text> — <text> is the welcome message to save on-chain.',
+  },
+  'zh-cn': {
+    r: '用法：/r <text> — <text> 为角色设定。',
+    welcome: '用法：/welcome <text> — <text> 为欢迎语内容。',
+  },
+  'zh-tw': {
+    r: '用法：/r <text> — <text> 為角色設定。',
+    welcome: '用法：/welcome <text> — <text> 為歡迎語內容。',
+  },
+};
 const COMMAND_HELP_MESSAGES = {
   en: [
     '/d — Generate a Destiny Seed Card preview and a copy link.',
@@ -317,30 +331,45 @@ const COMMAND_HELP_ALIASES = {
 
 const normalizeLocale = locale => (locale || '').toString().trim().toLowerCase().replace('_', '-');
 
-const getCommandHelpMessage = () => {
+const resolveLocalizedEntry = (messagesByLocale, locale, key) => {
+  const entry = messagesByLocale[locale];
+  if (!entry) {
+    return null;
+  }
+  return key ? entry[key] : entry;
+};
+
+const getLocalizedMessage = (messagesByLocale, key) => {
   const interfaceLanguage =
     (loc && typeof loc.getInterfaceLanguage === 'function' && loc.getInterfaceLanguage()) ||
     (loc && typeof loc.getLanguage === 'function' && loc.getLanguage()) ||
     'en';
   const normalized = normalizeLocale(interfaceLanguage);
-  const directMatch = COMMAND_HELP_MESSAGES[normalized];
+  const directMatch = resolveLocalizedEntry(messagesByLocale, normalized, key);
   if (directMatch) {
     return directMatch;
   }
   const aliasKey = COMMAND_HELP_ALIASES[normalized];
-  if (aliasKey && COMMAND_HELP_MESSAGES[aliasKey]) {
-    return COMMAND_HELP_MESSAGES[aliasKey];
+  const aliasMatch = aliasKey ? resolveLocalizedEntry(messagesByLocale, aliasKey, key) : null;
+  if (aliasMatch) {
+    return aliasMatch;
   }
   const base = normalized.split('-')[0];
   const baseAlias = COMMAND_HELP_ALIASES[base];
-  if (baseAlias && COMMAND_HELP_MESSAGES[baseAlias]) {
-    return COMMAND_HELP_MESSAGES[baseAlias];
+  const baseAliasMatch = baseAlias ? resolveLocalizedEntry(messagesByLocale, baseAlias, key) : null;
+  if (baseAliasMatch) {
+    return baseAliasMatch;
   }
-  if (COMMAND_HELP_MESSAGES[base]) {
-    return COMMAND_HELP_MESSAGES[base];
+  const baseMatch = resolveLocalizedEntry(messagesByLocale, base, key);
+  if (baseMatch) {
+    return baseMatch;
   }
-  return COMMAND_HELP_MESSAGES.en;
+  return resolveLocalizedEntry(messagesByLocale, 'en', key) || '';
 };
+
+const getCommandHelpMessage = () => getLocalizedMessage(COMMAND_HELP_MESSAGES);
+
+const getCommandUsageMessage = commandKey => getLocalizedMessage(COMMAND_USAGE_MESSAGES, commandKey);
 const PAGE_SIZE = 10;
 const ATTR_SEED_LABELS = [
   'scene',
@@ -977,9 +1006,17 @@ class AgentChat extends React.Component {
       this.handleRoleCommand(roleMatch[1]);
       return;
     }
+    if (/^\/r\b/i.test(trimmed)) {
+      this.replyFromAgent(getCommandUsageMessage('r'));
+      return;
+    }
     const welcomeMatch = /^\/welcome\s+(.+)/i.exec(trimmed);
     if (welcomeMatch) {
       await this.handleWelcomeCommand(welcomeMatch[1]);
+      return;
+    }
+    if (/^\/welcome\b/i.test(trimmed)) {
+      this.replyFromAgent(getCommandUsageMessage('welcome'));
       return;
     }
 
@@ -1144,6 +1181,17 @@ class AgentChat extends React.Component {
     }
   };
 
+  isInteractiveCommand = commandText => {
+    if (!commandText) {
+      return false;
+    }
+    const trimmed = commandText.trim();
+    if (/^\/(r|welcome)\b/i.test(trimmed)) {
+      return false;
+    }
+    return true;
+  };
+
   getCommandSegments = text => {
     if (!text) {
       return [];
@@ -1156,7 +1204,7 @@ class AgentChat extends React.Component {
       if (match.index > lastIndex) {
         segments.push({ text: text.slice(lastIndex, match.index), isCommand: false });
       }
-      segments.push({ text: match[0], isCommand: true });
+      segments.push({ text: match[0], isCommand: this.isInteractiveCommand(match[0]) });
       lastIndex = match.index + match[0].length;
     }
     if (lastIndex < text.length) {
