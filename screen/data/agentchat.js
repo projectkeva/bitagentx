@@ -886,7 +886,8 @@ class AgentChat extends React.Component {
       .filter(value => value.length > 0);
     const candidates = Array.from(new Set(rawCandidates)).map(value => encodeURIComponent(value));
     let bestKey = null;
-    let bestTime = null;
+    let bestLen = -1;
+    let bestTime = -1;
 
     for (const candidate of candidates) {
       const path = this.getChatFilePath(candidate);
@@ -895,10 +896,32 @@ class AgentChat extends React.Component {
         if (!exists) {
           continue;
         }
-        const stat = await RNFS.stat(path);
-        const mtime = stat?.mtime ? new Date(stat.mtime).getTime() : 0;
-        if (bestTime === null || mtime > bestTime) {
+
+        let len = 0;
+        try {
+          const content = await RNFS.readFile(path, 'utf8');
+          const parsed = JSON.parse(content);
+          if (Array.isArray(parsed)) {
+            len = parsed.filter(message => !message?.hidden).length;
+          }
+        } catch (_) {
+          len = 0;
+        }
+
+        let mtime = 0;
+        try {
+          const stat = await RNFS.stat(path);
+          mtime = stat?.mtime ? new Date(stat.mtime).getTime() : 0;
+          if (!Number.isFinite(mtime)) {
+            mtime = 0;
+          }
+        } catch (_) {
+          mtime = 0;
+        }
+
+        if (len > bestLen || (len === bestLen && mtime > bestTime)) {
           bestKey = candidate;
+          bestLen = len;
           bestTime = mtime;
         }
       } catch (error) {
