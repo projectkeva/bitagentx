@@ -878,6 +878,26 @@ class AgentChat extends React.Component {
     return encodeURIComponent(String(key));
   };
 
+  getCanonicalChatStorageKey = params => {
+    const { namespaceId, shortCode, walletId } = params || {};
+    const norm = value => (value === null || typeof value === 'undefined' ? '' : String(value).trim());
+
+    let resolvedNamespaceId = norm(namespaceId);
+    const sc = norm(shortCode);
+    const wid = norm(walletId);
+
+    if (!resolvedNamespaceId && sc) {
+      const namespaces = this.props.namespaceList?.namespaces || {};
+      const hit = Object.values(namespaces).find(namespace => String(namespace?.shortCode || '').trim() === sc);
+      if (hit?.id) {
+        resolvedNamespaceId = String(hit.id).trim();
+      }
+    }
+
+    const id = resolvedNamespaceId || sc || wid || 'default';
+    return encodeURIComponent(`agentchat_${id}`);
+  };
+
   selectChatStorageKey = async params => {
     const { namespaceId, shortCode, walletId } = params || {};
     const rawCandidates = [namespaceId, shortCode, walletId]
@@ -933,7 +953,7 @@ class AgentChat extends React.Component {
   };
 
   setChatStorageKey = async params => {
-    this.chatStorageKey = await this.selectChatStorageKey(params);
+    this.chatStorageKey = this.getCanonicalChatStorageKey(params);
   };
 
   getChatFilePath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}.json`;
@@ -1128,6 +1148,27 @@ class AgentChat extends React.Component {
         resolve,
       );
     });
+    const params = this.props.navigation.state.params || {};
+    const keysToClear = new Set([this.getCanonicalChatStorageKey(params)]);
+
+    ['namespaceId', 'shortCode', 'walletId'].forEach(key => {
+      const value = params?.[key];
+      if (value !== null && typeof value !== 'undefined' && String(value).trim()) {
+        keysToClear.add(encodeURIComponent(String(value).trim()));
+      }
+    });
+
+    for (const storageKey of keysToClear) {
+      const path = this.getChatFilePath(storageKey);
+      try {
+        const exists = await RNFS.exists(path);
+        if (exists) {
+          await RNFS.unlink(path);
+        }
+      } catch (_) {}
+    }
+
+    this.chatStorageKey = this.getCanonicalChatStorageKey(params);
     await this.persistMessages([]);
   };
 
