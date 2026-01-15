@@ -778,6 +778,8 @@ class AgentChat extends React.Component {
     this.didInitialScroll = false;
     this.shouldScrollToEnd = false;
     this.isNearBottom = true;
+    this.lastContentHeight = 0;
+    this.forceScrollToBottomOnce = false;
     this.hasAutoCommandRun = false;
     this.hasAutoLinkStartRun = false;
     this.chatStorageKey = null;
@@ -845,11 +847,7 @@ class AgentChat extends React.Component {
       },
       () => {
         this.shouldScrollToEnd = true;
-        requestAnimationFrame(() => {
-          if (this._isMounted) {
-            this.scrollToEnd(false);
-          }
-        });
+        this.forceScrollToBottomOnce = true;
         this.runAutoCommand().then(() => this.runAutoLinkStart());
       },
     );
@@ -1005,7 +1003,8 @@ class AgentChat extends React.Component {
     this.setState(
       prevState => {
         const allMessages = [...prevState.allMessages, message];
-        const visibleCount = Math.max(prevState.visibleCount, Math.min(PAGE_SIZE, allMessages.length));
+        const base = Math.max(prevState.visibleCount, PAGE_SIZE);
+        const visibleCount = Math.min(allMessages.length, base + 1);
         return {
           allMessages,
           visibleCount,
@@ -1021,7 +1020,9 @@ class AgentChat extends React.Component {
     this.setState(
       prevState => {
         const allMessages = [...prevState.allMessages, ...messages];
-        const visibleCount = Math.max(prevState.visibleCount, Math.min(PAGE_SIZE, allMessages.length));
+        const added = messages.length;
+        const base = Math.max(prevState.visibleCount, PAGE_SIZE);
+        const visibleCount = Math.min(allMessages.length, base + added);
         return {
           allMessages,
           visibleCount,
@@ -1075,11 +1076,6 @@ class AgentChat extends React.Component {
     this.setState({ inputValue: '' });
     await this.handleTriggers(text);
     this.shouldScrollToEnd = true;
-    setTimeout(() => {
-      if (this._isMounted) {
-        this.scrollToEnd(false);
-      }
-    }, 0);
   };
 
   handleTriggers = async text => {
@@ -1190,11 +1186,6 @@ class AgentChat extends React.Component {
     this.setState({ inputValue: '' });
     await this.handleTriggers(commandText);
     this.shouldScrollToEnd = true;
-    setTimeout(() => {
-      if (this._isMounted) {
-        this.scrollToEnd(false);
-      }
-    }, 0);
     navigation?.setParams?.({ autoCommand: null });
   };
 
@@ -1453,16 +1444,21 @@ class AgentChat extends React.Component {
     this.isNearBottom = layoutHeight + offsetY >= contentHeight - paddingToBottom;
   };
 
-  scrollToEnd = animated => {
-    if (this.listRef) {
-      this.listRef.scrollToEnd({ animated });
+  scrollToBottomOffset = (animated = true) => {
+    if (!this.listRef) {
+      return;
     }
+    const offset = Math.max(0, (this.lastContentHeight || 0) + 200);
+    this.listRef.scrollToOffset({ offset, animated });
   };
 
-  handleContentSizeChange = () => {
-    if (this.shouldScrollToEnd && this.isNearBottom) {
-      requestAnimationFrame(() => this.scrollToEnd(true));
+  handleContentSizeChange = (width, height) => {
+    this.lastContentHeight = height || 0;
+    const shouldFollow = this.forceScrollToBottomOnce || (this.shouldScrollToEnd && this.isNearBottom);
+    if (shouldFollow && this.lastContentHeight > 0) {
+      requestAnimationFrame(() => this.scrollToBottomOffset(true));
     }
+    this.forceScrollToBottomOnce = false;
     this.shouldScrollToEnd = false;
   };
 
@@ -1669,7 +1665,7 @@ class AgentChat extends React.Component {
               onContentSizeChange={this.handleContentSizeChange}
               onLayout={() => {
                 if (!this.didInitialScroll && this.state.messages.length > 0) {
-                  this.scrollToEnd(false);
+                  this.forceScrollToBottomOnce = true;
                   this.didInitialScroll = true;
                 }
               }}
