@@ -829,8 +829,8 @@ class AgentChat extends React.Component {
   }
 
   initializeChat = async () => {
-    this.setChatStorageKey(this.props.navigation.state.params || {});
     await this.ensureStorage();
+    await this.setChatStorageKey(this.props.navigation.state.params || {});
     const history = await this.readHistory();
     if (!this._isMounted) {
       return;
@@ -878,13 +878,47 @@ class AgentChat extends React.Component {
     return encodeURIComponent(String(key));
   };
 
-  setChatStorageKey = params => {
-    this.chatStorageKey = this.resolveChatStorageKey(params);
+  selectChatStorageKey = async params => {
+    const { namespaceId, shortCode, walletId } = params || {};
+    const rawCandidates = [namespaceId, shortCode, walletId]
+      .filter(value => value !== null && typeof value !== 'undefined')
+      .map(value => String(value).trim())
+      .filter(value => value.length > 0);
+    const candidates = Array.from(new Set(rawCandidates)).map(value => encodeURIComponent(value));
+    let bestKey = null;
+    let bestTime = null;
+
+    for (const candidate of candidates) {
+      const path = this.getChatFilePath(candidate);
+      try {
+        const exists = await RNFS.exists(path);
+        if (!exists) {
+          continue;
+        }
+        const stat = await RNFS.stat(path);
+        const mtime = stat?.mtime ? new Date(stat.mtime).getTime() : 0;
+        if (bestTime === null || mtime > bestTime) {
+          bestKey = candidate;
+          bestTime = mtime;
+        }
+      } catch (error) {
+        console.warn('Failed to inspect chat storage candidate', error);
+      }
+    }
+
+    return bestKey || this.resolveChatStorageKey(params);
+  };
+
+  setChatStorageKey = async params => {
+    this.chatStorageKey = await this.selectChatStorageKey(params);
   };
 
   getChatFilePath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}.json`;
 
   readHistory = async () => {
+    if (!this.chatStorageKey) {
+      await this.setChatStorageKey(this.props.navigation.state.params || {});
+    }
     const path = this.getChatFilePath(this.chatStorageKey);
     try {
       const fileExists = await RNFS.exists(path);
@@ -905,7 +939,7 @@ class AgentChat extends React.Component {
 
   persistMessages = async messages => {
     if (!this.chatStorageKey) {
-      this.setChatStorageKey(this.props.navigation.state.params || {});
+      await this.setChatStorageKey(this.props.navigation.state.params || {});
     }
     const path = this.getChatFilePath(this.chatStorageKey);
     this.persistQueue = this.persistQueue
