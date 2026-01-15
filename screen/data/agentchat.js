@@ -779,6 +779,7 @@ class AgentChat extends React.Component {
     this.shouldScrollToEnd = false;
     this.hasAutoCommandRun = false;
     this.hasAutoLinkStartRun = false;
+    this.chatStorageKey = null;
   }
 
   static navigationOptions = ({ navigation }) => {
@@ -827,9 +828,9 @@ class AgentChat extends React.Component {
   }
 
   initializeChat = async () => {
-    const { namespaceId } = this.props.navigation.state.params || {};
+    this.setChatStorageKey(this.props.navigation.state.params || {});
     await this.ensureStorage();
-    const history = await this.readHistory(namespaceId);
+    const history = await this.readHistory();
     if (!this._isMounted) {
       return;
     }
@@ -864,10 +865,26 @@ class AgentChat extends React.Component {
     }
   };
 
-  getChatFilePath = namespaceId => `${CHAT_DIR}/${namespaceId || 'default'}.json`;
+  resolveChatStorageKey = params => {
+    const { namespaceId, shortCode, walletId } = params || {};
+    const fallback = [namespaceId, shortCode, walletId].find(value => {
+      if (value === null || typeof value === 'undefined') {
+        return false;
+      }
+      return String(value).trim().length > 0;
+    });
+    const key = fallback || 'default';
+    return encodeURIComponent(String(key));
+  };
 
-  readHistory = async namespaceId => {
-    const path = this.getChatFilePath(namespaceId);
+  setChatStorageKey = params => {
+    this.chatStorageKey = this.resolveChatStorageKey(params);
+  };
+
+  getChatFilePath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}.json`;
+
+  readHistory = async () => {
+    const path = this.getChatFilePath(this.chatStorageKey);
     try {
       const fileExists = await RNFS.exists(path);
       if (!fileExists) {
@@ -886,8 +903,10 @@ class AgentChat extends React.Component {
   };
 
   persistMessages = async messages => {
-    const { namespaceId } = this.props.navigation.state.params || {};
-    const path = this.getChatFilePath(namespaceId);
+    if (!this.chatStorageKey) {
+      this.setChatStorageKey(this.props.navigation.state.params || {});
+    }
+    const path = this.getChatFilePath(this.chatStorageKey);
     try {
       await RNFS.writeFile(path, JSON.stringify(messages), 'utf8');
     } catch (error) {
