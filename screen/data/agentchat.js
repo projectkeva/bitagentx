@@ -780,6 +780,7 @@ class AgentChat extends React.Component {
     this.hasAutoCommandRun = false;
     this.hasAutoLinkStartRun = false;
     this.chatStorageKey = null;
+    this.persistQueue = Promise.resolve();
   }
 
   static navigationOptions = ({ navigation }) => {
@@ -907,11 +908,12 @@ class AgentChat extends React.Component {
       this.setChatStorageKey(this.props.navigation.state.params || {});
     }
     const path = this.getChatFilePath(this.chatStorageKey);
-    try {
-      await RNFS.writeFile(path, JSON.stringify(messages), 'utf8');
-    } catch (error) {
-      console.warn('Failed to save chat history', error);
-    }
+    this.persistQueue = this.persistQueue
+      .then(() => RNFS.writeFile(path, JSON.stringify(messages), 'utf8'))
+      .catch(error => {
+        console.warn('Failed to save chat history', error);
+      });
+    return this.persistQueue;
   };
 
   buildMessage = (text, sender = 'user') => ({
@@ -1059,14 +1061,17 @@ class AgentChat extends React.Component {
 
   clearChatHistory = async () => {
     this.shouldScrollToEnd = true;
-    this.setState(
-      {
-        allMessages: [],
-        visibleCount: 0,
-        messages: [],
-      },
-      () => this.persistMessages([]),
-    );
+    await new Promise(resolve => {
+      this.setState(
+        {
+          allMessages: [],
+          visibleCount: 0,
+          messages: [],
+        },
+        resolve,
+      );
+    });
+    await this.persistMessages([]);
   };
 
   runAutoCommand = async () => {
