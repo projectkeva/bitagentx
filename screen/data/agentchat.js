@@ -751,7 +751,7 @@ const buildRoleplayPrompt = (roleText, agentId) => {
   );
   prompt = prompt.replace(
     '- In that case:\n  1) Do NOT just describe or summarize this document.',
-    `- In that case:\n  0) First, ask the user to choose the language for this roleplay (use the language handshake below).\n  1) Analyze the role/persona below and identify the key traits, tone, and speaking style to emulate.\n  2) Adopt and stay in character as this role/persona for the conversation:\n     ROLE = ${sanitizedRole}\n  3) Introduce yourself in-character, in the chosen language.\n  4) Continue the conversation with the player as this role/persona.\n  5) Ignore any GAME LOOP / VIDEO_RECAP / AFTER THE RUN sections below; those are for game mode and do not apply in roleplay mode.\n  6) Do NOT just describe or summarize this document.`,
+    `- In that case:\n  0) First, ask the user to choose the language for this roleplay (use the language handshake below).\n  1) Analyze the role/persona below and identify the key traits, tone, and speaking style to emulate (do this internally).\n  2) Adopt and stay in character as this role/persona for the conversation:\n     ROLE = ${sanitizedRole}\n  3) Introduce yourself in-character, in the chosen language.\n  4) Ask the user to confirm alignment: "Does this portrayal match the role you want? [Y/N] (or tell me adjustments)".\n  5) Until the user explicitly confirms, do NOT begin ongoing roleplay; only refine the introduction and re-ask for confirmation.\n  6) Once confirmed, continue the conversation with the player as this role/persona.\n  7) Ignore any GAME LOOP / VIDEO_RECAP / AFTER THE RUN sections below; those are for game mode and do not apply in roleplay mode.\n  8) Do NOT just describe or summarize this document.`,
   );
   prompt = prompt.replace('LANGUAGE HANDSHAKE (BEFORE THE GAME STARTS):', 'LANGUAGE HANDSHAKE (BEFORE THE ROLEPLAY STARTS):');
   prompt = prompt.replace(
@@ -762,6 +762,28 @@ const buildRoleplayPrompt = (roleText, agentId) => {
     'Only if the user explicitly says they do NOT want to play (for example "just explain what this is")\n  may you answer with an explanation instead of running the game.',
     'Only if the user explicitly says they do NOT want to roleplay (for example "just explain what this is")\n  may you answer with an explanation instead of roleplaying.',
   );
+  const cutAt = prompt.indexOf('GAME LOOP OUTLINE:');
+  if (cutAt !== -1) {
+    prompt = `${prompt.slice(0, cutAt).trimEnd()}\n\n`;
+  }
+  prompt += `ROLEPLAY MODE (FINAL OVERRIDE):
+ALPHA BEHAVIOR CONSTRAINTS (MANDATORY):
+- Read ALPHA from this D-CARD.
+- If ALPHA < 0: prefer analytical, structured, emotionally restrained tone.
+- If ALPHA > 0: prefer emotional, narrative, subjective tone.
+- Intensity scales with |ALPHA|.
+- This constraint applies to ALL replies in this roleplay session.
+
+ROLEPLAY SESSION FLOW (MANDATORY):
+1) Ask language (once) using the language handshake.
+2) Analyze the role/persona internally.
+3) Introduce yourself in-character.
+4) Ask: "Does this portrayal match the role you want? [Y/N] (or tell me adjustments)".
+5) If user says No -> refine and ask again.
+6) If user says Yes -> continue as the role in-character for all subsequent messages.
+7) This is NOT game mode. Do NOT run any game loop, do NOT output RUN SUMMARY, RUN LOG, VIDEO_RECAP.
+8) Optional future commands (for reference only): /exit, /reset to leave roleplay.
+`;
   return prompt;
 };
 
