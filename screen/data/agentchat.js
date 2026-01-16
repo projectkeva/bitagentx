@@ -1327,6 +1327,38 @@ class AgentChat extends React.Component {
     return true;
   };
 
+  isValidCommandText = text => {
+    if (!text) {
+      return false;
+    }
+    const trimmed = text.trim();
+    if (!trimmed.startsWith('/')) {
+      return false;
+    }
+    if (/^\/(c|clear)\b/i.test(trimmed)) {
+      return true;
+    }
+    if (/^\/h\b/i.test(trimmed)) {
+      return true;
+    }
+    if (/^\/linkstart\b/i.test(trimmed)) {
+      return true;
+    }
+    if (/^\/r\s+.+/i.test(trimmed)) {
+      return true;
+    }
+    if (/^\/welcome\s+.+/i.test(trimmed)) {
+      return true;
+    }
+    if (/^\/d$/i.test(trimmed)) {
+      return true;
+    }
+    if (/^\/block$/i.test(trimmed)) {
+      return true;
+    }
+    return false;
+  };
+
   getCommandSegments = text => {
     if (!text) {
       return [];
@@ -1587,7 +1619,10 @@ class AgentChat extends React.Component {
   renderMessage = ({ item, index }) => {
     const isUser = item.sender === 'user';
     const hasCopyLink = Boolean(item.copyText && item.linkLabel);
-    const commandSegments = this.getCommandSegments(item.text);
+    const commandSegments =
+      isUser && this.isValidCommandText(item.text)
+        ? [{ text: item.text, isCommand: true }]
+        : this.getCommandSegments(item.text);
     const hasCommandTokens = commandSegments.some(segment => segment.isCommand);
     const messageTextStyle = [styles.messageText, isUser ? styles.userText : styles.agentText];
     const commandTextStyle = isUser ? styles.commandTextUser : styles.commandText;
