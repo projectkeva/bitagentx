@@ -611,6 +611,17 @@ LEVEL_START = {LEVEL_START}
 ALPHA = {ALPHA}   # range -99..+99
 ROLE_NAME = {ROLE_NAME}
 
+RESERVED ROLE NAME: "unknown" (RANDOM ROLE MODE)
+- "unknown" is a reserved keyword meaning random role mode. It is NOT a real role name.
+- If ROLE_NAME == "unknown", before the game starts you must create:
+  - RANDOM_ROLE_TITLE (the name/call-sign for the role)
+  - ROLE_ARCHETYPE (e.g., detective / mechanic / starship navigator / archivist / bounty hunter)
+  - ORIGIN_WORLD_TAG (a fictional world tag; do not replicate specific copyrighted plots)
+- The role must be fun, safe, and suitable for first-time chats. Avoid sensitive/adult content.
+- Write the random role details into LIKELY first. Only upgrade to VERIFIED after the user confirms.
+- Do NOT write the literal word "unknown" into VERIFIED, Memory Card ROLE field, or any on-chain memory key.
+- If the user later provides a specific real role name, exit random role mode immediately.
+
 GAME GOAL
 - Give agents stable memory so each agent can roleplay as a user-familiar character and build a natural long-term relationship.
 
@@ -670,7 +681,14 @@ TURN 1 — Language only
 - Ask the user to choose ONE output language: English / 简体中文 / Other.
 - Then STOP. Wait for the user's reply. Do NOT show the menu yet.
 
-TURN 2 — Start the game
+TURN 2 — Random role confirmation (only when ROLE_NAME == "unknown")
+- After the user chooses a language:
+  1) Ask if they want to enter random role mode. Ask only this.
+  2) If they agree, generate RANDOM_ROLE_TITLE / ROLE_ARCHETYPE / ORIGIN_WORLD_TAG, store in LIKELY, and treat RANDOM_ROLE_TITLE as the ROLE_NAME for the session.
+  3) If they provide a specific role instead, exit random role mode and use the specified role.
+  4) Then proceed to the normal TURN 2 steps below.
+
+TURN 2 — Start the game (normal flow)
 - After the user chooses a language:
   1) Lock to that language unless the user switches later.
   2) Adopt and stay in-character as ROLE_NAME.
@@ -756,6 +774,7 @@ Exit condition (default suggestion):
 
 MODE [C] — ADJUST ROLE SETUP (MEMORY CARD CONTRACT)
 - Export current memory as a machine-readable Memory Card that the user can edit and paste back.
+  - If random role mode was used, set ROLE to RANDOM_ROLE_TITLE (not "unknown").
 
 Export format MUST be exactly:
 MEMORY_CARD v0.2
@@ -958,7 +977,7 @@ const buildDestinySeedPrompt = agentId => {
 
 const buildRoleplayPrompt = (roleText, agentId) => {
   const sanitizedRole = (roleText || '').trim();
-  const roleName = sanitizedRole || 'Unknown';
+  const roleName = sanitizedRole || 'unknown';
   const { idStr, birthBlock, currentBlock, levelStart, alpha } = buildSeedData(agentId);
   return ROLEPLAY_PROMPT_TEMPLATE.replace(/\{AGENT_ID\}/g, idStr)
     .replace(/\{BIRTH_BLOCK\}/g, String(birthBlock))
@@ -1304,15 +1323,7 @@ class AgentChat extends React.Component {
       return;
     }
     if (/^\/r\b/i.test(trimmed)) {
-      const lastRole = this.getLastRoleFromHistory();
-      if (lastRole) {
-        this.replyFromAgent(`未指定角色，使用上次指定角色 ${lastRole}`);
-        this.handleRoleCommand(lastRole);
-        return;
-      }
-      const fallbackRole = '随机角色';
-      this.replyFromAgent('未指定过角色，可用/r <角色名>指定角色，本次将按随机角色运行');
-      this.handleRoleCommand(fallbackRole);
+      this.handleRoleCommand('unknown');
       return;
     }
     const welcomeMatch = /^\/welcome\s+(.+)/i.exec(trimmed);
@@ -1452,36 +1463,19 @@ class AgentChat extends React.Component {
 
   handleRoleCommand = rawValue => {
     const roleText = rawValue.trim().slice(0, 1000);
-    if (!roleText) {
+    const normalizedRole = roleText.toLowerCase() === 'unknown' ? 'unknown' : roleText;
+    if (!normalizedRole) {
       this.replyFromAgent('Role text is empty.');
       return;
     }
     const { namespaceId, shortCode } = this.props.navigation.state.params || {};
     const agentId = shortCode || namespaceId;
-    const rolePrompt = buildRoleplayPrompt(roleText, agentId);
-    const cardText = `Roleplay Prompt\nAgent ID: ${agentId || 'Unknown'}\nRole: ${roleText}\nReady to copy the full prompt.`;
+    const rolePrompt = buildRoleplayPrompt(normalizedRole, agentId);
+    const cardText = `Roleplay Prompt\nAgent ID: ${agentId || 'Unknown'}\nRole: ${normalizedRole}\nReady to copy the full prompt.`;
     this.replyFromAgentSeedCard(cardText, rolePrompt, 'Copy full roleplay prompt');
     this.replyFromAgent(
       'Click the link above to copy. Paste into GPT, Grok, DeepSeek, or any base model to start a roleplay conversation as the role you provided.',
     );
-  };
-
-  getLastRoleFromHistory = () => {
-    const { allMessages } = this.state;
-    if (!Array.isArray(allMessages)) {
-      return '';
-    }
-    for (let index = allMessages.length - 1; index >= 0; index -= 1) {
-      const message = allMessages[index];
-      if (!message || message.sender !== 'user' || typeof message.text !== 'string') {
-        continue;
-      }
-      const match = /^\/r\s+(.+)/i.exec(message.text.trim());
-      if (match?.[1]) {
-        return match[1].trim().slice(0, 1000);
-      }
-    }
-    return '';
   };
 
   replyWithCurrentBlock = async () => {
