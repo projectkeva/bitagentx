@@ -1304,7 +1304,15 @@ class AgentChat extends React.Component {
       return;
     }
     if (/^\/r\b/i.test(trimmed)) {
-      this.replyFromAgent(getCommandUsageMessage('r'));
+      const lastRole = this.getLastRoleFromHistory();
+      if (lastRole) {
+        this.replyFromAgent(`未指定角色，使用上次指定角色 ${lastRole}`);
+        this.handleRoleCommand(lastRole);
+        return;
+      }
+      const fallbackRole = '随机角色';
+      this.replyFromAgent('未指定过角色，可用/r <角色名>指定角色，本次将按随机角色运行');
+      this.handleRoleCommand(fallbackRole);
       return;
     }
     const welcomeMatch = /^\/welcome\s+(.+)/i.exec(trimmed);
@@ -1458,6 +1466,24 @@ class AgentChat extends React.Component {
     );
   };
 
+  getLastRoleFromHistory = () => {
+    const { allMessages } = this.state;
+    if (!Array.isArray(allMessages)) {
+      return '';
+    }
+    for (let index = allMessages.length - 1; index >= 0; index -= 1) {
+      const message = allMessages[index];
+      if (!message || message.sender !== 'user' || typeof message.text !== 'string') {
+        continue;
+      }
+      const match = /^\/r\s+(.+)/i.exec(message.text.trim());
+      if (match?.[1]) {
+        return match[1].trim().slice(0, 1000);
+      }
+    }
+    return '';
+  };
+
   replyWithCurrentBlock = async () => {
     try {
       await BlueElectrum.ping();
@@ -1526,6 +1552,9 @@ class AgentChat extends React.Component {
       return true;
     }
     if (/^\/r\s+.+/i.test(trimmed)) {
+      return true;
+    }
+    if (/^\/r\b/i.test(trimmed)) {
       return true;
     }
     if (/^\/welcome\s+.+/i.test(trimmed)) {
