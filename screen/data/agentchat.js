@@ -29,7 +29,8 @@ import { decodeBase64, getNamespaceScriptHash, toScriptHash, updateKeyValue } fr
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
-const COMMAND_TOKEN_REGEX = /\/[a-z][\w-]*(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?/gi;
+const COMMAND_TOKEN_REGEX =
+  /\/(?:r|welcome)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:d|h|c|clear|linkstart|block)\b/gi;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
   'Loading the on-device LLM… (not deployed yet)',
@@ -2193,16 +2194,32 @@ const styles = StyleSheet.create({
     color: '#d2d7e0',
   },
   linkText: {
-    color: '#6aa9ff',
-    textDecorationLine: 'underline',
+    color: '#0b1224',
+    backgroundColor: '#d6e8ff',
+    textDecorationLine: 'none',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    overflow: 'hidden',
     marginTop: 6,
   },
   commandText: {
-    color: '#6aa9ff',
-    textDecorationLine: 'underline',
+    color: '#0b1224',
+    backgroundColor: '#d6e8ff',
+    textDecorationLine: 'none',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    overflow: 'hidden',
   },
   commandTextUser: {
-    textDecorationLine: 'underline',
+    color: '#0b1224',
+    backgroundColor: '#d6e8ff',
+    textDecorationLine: 'none',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    overflow: 'hidden',
   },
   timestampContainer: {
     alignItems: 'center',
