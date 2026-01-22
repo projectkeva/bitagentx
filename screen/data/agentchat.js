@@ -29,7 +29,7 @@ import { decodeBase64, getNamespaceScriptHash, toScriptHash, updateKeyValue } fr
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
-const COMMAND_TOKEN_REGEX = /\/[a-z][\w-]*(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\n—]+)?/gi;
+const COMMAND_TOKEN_REGEX = /\/[a-z][\w-]*(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?/gi;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
   'Loading the on-device LLM… (not deployed yet)',
