@@ -1678,10 +1678,10 @@ class AgentChat extends React.Component {
     }
     const trimmed = commandText.trim();
     if (/^\/welcome\b/i.test(trimmed)) {
-      return false;
+      return true;
     }
     if (/^\/r\b/i.test(trimmed)) {
-      return !/<[^>]+>/.test(trimmed);
+      return true;
     }
     return true;
   };
