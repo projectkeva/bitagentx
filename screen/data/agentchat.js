@@ -28,7 +28,7 @@ import { updateKeyValue } from '../../class/keva-ops';
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
-const COMMAND_TOKEN_REGEX = /\/[a-z][\w-]*(?:\s+<[^>]+>)?/gi;
+const COMMAND_TOKEN_REGEX = /\/[a-z][\w-]*(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\n—]+)?/gi;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
   'Loading the on-device LLM… (not deployed yet)',
@@ -293,6 +293,11 @@ const COMMAND_HELP_MESSAGES = {
     '/h — Tüm komut açıklamalarını göster.',
   ].join('\n'),
 };
+const ROLE_HISTORY_TITLES = {
+  en: 'Recent /r commands:',
+  'zh-cn': '最近的 /r 命令：',
+  'zh-tw': '最近的 /r 命令：',
+};
 
 const COMMAND_HELP_ALIASES = {
   'zh-hans': 'zh-cn',
@@ -370,6 +375,7 @@ const getLocalizedMessage = (messagesByLocale, key) => {
 const getCommandHelpMessage = () => getLocalizedMessage(COMMAND_HELP_MESSAGES);
 
 const getCommandUsageMessage = commandKey => getLocalizedMessage(COMMAND_USAGE_MESSAGES, commandKey);
+const getRoleHistoryTitle = () => getLocalizedMessage(ROLE_HISTORY_TITLES);
 const PAGE_SIZE = 10;
 const ATTR_SEED_LABELS = [
   'scene',
@@ -1324,6 +1330,7 @@ class AgentChat extends React.Component {
     }
     if (/^\/r\b/i.test(trimmed)) {
       this.handleRoleCommand('unknown');
+      this.replyFromAgent(this.buildRoleHistoryMessage());
       return;
     }
     const welcomeMatch = /^\/welcome\s+(.+)/i.exec(trimmed);
@@ -1478,6 +1485,54 @@ class AgentChat extends React.Component {
     );
   };
 
+  getRecentRoleCommands = () => {
+    const { allMessages } = this.state;
+    const recentCommands = [];
+    let unknownCommand = null;
+
+    for (let index = allMessages.length - 1; index >= 0; index -= 1) {
+      const message = allMessages[index];
+      if (message?.sender !== 'user') {
+        continue;
+      }
+      const trimmed = message.text?.trim();
+      if (!trimmed || !/^\/r\b/i.test(trimmed)) {
+        continue;
+      }
+      const roleValue = trimmed.replace(/^\/r\b/i, '').trim();
+      if (!roleValue || roleValue.toLowerCase() === 'unknown') {
+        if (!unknownCommand) {
+          unknownCommand = '/r unknown';
+        }
+        continue;
+      }
+      recentCommands.push(`/r ${roleValue}`);
+      if (recentCommands.length >= 3 && unknownCommand) {
+        break;
+      }
+    }
+
+    return {
+      recentCommands,
+      unknownCommand: unknownCommand || '/r unknown',
+    };
+  };
+
+  buildRoleHistoryMessage = () => {
+    const { recentCommands, unknownCommand } = this.getRecentRoleCommands();
+    const lines = [getRoleHistoryTitle()];
+    if (recentCommands.length > 0) {
+      lines.push(...recentCommands);
+    }
+    lines.push(unknownCommand);
+    const usage = getCommandUsageMessage('r');
+    if (usage) {
+      lines.push('');
+      lines.push(usage);
+    }
+    return lines.join('\n');
+  };
+
   replyWithCurrentBlock = async () => {
     try {
       await BlueElectrum.ping();
@@ -1522,8 +1577,11 @@ class AgentChat extends React.Component {
       return false;
     }
     const trimmed = commandText.trim();
-    if (/^\/(r|welcome)\b/i.test(trimmed)) {
+    if (/^\/welcome\b/i.test(trimmed)) {
       return false;
+    }
+    if (/^\/r\b/i.test(trimmed)) {
+      return !/<[^>]+>/.test(trimmed);
     }
     return true;
   };
