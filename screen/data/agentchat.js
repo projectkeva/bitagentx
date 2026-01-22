@@ -15,6 +15,7 @@ import { Icon } from 'react-native-elements';
 import RNFS from 'react-native-fs';
 import { connect } from 'react-redux';
 import CryptoJS from 'crypto-js';
+import { decode as b64decode } from 'base-64';
 let BlueElectrum = require('../../BlueElectrum');
 let BlueApp = require('../../BlueApp');
 const StyleSheet = require('../../PlatformStyleSheet');
@@ -24,7 +25,7 @@ let loc = require('../../loc');
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
 import ActionSheet from '../ActionSheet';
-import { updateKeyValue } from '../../class/keva-ops';
+import { decodeBase64, getNamespaceScriptHash, toScriptHash, updateKeyValue } from '../../class/keva-ops';
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
@@ -1339,7 +1340,7 @@ class AgentChat extends React.Component {
       return;
     }
     if (/^\/welcome\b/i.test(trimmed)) {
-      this.replyFromAgent(getCommandUsageMessage('welcome'));
+      await this.handleWelcomeLookup();
       return;
     }
 
@@ -1427,6 +1428,105 @@ class AgentChat extends React.Component {
       return;
     }
     await this.sendCommand('/linkstart');
+  };
+
+  decodeKeyValueEntry = kv => {
+    if (!kv) {
+      return kv;
+    }
+    let key = kv.key;
+    let value = kv.value;
+
+    try {
+      key = kv.key ? decodeBase64(kv.key) : kv.key;
+    } catch (error) {
+      key = kv.key;
+    }
+
+    if (value) {
+      try {
+        value = b64decode(value);
+      } catch (error) {
+        value = kv.value;
+      }
+    }
+
+    return { ...kv, key, value };
+  };
+
+  parseWelcomeEnvelope = value => {
+    if (!value) {
+      return '';
+    }
+    if (typeof value !== 'string') {
+      return String(value);
+    }
+    try {
+      const parsed = JSON.parse(value);
+      return parsed.text || parsed.cipher || value;
+    } catch (error) {
+      return value;
+    }
+  };
+
+  fetchWelcomeValue = async () => {
+    const { navigation, namespaceList } = this.props;
+    const { namespaceId, shortCode } = navigation.state.params || {};
+
+    let resolvedNamespaceId = namespaceId;
+    let namespace = namespaceId ? namespaceList?.namespaces?.[namespaceId] : null;
+
+    if (!namespace && shortCode) {
+      const namespaces = namespaceList?.namespaces || {};
+      const match = Object.values(namespaces).find(entry => String(entry?.shortCode || '').trim() === String(shortCode).trim());
+      if (match?.id) {
+        resolvedNamespaceId = match.id;
+        namespace = match;
+      }
+    }
+
+    if (!resolvedNamespaceId) {
+      return null;
+    }
+
+    const scriptHash = namespace?.rootAddress ? toScriptHash(namespace.rootAddress) : getNamespaceScriptHash(resolvedNamespaceId);
+
+    try {
+      await BlueElectrum.ping();
+      const response = await BlueElectrum.blockchainKeva_getKeyValues(scriptHash, -1);
+      const keyvalues = Array.isArray(response) ? response : response?.keyvalues || [];
+      if (!keyvalues.length) {
+        return null;
+      }
+
+      const welcomeEntry = keyvalues
+        .map(this.decodeKeyValueEntry)
+        .reverse()
+        .find(entry => entry?.key === 'welcome' && entry.value);
+
+      if (!welcomeEntry) {
+        return null;
+      }
+
+      const parsedValue = this.parseWelcomeEnvelope(welcomeEntry.value);
+      const welcomeText = typeof parsedValue === 'string'
+        ? parsedValue.trim()
+        : String(parsedValue || '').trim();
+
+      return welcomeText || null;
+    } catch (error) {
+      console.warn('AgentChat: failed to load welcome message', error);
+      return null;
+    }
+  };
+
+  handleWelcomeLookup = async () => {
+    const welcomeText = await this.fetchWelcomeValue();
+    if (welcomeText) {
+      this.replyFromAgent(welcomeText);
+      return;
+    }
+    this.replyFromAgent(getCommandUsageMessage('welcome'));
   };
 
   handleWelcomeCommand = async rawValue => {
@@ -1610,6 +1710,9 @@ class AgentChat extends React.Component {
       return true;
     }
     if (/^\/welcome\s+.+/i.test(trimmed)) {
+      return true;
+    }
+    if (/^\/welcome\b/i.test(trimmed)) {
       return true;
     }
     if (/^\/d$/i.test(trimmed)) {
