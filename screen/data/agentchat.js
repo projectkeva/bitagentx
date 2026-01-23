@@ -377,7 +377,10 @@ const getLocalizedMessage = (messagesByLocale, key) => {
 const getCommandHelpMessage = () => getLocalizedMessage(COMMAND_HELP_MESSAGES);
 
 const getCommandUsageMessage = commandKey => getLocalizedMessage(COMMAND_USAGE_MESSAGES, commandKey);
-const getRoleHistoryTitle = () => getLocalizedMessage(ROLE_HISTORY_TITLES);
+const getRoleHistoryTitle = () => {
+  const title = getLocalizedMessage(ROLE_HISTORY_TITLES);
+  return title.replace('/r', '/\u200Br');
+};
 const PAGE_SIZE = 10;
 const ATTR_SEED_LABELS = [
   'scene',
