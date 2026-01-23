@@ -126,8 +126,8 @@ const TAG_DM_PREFIX = '#DM';
 const TAG_CHAT_PREFIX = '#CHAT';
 const TAG_GLOBAL_CHAT = '#chatxkeva';
 const ACTION_PAGES = [
-  ['Story', 'Inbox', 'Chat', 'Task'],
-  ['Profile', 'Role', 'Room', 'DNA'],
+  ['Story', 'Inbox', 'Chat', 'Role'],
+  ['Profile', 'Task', 'Room', 'DNA'],
   ['Wallet', 'Market', 'Asset', 'Game'],
   ['Link', 'Log', 'Inbox', 'Task'],
 ];
@@ -284,6 +284,8 @@ class Namespace extends React.Component {
         return this.onChat?.({ autoCommand: '/linkstart' });
       case 'Story':
         return this.onStory?.();
+      case 'Role':
+        return this.onChat?.({ autoCommand: '/r' });
       default:
         return;
     }
@@ -581,7 +583,7 @@ class Namespace extends React.Component {
               <View style={styles.spaceActionGrid}>
                 <View style={styles.spaceActionRowMulti}>
                   {ACTION_PAGES[this.state.actionPageIndex].map(label => {
-                    const isChatAction = label === 'Chat' || label === 'Story';
+                    const isChatAction = label === 'Chat' || label === 'Story' || label === 'Role';
                     const disabled = !isChatAction || !canChat;
                     const onPress = disabled ? undefined : () => this.onPressAction(label);
                     return renderActionButton({ label, disabled, onPress });
