@@ -1015,6 +1015,7 @@ class AgentChat extends React.Component {
     this.forceScrollToBottomOnce = false;
     this.hasAutoCommandRun = false;
     this.hasAutoLinkStartRun = false;
+    this.lastAutoCommand = null;
     this.chatStorageKey = null;
     this.persistQueue = Promise.resolve();
   }
@@ -1058,6 +1059,15 @@ class AgentChat extends React.Component {
     this._isMounted = true;
     this.props.navigation?.setParams?.({ onTitlePress: this.handleTitlePress });
     this.initializeChat();
+  }
+
+  componentDidUpdate(prevProps) {
+    const prevAutoCommand = prevProps.navigation?.state?.params?.autoCommand;
+    const nextAutoCommand = this.props.navigation?.state?.params?.autoCommand;
+    if (nextAutoCommand && nextAutoCommand !== prevAutoCommand && nextAutoCommand !== this.lastAutoCommand) {
+      this.hasAutoCommandRun = false;
+      this.runAutoCommand().then(() => this.runAutoLinkStart());
+    }
   }
 
   componentWillUnmount() {
@@ -1416,6 +1426,7 @@ class AgentChat extends React.Component {
       return;
     }
     this.hasAutoCommandRun = true;
+    this.lastAutoCommand = commandText;
     this.appendMessage(this.buildMessage(commandText, 'user'));
     this.setState({ inputValue: '' });
     await this.handleTriggers(commandText);
