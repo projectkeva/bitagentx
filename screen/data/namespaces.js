@@ -285,7 +285,7 @@ class Namespace extends React.Component {
       case 'Story':
         return this.onStory?.();
       case 'Role':
-        return this.onChat?.({ autoCommand: '/r' });
+        return this.onChat?.({ autoCommand: '/r', suppressAutoLinkStart: true });
       default:
         return;
     }
@@ -402,7 +402,7 @@ class Namespace extends React.Component {
     if (!this.props.canChat) {
       return;
     }
-    this.onChat({ autoCommand: '/d' });
+    this.onChat({ autoCommand: '/d', suppressAutoLinkStart: true });
   }
 
   onChat = (options = {}) => {
@@ -414,7 +414,7 @@ class Namespace extends React.Component {
       return;
     }
     const namespaceId = data.id || data.namespaceId;
-    const { autoCommand } = options;
+    const { autoCommand, suppressAutoLinkStart } = options;
 
     if (!isOther) {
       navigation.push('AgentChat', {
@@ -429,6 +429,7 @@ class Namespace extends React.Component {
         addr: data.addr,
         profile: data.profile,
         autoCommand,
+        suppressAutoLinkStart,
       });
       return;
     }

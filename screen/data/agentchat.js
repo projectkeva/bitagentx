@@ -1438,6 +1438,10 @@ class AgentChat extends React.Component {
     if (this.hasAutoLinkStartRun) {
       return;
     }
+    const { suppressAutoLinkStart } = this.props.navigation?.state?.params || {};
+    if (suppressAutoLinkStart) {
+      return;
+    }
     this.hasAutoLinkStartRun = true;
     if (this.hasIntroSequence(this.state.allMessages)) {
       return;
