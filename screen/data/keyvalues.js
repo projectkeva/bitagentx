@@ -1380,10 +1380,6 @@ class KeyValues extends React.Component {
       });
       const alphaValue = shortCode ? computeAlphaValue(shortCode) : null;
       const { backgroundColor: alphaBackgroundColor, textPalette: alphaTextPalette } = getAlphaColorDetails(alphaValue);
-      const underlineStyle = {
-        textDecorationLine: 'underline',
-        textDecorationColor: alphaTextPalette.underlineColor,
-      };
       const alphaLabelText = Number.isFinite(alphaValue)
         ? `[ α${alphaValue > 0 ? `+${alphaValue}` : alphaValue} ]`
         : null;
@@ -1426,20 +1422,20 @@ class KeyValues extends React.Component {
             <View style={{paddingRight: 10, flexShrink: 1}}>
               <View style={{flexDirection: 'row', marginBottom: 5}}>
                 <Text
-                  style={[styles.sender, { color: alphaTextPalette.primaryColor }, underlineStyle]}
+                  style={[styles.sender, { color: alphaTextPalette.primaryColor }]}
                   numberOfLines={1}
                   ellipsizeMode="tail"
                 >
                   {displayName + ' '}
                 </Text>
                 <TouchableOpacity onPress={() => this.copyString(shortCode)}>
-                  <Text style={[styles.shortCode, { color: alphaTextPalette.accentColor }, underlineStyle]}>
+                  <Text style={[styles.shortCode, { color: alphaTextPalette.accentColor }]}>
                     {`@${shortCode}`}
                   </Text>
                 </TouchableOpacity>
               </View>
               {levelLabelText && (
-                <Text style={[styles.levelLabel, { color: alphaTextPalette.secondaryColor }, underlineStyle]}>{levelLabelText}</Text>
+                <Text style={[styles.levelLabel, { color: alphaTextPalette.secondaryColor }]}>{levelLabelText}</Text>
               )}
               {
                 isOther ?
@@ -1470,10 +1466,10 @@ class KeyValues extends React.Component {
                 (
                 <View style={{flexDirection: 'row'}}>
                   <Button
-                    type='outline'
-                    buttonStyle={{borderRadius: 30, height: 28, width: 130, padding: 0, borderColor: KevaColors.actionText}}
-                    title={`Mode: ${this.state.filterMode || 'TEXT'}`}
-                    titleStyle={{fontSize: 13, color: KevaColors.actionText}}
+                    type='solid'
+                    buttonStyle={{borderRadius: 30, height: 28, width: 130, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
+                    title={`${this.state.filterMode || 'TEXT'}`}
+                    titleStyle={{fontSize: 13, color: '#fff'}}
                     onPress={this.cycleFilterMode}
                   />
                   {
