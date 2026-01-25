@@ -126,10 +126,10 @@ const TAG_DM_PREFIX = '#DM';
 const TAG_CHAT_PREFIX = '#CHAT';
 const TAG_GLOBAL_CHAT = '#chatxkeva';
 const ACTION_PAGES = [
-  ['Story', 'Inbox', 'Chat', 'Role'],
+  ['Message', 'Chat', 'Role', 'Story'],
   ['Profile', 'Task', 'Room', 'DNA'],
   ['Wallet', 'Market', 'Asset', 'Game'],
-  ['Link', 'Log', 'Inbox', 'Task'],
+  ['Message', 'Link', 'Log', 'Task'],
 ];
 
 const normalizeShortCode = shortCode => {
