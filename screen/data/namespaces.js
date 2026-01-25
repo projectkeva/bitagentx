@@ -280,6 +280,8 @@ class Namespace extends React.Component {
 
   onPressAction = label => {
     switch (label) {
+      case 'Message':
+        return this.onMessage?.();
       case 'Chat':
         return this.onChat?.({ autoCommand: '/linkstart' });
       case 'Story':
@@ -403,6 +405,21 @@ class Namespace extends React.Component {
       return;
     }
     this.onChat({ autoCommand: '/d', suppressAutoLinkStart: true });
+  }
+
+  onMessage = () => {
+    const { data, navigation, isOther } = this.props;
+    if (isOther) {
+      return;
+    }
+    if (!navigation || typeof navigation.push !== 'function') {
+      return;
+    }
+    const namespaceId = data.id || data.namespaceId;
+    navigation.push('GuestChat', {
+      mode: 'guest',
+      targetNamespaceId: namespaceId,
+    });
   }
 
   onChat = (options = {}) => {
@@ -585,7 +602,7 @@ class Namespace extends React.Component {
                 <View style={styles.spaceActionRowMulti}>
                   {ACTION_PAGES[this.state.actionPageIndex].map(label => {
                     const isChatAction = label === 'Chat' || label === 'Story' || label === 'Role';
-                    const disabled = !isChatAction || !canChat;
+                    const disabled = isChatAction && !canChat;
                     const onPress = disabled ? undefined : () => this.onPressAction(label);
                     return renderActionButton({ label, disabled, onPress });
                   })}
