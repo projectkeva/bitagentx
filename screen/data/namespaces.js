@@ -2313,8 +2313,9 @@ var styles = StyleSheet.create({
     marginBottom: 8,
   },
   spaceActionButtonDisabled: {
-    backgroundColor: 'rgba(125, 211, 252, 0.08)',
-    borderColor: 'rgba(148, 163, 184, 0.35)',
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    borderColor: 'rgba(148, 163, 184, 0.2)',
+    opacity: 0.45,
   },
   spaceActionText: {
     color: '#E0F2FE',
@@ -2323,7 +2324,7 @@ var styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   spaceActionTextDisabled: {
-    color: 'rgba(148, 163, 184, 0.7)',
+    color: 'rgba(148, 163, 184, 0.45)',
   },
   modal: {
     height: 300,
