@@ -690,6 +690,10 @@ class HashtagExplore extends React.Component {
     return mode === 'guest';
   }
 
+  getGuestTargetNamespaceId = () => {
+    return this.props.navigation?.state?.params?.targetNamespaceId;
+  }
+
   progressCallback = (totalToFetch, fetched) => {
     this.setState({totalToFetch, fetched});
   }
@@ -927,9 +931,13 @@ class HashtagExplore extends React.Component {
 
   loadGuestDMs = async () => {
     const { namespaceList, otherNamespaceList } = this.props;
+    const targetNamespaceId = this.getGuestTargetNamespaceId();
     const myNamespaceIds = namespaceList?.order || [];
+    const scopedNamespaceIds = targetNamespaceId
+      ? [targetNamespaceId]
+      : myNamespaceIds;
     const followedMap = otherNamespaceList?.namespaces || {};
-    if (!myNamespaceIds.length) {
+    if (!scopedNamespaceIds.length) {
       this.setState({ hashtags: [], searched: true, loading: false, isRefreshing: false });
       return;
     }
@@ -942,7 +950,7 @@ class HashtagExplore extends React.Component {
       const collected = [];
       const guestShortcodeCache = {};
 
-      for (const myNamespaceId of myNamespaceIds) {
+      for (const myNamespaceId of scopedNamespaceIds) {
         const myNamespace = namespaceList?.namespaces?.[myNamespaceId] || {};
         const myShortCode = myNamespace.shortCode || myNamespaceId;
         if (!myShortCode) {
