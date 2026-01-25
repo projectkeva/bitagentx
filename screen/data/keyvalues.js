@@ -50,6 +50,7 @@ const createHash = require('create-hash');
 import { removeConversationMetadataForPeer } from './followChatStorage';
 
 const sha256Bytes = message => Buffer.from(createHash('sha256').update(message).digest());
+const FILTER_MODES = ['TEXT', 'ALL', 'COMMENT', 'SHARE'];
 
 const attrSeedBytes = (id, attrName) => {
   const seed0 = sha256Bytes(`${id}projectkeva`);
@@ -526,12 +527,22 @@ class KeyValues extends React.Component {
       avatarFailedUris: [],
       generatedAvatarUri: null,
       latestBlockHeight: undefined,
+      filterMode: 'TEXT',
     };
     this.onEndReachedCalledDuringMomentum = true;
     this.min_tx_num = -1;
     this._avatarRequestId = 0;
     this._avatarHandle = null;
     this._isMounted = false;
+  }
+
+  cycleFilterMode = () => {
+    this.setState(prevState => {
+      const cur = prevState.filterMode || 'TEXT';
+      const idx = FILTER_MODES.indexOf(cur);
+      const next = FILTER_MODES[(idx + 1) % FILTER_MODES.length];
+      return { filterMode: next };
+    });
   }
 
   static navigationOptions = ({ navigation }) => ({
@@ -1284,6 +1295,29 @@ class KeyValues extends React.Component {
       mergeList = mergeListAll;
     }
 
+    const mode = this.state.filterMode || 'TEXT';
+    const filteredList = (mergeList || []).filter(m => {
+      if (mode === 'ALL') return true;
+
+      const { keyType } = parseSpecialKey(m.key);
+      const isTransfer = (typeof m.key === 'string') && m.key.startsWith('__WALLET_TRANSFER__');
+      const isReg = m.type === 'REG';
+
+      if (mode === 'TEXT') {
+        return !keyType && !isTransfer && !isReg;
+      }
+
+      if (mode === 'COMMENT') {
+        return keyType === 'comment';
+      }
+
+      if (mode === 'SHARE') {
+        return keyType === 'share';
+      }
+
+      return true;
+    });
+
     const buyNFTBtn = (
       <Button
         type='solid'
@@ -1437,11 +1471,10 @@ class KeyValues extends React.Component {
                 <View style={{flexDirection: 'row'}}>
                   <Button
                     type='outline'
-                    buttonStyle={{borderRadius: 30, height: 28, width: 100, padding: 0, borderColor: KevaColors.actionText}}
-                    title={loc.namespaces.edit}
-                    titleStyle={{fontSize: 14, color: KevaColors.actionText}}
-                    onPress={()=>{this.onEditProfile(namespaceId, namespaceInfo[namespaceId])}}
-                    disabled={!!this.state.price}
+                    buttonStyle={{borderRadius: 30, height: 28, width: 130, padding: 0, borderColor: KevaColors.actionText}}
+                    title={`Mode: ${this.state.filterMode || 'TEXT'}`}
+                    titleStyle={{fontSize: 13, color: KevaColors.actionText}}
+                    onPress={this.cycleFilterMode}
                   />
                   {
                     this.state.price ?
@@ -1494,8 +1527,8 @@ class KeyValues extends React.Component {
               style={styles.listStyle}
               contentContainerStyle={{paddingBottom: 400}}
               ListHeaderComponent={listHeader}
-              data={mergeList}
-              extraData={this.state.latestBlockHeight}
+              data={filteredList}
+              extraData={`${this.state.latestBlockHeight || ''}-${this.state.filterMode || ''}`}
               onEndReached={() => {this.loadMoreKeyValues()}}
               onEndReachedThreshold={0.5}
               onMomentumScrollBegin={() => { this.onEndReachedCalledDuringMomentum = false; }}
