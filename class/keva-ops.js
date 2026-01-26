@@ -23,6 +23,10 @@ export function getSpecialKeyText(keyType) {
     displayKey = loc.namespaces.reward_post;
   } else if (keyType === 'profile') {
     displayKey = loc.namespaces.update_profile;
+  } else if (keyType === 'rolecard') {
+    displayKey = 'Role Memory Card';
+  } else if (keyType === 'rolecard_index') {
+    displayKey = 'Role Memory Card Index';
   }
   return displayKey;
 }
@@ -1018,6 +1022,12 @@ export function parseSpecialKey(key) {
   const isKeyString = (typeof key) === 'string';
   let keyHex;
   if (isKeyString) {
+    if (key === '__ROLECARD__INDEX__') {
+      return {keyType: 'rolecard_index'};
+    }
+    if (key.startsWith('__ROLECARD__:')) {
+      return {keyType: 'rolecard'};
+    }
     keyHex = utf8ToHex(key)
   } else if (key.data) {
     // Buffer deserilized from JSON.

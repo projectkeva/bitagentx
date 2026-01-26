@@ -25,29 +25,39 @@ let loc = require('../../loc');
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
 import ActionSheet from '../ActionSheet';
-import { decodeBase64, getNamespaceScriptHash, toScriptHash, updateKeyValue } from '../../class/keva-ops';
+import { decodeBase64, deleteKeyValue, getNamespaceScriptHash, toScriptHash, updateKeyValue } from '../../class/keva-ops';
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const COMMAND_TOKEN_REGEX =
-  /\/(?:r|welcome)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:d|h|c|clear|linkstart|block)\b/gi;
+  /\/(?:r|welcome|m)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:d|h|c|clear|linkstart|block)\b/gi;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
   'Loading the on-device LLM… (not deployed yet)',
   'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain, or type /d to load a Destiny Seed Card, /h for help.',
 ];
+const ROLECARD_KEY_PREFIX = '__ROLECARD__:';
+const ROLECARD_INDEX_KEY = '__ROLECARD__INDEX__';
+const ROLECARD_MAX_VALUE_BYTES = 2048;
+const ROLECARD_MAX_INDEX_LINES = 200;
+const ROLECARD_MAX_LIST_COUNT = 20;
+const ROLECARD_SLUG_MAX_LENGTH = 48;
+const ROLECARD_RESERVED_SLUGS = new Set(['unknown']);
 const COMMAND_USAGE_MESSAGES = {
   en: {
     r: 'Usage: /r — <text> is the role description for the persona.',
     welcome: 'Usage: /welcome — <text> is the welcome message to save on-chain.',
+    m: 'Usage: /m <role> <card> — save/update a role memory card. Use /m <role> to view, /m del <role> to delete.',
   },
   'zh-cn': {
     r: '用法：/r — <text> 为角色设定。',
     welcome: '用法：/welcome — <text> 为欢迎语内容。',
+    m: '用法：/m <role> <card> — 保存/更新记忆卡；/m <role> 查看；/m del <role> 删除。',
   },
   'zh-tw': {
     r: '用法：/r — <text> 為角色設定。',
     welcome: '用法：/welcome — <text> 為歡迎語內容。',
+    m: '用法：/m <role> <card> — 儲存/更新記憶卡；/m <role> 查看；/m del <role> 刪除。',
   },
 };
 const COMMAND_HELP_MESSAGES = {
@@ -295,6 +305,12 @@ const COMMAND_HELP_MESSAGES = {
     '/h — Tüm komut açıklamalarını göster.',
   ].join('\n'),
 };
+const ROLECARD_HELP_LINE = '/m — Manage role memory cards.';
+Object.keys(COMMAND_HELP_MESSAGES).forEach(locale => {
+  if (!COMMAND_HELP_MESSAGES[locale].includes('/m')) {
+    COMMAND_HELP_MESSAGES[locale] = `${COMMAND_HELP_MESSAGES[locale]}\n${ROLECARD_HELP_LINE}`;
+  }
+});
 const ROLE_HISTORY_TITLES = {
   en: 'Recent /r commands:',
   'zh-cn': '最近的 /r 命令：',
@@ -380,6 +396,85 @@ const getCommandUsageMessage = commandKey => getLocalizedMessage(COMMAND_USAGE_M
 const getRoleHistoryTitle = () => {
   const title = getLocalizedMessage(ROLE_HISTORY_TITLES);
   return title.replace('/r', '/\u200Br');
+};
+const getTodayDateString = () => new Date().toISOString().slice(0, 10);
+const normalizeRoleSlug = input => {
+  if (!input) {
+    return '';
+  }
+  let slug = String(input).trim().toLowerCase();
+  slug = slug.replace(/\s+/g, '-').replace(/[^a-z0-9._-]/g, '').replace(/-+/g, '-');
+  if (slug.length > ROLECARD_SLUG_MAX_LENGTH) {
+    slug = slug.slice(0, ROLECARD_SLUG_MAX_LENGTH);
+  }
+  return slug;
+};
+const truncateToBytes = (text, maxBytes) => {
+  const value = String(text || '');
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) {
+    return { value, truncated: false };
+  }
+  let buffer = Buffer.from(value, 'utf8');
+  if (buffer.length <= maxBytes) {
+    return { value, truncated: false };
+  }
+  let truncatedBuffer = buffer.slice(0, maxBytes);
+  let trimmedValue = truncatedBuffer.toString('utf8');
+  while (Buffer.byteLength(trimmedValue, 'utf8') > maxBytes) {
+    trimmedValue = trimmedValue.slice(0, -1);
+  }
+  return { value: trimmedValue, truncated: true };
+};
+const parseRoleIndexLines = (indexText = '') => {
+  const lines = String(indexText || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+  const entries = [];
+  let invalidCount = 0;
+  for (const line of lines) {
+    if (!line.includes('|')) {
+      invalidCount += 1;
+      continue;
+    }
+    const [datePart, rolePart] = line.split('|');
+    const roleSlug = String(rolePart || '').trim();
+    if (!roleSlug) {
+      invalidCount += 1;
+      continue;
+    }
+    entries.push({ date: String(datePart || '').trim(), roleSlug });
+  }
+  return { entries, invalidCount };
+};
+const updateRoleIndex = (indexText, roleSlug, dateStr) => {
+  const { entries } = parseRoleIndexLines(indexText);
+  const lines = [];
+  const seen = new Set();
+  lines.push(`${dateStr}|${roleSlug}`);
+  seen.add(roleSlug);
+  for (const entry of entries) {
+    if (entry.roleSlug === roleSlug) {
+      continue;
+    }
+    if (seen.has(entry.roleSlug)) {
+      continue;
+    }
+    lines.push(`${entry.date}|${entry.roleSlug}`);
+    seen.add(entry.roleSlug);
+    if (lines.length >= ROLECARD_MAX_INDEX_LINES) {
+      break;
+    }
+  }
+  while (lines.length > ROLECARD_MAX_INDEX_LINES) {
+    lines.pop();
+  }
+  let result = lines.join('\n');
+  while (Buffer.byteLength(result, 'utf8') > ROLECARD_MAX_VALUE_BYTES && lines.length > 0) {
+    lines.pop();
+    result = lines.join('\n');
+  }
+  return result;
 };
 const PAGE_SIZE = 10;
 const ATTR_SEED_LABELS = [
@@ -1338,6 +1433,10 @@ class AgentChat extends React.Component {
       this.ensureIntroMessage();
       return;
     }
+    if (/^\/m\b/i.test(trimmed)) {
+      await this.handleRoleMemoryCommand(trimmed);
+      return;
+    }
     const roleMatch = /^\/r\s+(.+)/i.exec(trimmed);
     if (roleMatch) {
       this.handleRoleCommand(roleMatch[1]);
@@ -1488,7 +1587,7 @@ class AgentChat extends React.Component {
     }
   };
 
-  fetchWelcomeValue = async () => {
+  resolveNamespaceContext = () => {
     const { navigation, namespaceList } = this.props;
     const { namespaceId, shortCode } = navigation.state.params || {};
 
@@ -1509,17 +1608,63 @@ class AgentChat extends React.Component {
     }
 
     const scriptHash = namespace?.rootAddress ? toScriptHash(namespace.rootAddress) : getNamespaceScriptHash(resolvedNamespaceId);
+    const agentId = shortCode || resolvedNamespaceId;
 
+    return {
+      agentId,
+      namespace,
+      namespaceId: resolvedNamespaceId,
+      scriptHash,
+    };
+  };
+
+  fetchNamespaceKeyValues = async () => {
+    const context = this.resolveNamespaceContext();
+    if (!context) {
+      return null;
+    }
     try {
       await BlueElectrum.ping();
-      const response = await BlueElectrum.blockchainKeva_getKeyValues(scriptHash, -1);
+      const response = await BlueElectrum.blockchainKeva_getKeyValues(context.scriptHash, -1);
       const keyvalues = Array.isArray(response) ? response : response?.keyvalues || [];
-      if (!keyvalues.length) {
+      const decoded = keyvalues.map(this.decodeKeyValueEntry);
+      return { ...context, keyvalues: decoded };
+    } catch (error) {
+      console.warn('AgentChat: failed to fetch keyvalues', error);
+      return null;
+    }
+  };
+
+  fetchLatestKeyValue = async keyName => {
+    const data = await this.fetchNamespaceKeyValues();
+    if (!data?.keyvalues?.length) {
+      return null;
+    }
+    const entry = data.keyvalues
+      .slice()
+      .reverse()
+      .find(item => item?.key === keyName);
+    if (!entry) {
+      return null;
+    }
+    if (typeof entry.value === 'string') {
+      return entry.value;
+    }
+    if (entry.value === null || typeof entry.value === 'undefined') {
+      return '';
+    }
+    return String(entry.value || '');
+  };
+
+  fetchWelcomeValue = async () => {
+    try {
+      const data = await this.fetchNamespaceKeyValues();
+      if (!data?.keyvalues?.length) {
         return null;
       }
 
-      const welcomeEntry = keyvalues
-        .map(this.decodeKeyValueEntry)
+      const welcomeEntry = data.keyvalues
+        .slice()
         .reverse()
         .find(entry => entry?.key === 'welcome' && entry.value);
 
@@ -1584,6 +1729,274 @@ class AgentChat extends React.Component {
     } catch (error) {
       console.warn('AgentChat: failed to save welcome message', error);
       this.replyFromAgent('Failed to save welcome message.');
+    }
+  };
+
+  handleRoleMemoryCommand = async trimmed => {
+    const args = trimmed.replace(/^\/m\b/i, '').trim();
+    if (!args) {
+      await this.handleRoleMemoryList();
+      return;
+    }
+
+    const delMatch = /^del\s+(.+)/i.exec(args);
+    if (delMatch) {
+      await this.handleRoleMemoryDelete(delMatch[1]);
+      return;
+    }
+
+    if (/^rebuild\b/i.test(args)) {
+      await this.handleRoleMemoryRebuild();
+      return;
+    }
+
+    const [rolePart, ...rest] = args.split(' ');
+    const memoryText = rest.join(' ').trim();
+    if (memoryText) {
+      await this.handleRoleMemorySave(rolePart, memoryText);
+      return;
+    }
+    await this.handleRoleMemoryView(rolePart);
+  };
+
+  getNormalizedRoleSlug = input => {
+    const roleSlug = normalizeRoleSlug(input);
+    if (!roleSlug) {
+      this.replyFromAgent(getCommandUsageMessage('m'));
+      return null;
+    }
+    if (ROLECARD_RESERVED_SLUGS.has(roleSlug)) {
+      this.replyFromAgent('Role name "unknown" is reserved. Please choose a different role name.');
+      return null;
+    }
+    return roleSlug;
+  };
+
+  handleRoleMemoryList = async () => {
+    const indexText = await this.fetchLatestKeyValue(ROLECARD_INDEX_KEY);
+    const context = this.resolveNamespaceContext();
+    const agentId = context?.agentId || 'Unknown';
+
+    if (!indexText) {
+      this.replyFromAgent('暂无记忆卡，可用 `/m <role> <card>` 保存。');
+      return;
+    }
+
+    const { entries, invalidCount } = parseRoleIndexLines(indexText);
+    if (!entries.length) {
+      this.replyFromAgent('暂无记忆卡，可用 `/m <role> <card>` 保存。');
+      return;
+    }
+    const lines = [`Role Memory Cards (AGENT_ID=${agentId})`];
+    entries.slice(0, ROLECARD_MAX_LIST_COUNT).forEach(entry => {
+      lines.push(`${entry.date}  ${entry.roleSlug}`);
+    });
+    lines.push('Use:');
+    lines.push('- /m tifa            (view)');
+    lines.push('- /m tifa <PASTE>    (save/update)');
+    lines.push('- /m del tifa        (delete)');
+    if (invalidCount > 0) {
+      lines.push('');
+      lines.push('Index contains invalid lines. Use /m rebuild to repair if needed.');
+    }
+    this.replyFromAgent(lines.join('\n'));
+  };
+
+  handleRoleMemoryView = async roleInput => {
+    const roleSlug = this.getNormalizedRoleSlug(roleInput);
+    if (!roleSlug) {
+      return;
+    }
+    const keyName = `${ROLECARD_KEY_PREFIX}${roleSlug}`;
+    const value = await this.fetchLatestKeyValue(keyName);
+    if (!value) {
+      this.replyFromAgent(`No memory card found for "${roleSlug}". Use /m ${roleSlug} <card> to save one.`);
+      return;
+    }
+    this.replyFromAgent(value);
+  };
+
+  handleRoleMemorySave = async (roleInput, memoryText) => {
+    const roleSlug = this.getNormalizedRoleSlug(roleInput);
+    if (!roleSlug) {
+      return;
+    }
+    const { navigation } = this.props;
+    const { namespaceId, walletId } = navigation.state.params || {};
+    if (!namespaceId || !walletId) {
+      this.replyFromAgent('Missing namespace or wallet information to save role memory card.');
+      return;
+    }
+    const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
+    if (!wallet) {
+      this.replyFromAgent('Wallet not found for this agent.');
+      return;
+    }
+
+    const trimmed = String(memoryText || '').trim();
+    if (!trimmed) {
+      this.replyFromAgent('Memory card text is empty.');
+      return;
+    }
+
+    const { value: cardValue, truncated } = truncateToBytes(trimmed, ROLECARD_MAX_VALUE_BYTES);
+    const keyName = `${ROLECARD_KEY_PREFIX}${roleSlug}`;
+    const today = getTodayDateString();
+
+    try {
+      await BlueElectrum.ping();
+      if (typeof BlueElectrum.waitTillConnected === 'function') {
+        await BlueElectrum.waitTillConnected();
+      }
+      const { tx } = await updateKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, namespaceId, keyName, cardValue);
+      const result = await BlueElectrum.broadcast(tx);
+      if (result?.code) {
+        throw new Error(result.message || 'Broadcast failed');
+      }
+
+      const indexText = (await this.fetchLatestKeyValue(ROLECARD_INDEX_KEY)) || '';
+      const updatedIndex = updateRoleIndex(indexText, roleSlug, today);
+      const indexResult = await updateKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, namespaceId, ROLECARD_INDEX_KEY, updatedIndex);
+      const indexBroadcast = await BlueElectrum.broadcast(indexResult.tx);
+      if (indexBroadcast?.code) {
+        throw new Error(indexBroadcast.message || 'Broadcast failed');
+      }
+
+      await BlueApp.saveToDisk();
+      const responseLines = [`Role memory card saved for "${roleSlug}".`];
+      if (truncated) {
+        responseLines.push('Note: card exceeded 2KB and was truncated.');
+      }
+      this.replyFromAgent(responseLines.join('\n'));
+    } catch (error) {
+      console.warn('AgentChat: failed to save role memory card', error);
+      this.replyFromAgent('Failed to save role memory card.');
+    }
+  };
+
+  handleRoleMemoryDelete = async roleInput => {
+    const roleSlug = this.getNormalizedRoleSlug(roleInput);
+    if (!roleSlug) {
+      return;
+    }
+    const { navigation } = this.props;
+    const { namespaceId, walletId } = navigation.state.params || {};
+    if (!namespaceId || !walletId) {
+      this.replyFromAgent('Missing namespace or wallet information to delete role memory card.');
+      return;
+    }
+    const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
+    if (!wallet) {
+      this.replyFromAgent('Wallet not found for this agent.');
+      return;
+    }
+    const keyName = `${ROLECARD_KEY_PREFIX}${roleSlug}`;
+    try {
+      await BlueElectrum.ping();
+      if (typeof BlueElectrum.waitTillConnected === 'function') {
+        await BlueElectrum.waitTillConnected();
+      }
+      try {
+        const { tx } = await deleteKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, namespaceId, keyName);
+        const result = await BlueElectrum.broadcast(tx);
+        if (result?.code) {
+          throw new Error(result.message || 'Broadcast failed');
+        }
+      } catch (error) {
+        const fallback = await updateKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, namespaceId, keyName, '');
+        const fallbackResult = await BlueElectrum.broadcast(fallback.tx);
+        if (fallbackResult?.code) {
+          throw new Error(fallbackResult.message || 'Broadcast failed');
+        }
+      }
+
+      const indexText = (await this.fetchLatestKeyValue(ROLECARD_INDEX_KEY)) || '';
+      const { entries } = parseRoleIndexLines(indexText);
+      const remaining = entries.filter(entry => entry.roleSlug !== roleSlug);
+      let lines = remaining.map(entry => `${entry.date}|${entry.roleSlug}`).slice(0, ROLECARD_MAX_INDEX_LINES);
+      let updatedIndex = lines.join('\n');
+      while (Buffer.byteLength(updatedIndex, 'utf8') > ROLECARD_MAX_VALUE_BYTES && lines.length > 0) {
+        lines.pop();
+        updatedIndex = lines.join('\n');
+      }
+      const indexResult = await updateKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, namespaceId, ROLECARD_INDEX_KEY, updatedIndex);
+      const indexBroadcast = await BlueElectrum.broadcast(indexResult.tx);
+      if (indexBroadcast?.code) {
+        throw new Error(indexBroadcast.message || 'Broadcast failed');
+      }
+
+      await BlueApp.saveToDisk();
+      this.replyFromAgent(`Role memory card deleted for "${roleSlug}".`);
+    } catch (error) {
+      console.warn('AgentChat: failed to delete role memory card', error);
+      this.replyFromAgent('Failed to delete role memory card.');
+    }
+  };
+
+  handleRoleMemoryRebuild = async () => {
+    const data = await this.fetchNamespaceKeyValues();
+    if (!data?.keyvalues?.length) {
+      this.replyFromAgent('No role memory cards found to rebuild.');
+      return;
+    }
+    const { navigation } = this.props;
+    const { namespaceId, walletId } = navigation.state.params || {};
+    if (!namespaceId || !walletId) {
+      this.replyFromAgent('Missing namespace or wallet information to rebuild index.');
+      return;
+    }
+    const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
+    if (!wallet) {
+      this.replyFromAgent('Wallet not found for this agent.');
+      return;
+    }
+
+    const today = getTodayDateString() || '1970-01-01';
+    const entries = [];
+    const seen = new Set();
+    data.keyvalues
+      .slice()
+      .reverse()
+      .forEach(entry => {
+        if (typeof entry?.key !== 'string') {
+          return;
+        }
+        if (!entry.key.startsWith(ROLECARD_KEY_PREFIX)) {
+          return;
+        }
+        if (entry.key === ROLECARD_INDEX_KEY) {
+          return;
+        }
+        const roleSlug = entry.key.slice(ROLECARD_KEY_PREFIX.length).trim();
+        if (!roleSlug || seen.has(roleSlug)) {
+          return;
+        }
+        seen.add(roleSlug);
+        entries.push(`${today}|${roleSlug}`);
+      });
+
+    let lines = entries.slice(0, ROLECARD_MAX_INDEX_LINES);
+    let indexValue = lines.join('\n');
+    while (Buffer.byteLength(indexValue, 'utf8') > ROLECARD_MAX_VALUE_BYTES && lines.length > 0) {
+      lines.pop();
+      indexValue = lines.join('\n');
+    }
+
+    try {
+      await BlueElectrum.ping();
+      if (typeof BlueElectrum.waitTillConnected === 'function') {
+        await BlueElectrum.waitTillConnected();
+      }
+      const { tx } = await updateKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, namespaceId, ROLECARD_INDEX_KEY, indexValue);
+      const result = await BlueElectrum.broadcast(tx);
+      if (result?.code) {
+        throw new Error(result.message || 'Broadcast failed');
+      }
+      await BlueApp.saveToDisk();
+      this.replyFromAgent(`Role memory index rebuilt with ${lines.length} entries.`);
+    } catch (error) {
+      console.warn('AgentChat: failed to rebuild role memory index', error);
+      this.replyFromAgent('Failed to rebuild role memory index.');
     }
   };
 
@@ -1732,6 +2145,9 @@ class AgentChat extends React.Component {
       return true;
     }
     if (/^\/welcome\b/i.test(trimmed)) {
+      return true;
+    }
+    if (/^\/m\b/i.test(trimmed)) {
       return true;
     }
     if (/^\/d$/i.test(trimmed)) {
