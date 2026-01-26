@@ -1334,6 +1334,15 @@ class KeyValues extends React.Component {
         }
       />
     );
+    const filterButton = (
+      <Button
+        type='solid'
+        buttonStyle={{borderRadius: 30, height: 28, width: 110, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
+        title={`${this.state.filterMode || 'TEXT'}`}
+        titleStyle={{fontSize: 13, color: '#fff'}}
+        onPress={this.cycleFilterMode}
+      />
+    );
 
     const {
       avatarCandidateUris,
@@ -1441,9 +1450,10 @@ class KeyValues extends React.Component {
                 isOther ?
                 (isFollowing ?
                   <View style={{flexDirection: 'row'}}>
+                    {filterButton}
                     <Button
                       type='solid'
-                      buttonStyle={{borderRadius: 30, height: 28, width: 120, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
+                      buttonStyle={{marginLeft: 10, borderRadius: 30, height: 28, width: 120, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
                       title={loc.namespaces.following}
                       titleStyle={{fontSize: 14, color: '#fff'}}
                       onPress={()=>{this.onUnfollow(namespaceId)}}
@@ -1452,9 +1462,10 @@ class KeyValues extends React.Component {
                   </View>
                   :
                   <View style={{flexDirection: 'row'}}>
+                    {filterButton}
                     <Button
                       type='outline'
-                      buttonStyle={{borderRadius: 30, height: 28, width: 120, padding: 0, borderColor: KevaColors.actionText}}
+                      buttonStyle={{marginLeft: 10, borderRadius: 30, height: 28, width: 120, padding: 0, borderColor: KevaColors.actionText}}
                       title={loc.namespaces.follow}
                       titleStyle={{fontSize: 14, color: KevaColors.actionText}}
                       onPress={()=>{this.onFollow(namespaceId, namespaceInfo)}}
