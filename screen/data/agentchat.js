@@ -316,6 +316,80 @@ const ROLE_HISTORY_TITLES = {
   'zh-cn': '最近的 /r 命令：',
   'zh-tw': '最近的 /r 命令：',
 };
+const ROLECARD_MESSAGES = {
+  en: {
+    noCards: 'No role memory cards yet. Use `/m <role> <card>` to save one.',
+    listTitle: 'Role Memory Cards (AGENT_ID={agentId})',
+    listUse: 'Use:',
+    listView: '- /m tifa            (view)',
+    listSave: '- /m tifa <PASTE>    (save/update)',
+    listDelete: '- /m del tifa        (delete)',
+    invalidIndex: 'Index contains invalid lines. Use /m rebuild to repair if needed.',
+    reservedSlug: 'Role name "unknown" is reserved. Please choose a different role name.',
+    noCardFound: 'No memory card found for "{roleSlug}". Use /m {roleSlug} <card> to save one.',
+    missingNamespaceSave: 'Missing namespace or wallet information to save role memory card.',
+    missingNamespaceDelete: 'Missing namespace or wallet information to delete role memory card.',
+    missingNamespaceRebuild: 'Missing namespace or wallet information to rebuild index.',
+    walletNotFound: 'Wallet not found for this agent.',
+    emptyCard: 'Memory card text is empty.',
+    saveSuccess: 'Role memory card saved for "{roleSlug}".',
+    truncated: 'Note: card exceeded 2KB and was truncated.',
+    saveFailed: 'Failed to save role memory card.',
+    deleteSuccess: 'Role memory card deleted for "{roleSlug}".',
+    deleteFailed: 'Failed to delete role memory card.',
+    rebuildNone: 'No role memory cards found to rebuild.',
+    rebuildSuccess: 'Role memory index rebuilt with {count} entries.',
+    rebuildFailed: 'Failed to rebuild role memory index.',
+  },
+  'zh-cn': {
+    noCards: '暂无记忆卡，可用 `/m <role> <card>` 保存。',
+    listTitle: '记忆卡列表 (AGENT_ID={agentId})',
+    listUse: '用法：',
+    listView: '- /m tifa            (查看)',
+    listSave: '- /m tifa <PASTE>    (保存/更新)',
+    listDelete: '- /m del tifa        (删除)',
+    invalidIndex: '索引包含无效行。如需修复可使用 /m rebuild。',
+    reservedSlug: '角色名 "unknown" 为保留字，请更换角色名。',
+    noCardFound: '未找到 "{roleSlug}" 的记忆卡。可用 /m {roleSlug} <card> 保存。',
+    missingNamespaceSave: '缺少命名空间或钱包信息，无法保存记忆卡。',
+    missingNamespaceDelete: '缺少命名空间或钱包信息，无法删除记忆卡。',
+    missingNamespaceRebuild: '缺少命名空间或钱包信息，无法重建索引。',
+    walletNotFound: '未找到该 agent 的钱包。',
+    emptyCard: '记忆卡内容为空。',
+    saveSuccess: '已保存 "{roleSlug}" 的记忆卡。',
+    truncated: '注意：记忆卡超过 2KB，已被截断。',
+    saveFailed: '保存记忆卡失败。',
+    deleteSuccess: '已删除 "{roleSlug}" 的记忆卡。',
+    deleteFailed: '删除记忆卡失败。',
+    rebuildNone: '没有找到可重建的记忆卡。',
+    rebuildSuccess: '已重建记忆卡索引，共 {count} 条。',
+    rebuildFailed: '重建记忆卡索引失败。',
+  },
+  'zh-tw': {
+    noCards: '暫無記憶卡，可用 `/m <role> <card>` 儲存。',
+    listTitle: '記憶卡列表 (AGENT_ID={agentId})',
+    listUse: '用法：',
+    listView: '- /m tifa            (查看)',
+    listSave: '- /m tifa <PASTE>    (儲存/更新)',
+    listDelete: '- /m del tifa        (刪除)',
+    invalidIndex: '索引包含無效行。如需修復可使用 /m rebuild。',
+    reservedSlug: '角色名 "unknown" 為保留字，請更換角色名。',
+    noCardFound: '未找到 "{roleSlug}" 的記憶卡。可用 /m {roleSlug} <card> 儲存。',
+    missingNamespaceSave: '缺少命名空間或錢包資訊，無法儲存記憶卡。',
+    missingNamespaceDelete: '缺少命名空間或錢包資訊，無法刪除記憶卡。',
+    missingNamespaceRebuild: '缺少命名空間或錢包資訊，無法重建索引。',
+    walletNotFound: '未找到該 agent 的錢包。',
+    emptyCard: '記憶卡內容為空。',
+    saveSuccess: '已儲存 "{roleSlug}" 的記憶卡。',
+    truncated: '注意：記憶卡超過 2KB，已被截斷。',
+    saveFailed: '儲存記憶卡失敗。',
+    deleteSuccess: '已刪除 "{roleSlug}" 的記憶卡。',
+    deleteFailed: '刪除記憶卡失敗。',
+    rebuildNone: '沒有找到可重建的記憶卡。',
+    rebuildSuccess: '已重建記憶卡索引，共 {count} 條。',
+    rebuildFailed: '重建記憶卡索引失敗。',
+  },
+};
 
 const COMMAND_HELP_ALIASES = {
   'zh-hans': 'zh-cn',
@@ -396,6 +470,13 @@ const getCommandUsageMessage = commandKey => getLocalizedMessage(COMMAND_USAGE_M
 const getRoleHistoryTitle = () => {
   const title = getLocalizedMessage(ROLE_HISTORY_TITLES);
   return title.replace('/r', '/\u200Br');
+};
+const getRoleCardMessage = (key, replacements = {}) => {
+  let message = getLocalizedMessage(ROLECARD_MESSAGES, key);
+  Object.entries(replacements).forEach(([token, value]) => {
+    message = message.replace(new RegExp(`\\{${token}\\}`, 'g'), String(value));
+  });
+  return message;
 };
 const getTodayDateString = () => new Date().toISOString().slice(0, 10);
 const normalizeRoleSlug = input => {
@@ -1766,7 +1847,7 @@ class AgentChat extends React.Component {
       return null;
     }
     if (ROLECARD_RESERVED_SLUGS.has(roleSlug)) {
-      this.replyFromAgent('Role name "unknown" is reserved. Please choose a different role name.');
+      this.replyFromAgent(getRoleCardMessage('reservedSlug'));
       return null;
     }
     return roleSlug;
@@ -1778,26 +1859,26 @@ class AgentChat extends React.Component {
     const agentId = context?.agentId || 'Unknown';
 
     if (!indexText) {
-      this.replyFromAgent('暂无记忆卡，可用 `/m <role> <card>` 保存。');
+      this.replyFromAgent(getRoleCardMessage('noCards'));
       return;
     }
 
     const { entries, invalidCount } = parseRoleIndexLines(indexText);
     if (!entries.length) {
-      this.replyFromAgent('暂无记忆卡，可用 `/m <role> <card>` 保存。');
+      this.replyFromAgent(getRoleCardMessage('noCards'));
       return;
     }
-    const lines = [`Role Memory Cards (AGENT_ID=${agentId})`];
+    const lines = [getRoleCardMessage('listTitle', { agentId })];
     entries.slice(0, ROLECARD_MAX_LIST_COUNT).forEach(entry => {
       lines.push(`${entry.date}  ${entry.roleSlug}`);
     });
-    lines.push('Use:');
-    lines.push('- /m tifa            (view)');
-    lines.push('- /m tifa <PASTE>    (save/update)');
-    lines.push('- /m del tifa        (delete)');
+    lines.push(getRoleCardMessage('listUse'));
+    lines.push(getRoleCardMessage('listView'));
+    lines.push(getRoleCardMessage('listSave'));
+    lines.push(getRoleCardMessage('listDelete'));
     if (invalidCount > 0) {
       lines.push('');
-      lines.push('Index contains invalid lines. Use /m rebuild to repair if needed.');
+      lines.push(getRoleCardMessage('invalidIndex'));
     }
     this.replyFromAgent(lines.join('\n'));
   };
@@ -1810,7 +1891,7 @@ class AgentChat extends React.Component {
     const keyName = `${ROLECARD_KEY_PREFIX}${roleSlug}`;
     const value = await this.fetchLatestKeyValue(keyName);
     if (!value) {
-      this.replyFromAgent(`No memory card found for "${roleSlug}". Use /m ${roleSlug} <card> to save one.`);
+      this.replyFromAgent(getRoleCardMessage('noCardFound', { roleSlug }));
       return;
     }
     this.replyFromAgent(value);
@@ -1824,18 +1905,18 @@ class AgentChat extends React.Component {
     const { navigation } = this.props;
     const { namespaceId, walletId } = navigation.state.params || {};
     if (!namespaceId || !walletId) {
-      this.replyFromAgent('Missing namespace or wallet information to save role memory card.');
+      this.replyFromAgent(getRoleCardMessage('missingNamespaceSave'));
       return;
     }
     const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
     if (!wallet) {
-      this.replyFromAgent('Wallet not found for this agent.');
+      this.replyFromAgent(getRoleCardMessage('walletNotFound'));
       return;
     }
 
     const trimmed = String(memoryText || '').trim();
     if (!trimmed) {
-      this.replyFromAgent('Memory card text is empty.');
+      this.replyFromAgent(getRoleCardMessage('emptyCard'));
       return;
     }
 
@@ -1863,14 +1944,14 @@ class AgentChat extends React.Component {
       }
 
       await BlueApp.saveToDisk();
-      const responseLines = [`Role memory card saved for "${roleSlug}".`];
+      const responseLines = [getRoleCardMessage('saveSuccess', { roleSlug })];
       if (truncated) {
-        responseLines.push('Note: card exceeded 2KB and was truncated.');
+        responseLines.push(getRoleCardMessage('truncated'));
       }
       this.replyFromAgent(responseLines.join('\n'));
     } catch (error) {
       console.warn('AgentChat: failed to save role memory card', error);
-      this.replyFromAgent('Failed to save role memory card.');
+      this.replyFromAgent(getRoleCardMessage('saveFailed'));
     }
   };
 
@@ -1882,12 +1963,12 @@ class AgentChat extends React.Component {
     const { navigation } = this.props;
     const { namespaceId, walletId } = navigation.state.params || {};
     if (!namespaceId || !walletId) {
-      this.replyFromAgent('Missing namespace or wallet information to delete role memory card.');
+      this.replyFromAgent(getRoleCardMessage('missingNamespaceDelete'));
       return;
     }
     const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
     if (!wallet) {
-      this.replyFromAgent('Wallet not found for this agent.');
+      this.replyFromAgent(getRoleCardMessage('walletNotFound'));
       return;
     }
     const keyName = `${ROLECARD_KEY_PREFIX}${roleSlug}`;
@@ -1926,28 +2007,28 @@ class AgentChat extends React.Component {
       }
 
       await BlueApp.saveToDisk();
-      this.replyFromAgent(`Role memory card deleted for "${roleSlug}".`);
+      this.replyFromAgent(getRoleCardMessage('deleteSuccess', { roleSlug }));
     } catch (error) {
       console.warn('AgentChat: failed to delete role memory card', error);
-      this.replyFromAgent('Failed to delete role memory card.');
+      this.replyFromAgent(getRoleCardMessage('deleteFailed'));
     }
   };
 
   handleRoleMemoryRebuild = async () => {
     const data = await this.fetchNamespaceKeyValues();
     if (!data?.keyvalues?.length) {
-      this.replyFromAgent('No role memory cards found to rebuild.');
+      this.replyFromAgent(getRoleCardMessage('rebuildNone'));
       return;
     }
     const { navigation } = this.props;
     const { namespaceId, walletId } = navigation.state.params || {};
     if (!namespaceId || !walletId) {
-      this.replyFromAgent('Missing namespace or wallet information to rebuild index.');
+      this.replyFromAgent(getRoleCardMessage('missingNamespaceRebuild'));
       return;
     }
     const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
     if (!wallet) {
-      this.replyFromAgent('Wallet not found for this agent.');
+      this.replyFromAgent(getRoleCardMessage('walletNotFound'));
       return;
     }
 
@@ -1993,10 +2074,10 @@ class AgentChat extends React.Component {
         throw new Error(result.message || 'Broadcast failed');
       }
       await BlueApp.saveToDisk();
-      this.replyFromAgent(`Role memory index rebuilt with ${lines.length} entries.`);
+      this.replyFromAgent(getRoleCardMessage('rebuildSuccess', { count: lines.length }));
     } catch (error) {
       console.warn('AgentChat: failed to rebuild role memory index', error);
-      this.replyFromAgent('Failed to rebuild role memory index.');
+      this.replyFromAgent(getRoleCardMessage('rebuildFailed'));
     }
   };
 
