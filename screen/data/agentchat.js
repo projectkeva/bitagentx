@@ -2530,7 +2530,7 @@ class AgentChat extends React.Component {
               accessibilityLabel="Chat message"
               activeOpacity={0.7}
               onPress={hasCopyLink || hasCommandTokens ? undefined : () => this.handleMessagePress(item.text)}
-              onLongPress={hasCopyLink ? undefined : () => this.handleMessageLongPress(item.text)}
+              onLongPress={hasCopyLink || hasCommandTokens ? undefined : () => this.handleMessageLongPress(item.text)}
               style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}
             >
               <Text style={messageTextStyle}>
