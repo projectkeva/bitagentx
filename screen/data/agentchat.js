@@ -799,6 +799,7 @@ LEVEL_START = {LEVEL_START}
 ALPHA = {ALPHA}   # range -99..+99
 ROLE_NAME = {ROLE_NAME}
 
+{STARTING_MEMORY_CARD_SECTION}
 RESERVED ROLE NAME: "unknown" (RANDOM ROLE MODE)
 - "unknown" is a reserved keyword meaning random role mode. It is NOT a real role name.
 - If ROLE_NAME == "unknown", before the game starts you must create:
@@ -1163,16 +1164,21 @@ const buildDestinySeedPrompt = agentId => {
   return DESTINY_SEED_PROMPT;
 };
 
-const buildRoleplayPrompt = (roleText, agentId) => {
+const buildRoleplayPrompt = (roleText, agentId, roleMemoryCard) => {
   const sanitizedRole = (roleText || '').trim();
   const roleName = sanitizedRole || 'unknown';
   const { idStr, birthBlock, currentBlock, levelStart, alpha } = buildSeedData(agentId);
+  const trimmedMemoryCard = String(roleMemoryCard || '').trim();
+  const memorySection = trimmedMemoryCard
+    ? `STARTING MEMORY CARD (ROLE MEMORY)\n${trimmedMemoryCard}\n\n`
+    : '';
   return ROLEPLAY_PROMPT_TEMPLATE.replace(/\{AGENT_ID\}/g, idStr)
     .replace(/\{BIRTH_BLOCK\}/g, String(birthBlock))
     .replace(/\{CURRENT_BLOCK\}/g, String(currentBlock))
     .replace(/\{LEVEL_START\}/g, String(levelStart))
     .replace(/\{ALPHA\}/g, formatSigned(alpha))
-    .replace(/\{ROLE_NAME\}/g, roleName);
+    .replace(/\{ROLE_NAME\}/g, roleName)
+    .replace(/\{STARTING_MEMORY_CARD_SECTION\}/g, memorySection);
 };
 
 class AgentChat extends React.Component {
@@ -1521,11 +1527,11 @@ class AgentChat extends React.Component {
     }
     const roleMatch = /^\/r\s+(.+)/i.exec(trimmed);
     if (roleMatch) {
-      this.handleRoleCommand(roleMatch[1]);
+      await this.handleRoleCommand(roleMatch[1]);
       return;
     }
     if (/^\/r\b/i.test(trimmed)) {
-      this.handleRoleCommand('unknown');
+      await this.handleRoleCommand('unknown');
       this.replyFromAgent(this.buildRoleHistoryMessage());
       return;
     }
@@ -2082,7 +2088,7 @@ class AgentChat extends React.Component {
     }
   };
 
-  handleRoleCommand = rawValue => {
+  handleRoleCommand = async rawValue => {
     const roleText = rawValue.trim().slice(0, 1000);
     const normalizedRole = roleText.toLowerCase() === 'unknown' ? 'unknown' : roleText;
     if (!normalizedRole) {
@@ -2091,7 +2097,23 @@ class AgentChat extends React.Component {
     }
     const { namespaceId, shortCode } = this.props.navigation.state.params || {};
     const agentId = shortCode || namespaceId;
-    const rolePrompt = buildRoleplayPrompt(normalizedRole, agentId);
+    let roleMemoryCard = null;
+    const roleSlug = normalizeRoleSlug(normalizedRole);
+    if (roleSlug && !ROLECARD_RESERVED_SLUGS.has(roleSlug)) {
+      const indexText = await this.fetchLatestKeyValue(ROLECARD_INDEX_KEY);
+      if (indexText) {
+        const { entries } = parseRoleIndexLines(indexText);
+        const matched = entries.find(entry => entry.roleSlug === roleSlug);
+        if (matched) {
+          const keyName = `${ROLECARD_KEY_PREFIX}${roleSlug}`;
+          const value = await this.fetchLatestKeyValue(keyName);
+          if (value) {
+            roleMemoryCard = value;
+          }
+        }
+      }
+    }
+    const rolePrompt = buildRoleplayPrompt(normalizedRole, agentId, roleMemoryCard);
     const cardText = `Roleplay Prompt\nAgent ID: ${agentId || 'Unknown'}\nRole: ${normalizedRole}\nReady to copy the full prompt.`;
     this.replyFromAgentSeedCard(cardText, rolePrompt, 'Copy full roleplay prompt');
     this.replyFromAgent(
