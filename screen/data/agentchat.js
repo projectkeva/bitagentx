@@ -31,6 +31,7 @@ import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees'
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const COMMAND_TOKEN_REGEX =
   /\/(?:r|welcome|m)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:d|h|c|clear|linkstart|block)\b/gi;
+const COMMAND_DISPLAY_TOKEN_REGEX = /\[\[([^\]|]+)\|([^\]]+)\]\]/gi;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
   'Loading the on-device LLM… (not deployed yet)',
@@ -321,9 +322,9 @@ const ROLECARD_MESSAGES = {
     noCards: 'No role memory cards yet. Use `/m <role> <card>` to save one.',
     listTitle: 'Role Memory Cards (AGENT_ID={agentId})',
     listUse: 'Use:',
-    listView: '- /m name            (view)',
-    listSave: '- /m name <memory_card>    (save/update)',
-    listDelete: '- /m del name        (delete)',
+    listView: '- m name            (view)',
+    listSave: '- m name <memory_card>    (save/update)',
+    listDelete: '- m del name        (delete)',
     invalidIndex: 'Index contains invalid lines. Use /m rebuild to repair if needed.',
     reservedSlug: 'Role name "unknown" is reserved. Please choose a different role name.',
     noCardFound: 'No memory card found for "{roleSlug}". Use /m {roleSlug} <card> to save one.',
@@ -345,9 +346,9 @@ const ROLECARD_MESSAGES = {
     noCards: '暂无记忆卡，可用 `/m <role> <card>` 保存。',
     listTitle: '记忆卡列表 (AGENT_ID={agentId})',
     listUse: '用法：',
-    listView: '- /m name            (查看)',
-    listSave: '- /m name <memory_card>    (保存/更新)',
-    listDelete: '- /m del name        (删除)',
+    listView: '- m name            (查看)',
+    listSave: '- m name <memory_card>    (保存/更新)',
+    listDelete: '- m del name        (删除)',
     invalidIndex: '索引包含无效行。如需修复可使用 /m rebuild。',
     reservedSlug: '角色名 "unknown" 为保留字，请更换角色名。',
     noCardFound: '未找到 "{roleSlug}" 的记忆卡。可用 /m {roleSlug} <card> 保存。',
@@ -369,9 +370,9 @@ const ROLECARD_MESSAGES = {
     noCards: '暫無記憶卡，可用 `/m <role> <card>` 儲存。',
     listTitle: '記憶卡列表 (AGENT_ID={agentId})',
     listUse: '用法：',
-    listView: '- /m name            (查看)',
-    listSave: '- /m name <memory_card>    (儲存/更新)',
-    listDelete: '- /m del name        (刪除)',
+    listView: '- m name            (查看)',
+    listSave: '- m name <memory_card>    (儲存/更新)',
+    listDelete: '- m del name        (刪除)',
     invalidIndex: '索引包含無效行。如需修復可使用 /m rebuild。',
     reservedSlug: '角色名 "unknown" 為保留字，請更換角色名。',
     noCardFound: '未找到 "{roleSlug}" 的記憶卡。可用 /m {roleSlug} <card> 儲存。',
@@ -1870,7 +1871,7 @@ class AgentChat extends React.Component {
     }
     const lines = [getRoleCardMessage('listTitle', { agentId })];
     entries.slice(0, ROLECARD_MAX_LIST_COUNT).forEach(entry => {
-      lines.push(`${entry.date}  /m ${entry.roleSlug}  /r ${entry.roleSlug}`);
+      lines.push(`${entry.date}  [[/m ${entry.roleSlug}|${entry.roleSlug}]]`);
     });
     lines.push(getRoleCardMessage('listUse'));
     lines.push(getRoleCardMessage('listView'));
@@ -1894,7 +1895,7 @@ class AgentChat extends React.Component {
       this.replyFromAgent(getRoleCardMessage('noCardFound', { roleSlug }));
       return;
     }
-    this.replyFromAgent(value);
+    this.replyFromAgent(`${value}\n\n/r ${roleSlug}`);
   };
 
   handleRoleMemorySave = async (roleInput, memoryText) => {
@@ -2245,18 +2246,58 @@ class AgentChat extends React.Component {
       return [];
     }
     const segments = [];
-    const regex = new RegExp(COMMAND_TOKEN_REGEX);
+    const commandRegex = new RegExp(COMMAND_TOKEN_REGEX);
+    const displayRegex = new RegExp(COMMAND_DISPLAY_TOKEN_REGEX);
     let lastIndex = 0;
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      if (match.index > lastIndex) {
-        segments.push({ text: text.slice(lastIndex, match.index), isCommand: false });
+
+    while (lastIndex < text.length) {
+      commandRegex.lastIndex = lastIndex;
+      displayRegex.lastIndex = lastIndex;
+      const commandMatch = commandRegex.exec(text);
+      const displayMatch = displayRegex.exec(text);
+      let nextMatch = null;
+      let matchType = null;
+
+      if (commandMatch && displayMatch) {
+        if (displayMatch.index <= commandMatch.index) {
+          nextMatch = displayMatch;
+          matchType = 'display';
+        } else {
+          nextMatch = commandMatch;
+          matchType = 'command';
+        }
+      } else if (displayMatch) {
+        nextMatch = displayMatch;
+        matchType = 'display';
+      } else if (commandMatch) {
+        nextMatch = commandMatch;
+        matchType = 'command';
       }
-      segments.push({ text: match[0], isCommand: this.isInteractiveCommand(match[0]) });
-      lastIndex = match.index + match[0].length;
-    }
-    if (lastIndex < text.length) {
-      segments.push({ text: text.slice(lastIndex), isCommand: false });
+
+      if (!nextMatch) {
+        segments.push({ text: text.slice(lastIndex), isCommand: false });
+        break;
+      }
+
+      if (nextMatch.index > lastIndex) {
+        segments.push({ text: text.slice(lastIndex, nextMatch.index), isCommand: false });
+      }
+
+      if (matchType === 'display') {
+        const commandText = nextMatch[1];
+        const displayText = nextMatch[2];
+        segments.push({
+          text: displayText,
+          displayText,
+          commandText,
+          isCommand: this.isInteractiveCommand(commandText),
+        });
+        lastIndex = nextMatch.index + nextMatch[0].length;
+      } else {
+        const commandText = nextMatch[0];
+        segments.push({ text: commandText, isCommand: this.isInteractiveCommand(commandText) });
+        lastIndex = nextMatch.index + nextMatch[0].length;
+      }
     }
     return segments;
   };
@@ -2541,9 +2582,9 @@ class AgentChat extends React.Component {
                         <Text
                           key={`${item.id}-command-${segmentIndex}`}
                           style={[messageTextStyle, commandTextStyle]}
-                          onPress={() => this.handleCommandPress(segment.text)}
+                          onPress={() => this.handleCommandPress(segment.commandText || segment.text)}
                         >
-                          {segment.text}
+                          {segment.displayText || segment.text}
                         </Text>
                       ) : (
                         <Text key={`${item.id}-text-${segmentIndex}`} style={messageTextStyle}>
