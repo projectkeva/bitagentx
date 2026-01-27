@@ -1025,7 +1025,7 @@ export function parseSpecialKey(key) {
     if (key === '__ROLECARD__INDEX__') {
       return {keyType: 'rolecard_index'};
     }
-    if (key.startsWith('__ROLECARD__:')) {
+    if (key.startsWith('__ROLECARD__') && key !== '__ROLECARD__INDEX__') {
       return {keyType: 'rolecard'};
     }
     keyHex = utf8ToHex(key)

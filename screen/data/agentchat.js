@@ -37,7 +37,7 @@ const INTRO_MESSAGES = [
   'Loading the on-device LLM… (not deployed yet)',
   'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain, or type /d to load a Destiny Seed Card, /h for help.',
 ];
-const ROLECARD_KEY_PREFIX = '__ROLECARD__:';
+const ROLECARD_KEY_PREFIX = '__ROLECARD__';
 const ROLECARD_INDEX_KEY = '__ROLECARD__INDEX__';
 const ROLECARD_MAX_VALUE_BYTES = 2048;
 const ROLECARD_MAX_INDEX_LINES = 200;
