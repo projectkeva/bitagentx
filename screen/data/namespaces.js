@@ -602,7 +602,8 @@ class Namespace extends React.Component {
                 <View style={styles.spaceActionRowMulti}>
                   {ACTION_PAGES[this.state.actionPageIndex].map(label => {
                     const isChatAction = label === 'Chat' || label === 'Story' || label === 'Role';
-                    const disabled = isChatAction && !canChat;
+                    const hasAction = label === 'Message' || isChatAction;
+                    const disabled = !hasAction || (isChatAction && !canChat);
                     const onPress = disabled ? undefined : () => this.onPressAction(label);
                     return renderActionButton({ label, disabled, onPress });
                   })}
