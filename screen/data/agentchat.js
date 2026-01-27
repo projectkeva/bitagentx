@@ -1901,7 +1901,7 @@ class AgentChat extends React.Component {
       this.replyFromAgent(getRoleCardMessage('noCardFound', { roleSlug }));
       return;
     }
-    this.replyFromAgent(`${value}\n\n/r ${roleSlug}`);
+    this.replyFromAgent(`${value}\n\nStart Roleplay /r ${roleSlug}`);
   };
 
   handleRoleMemorySave = async (roleInput, memoryText) => {
