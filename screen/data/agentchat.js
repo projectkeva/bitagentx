@@ -1870,7 +1870,7 @@ class AgentChat extends React.Component {
     }
     const lines = [getRoleCardMessage('listTitle', { agentId })];
     entries.slice(0, ROLECARD_MAX_LIST_COUNT).forEach(entry => {
-      lines.push(`${entry.date}  ${entry.roleSlug}`);
+      lines.push(`${entry.date}  /m ${entry.roleSlug}  /r ${entry.roleSlug}`);
     });
     lines.push(getRoleCardMessage('listUse'));
     lines.push(getRoleCardMessage('listView'));
