@@ -618,11 +618,11 @@ class Namespace extends React.Component {
               <View style={styles.spaceActionRow}>
                 {canChat ? (
                   <TouchableOpacity style={styles.spaceActionButton} onPress={this.onChat}>
-                    <Text style={styles.spaceActionText}>Chat</Text>
+                    <Text style={styles.spaceActionText}>Message</Text>
                   </TouchableOpacity>
                 ) : (
                   <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-                    <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Chat</Text>
+                    <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Message</Text>
                   </View>
                 )}
                 <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
