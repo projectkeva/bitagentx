@@ -29,8 +29,50 @@ import { decodeBase64, deleteKeyValue, getNamespaceScriptHash, toScriptHash, upd
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
+const LLM_CONFIG_SUFFIX = '.llm.json';
+const LLM_HISTORY_LIMIT = 16;
+
+const LLM_PROVIDERS = {
+  gpt: {
+    kind: 'openai_compat',
+    baseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4o-mini',
+    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
+  },
+  grok: {
+    kind: 'openai_compat',
+    baseUrl: 'https://api.x.ai/v1',
+    defaultModel: 'grok-4',
+    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
+  },
+  deepseek: {
+    kind: 'openai_compat',
+    baseUrl: 'https://api.deepseek.com',
+    defaultModel: 'deepseek-chat',
+    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
+  },
+  kimi: {
+    kind: 'openai_compat',
+    baseUrl: 'https://api.moonshot.ai/v1',
+    defaultModel: 'moonshot-v1-8k',
+    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
+  },
+  qwen: {
+    kind: 'openai_compat',
+    baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    defaultModel: 'qwen-plus',
+    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
+  },
+  gemini: {
+    kind: 'gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    defaultModel: 'gemini-2.5-flash',
+    authHeader: apiKey => ({ 'x-goog-api-key': apiKey }),
+  },
+};
+
 const COMMAND_TOKEN_REGEX =
-  /\/(?:r|welcome|m)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:d|h|c|clear|linkstart|block)\b/gi;
+  /\/(?:r|welcome|m)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:d|h|c|clear|linkstart|block|a)\b/gi;
 const COMMAND_DISPLAY_TOKEN_REGEX = /\[\[([^\]|]+)\|([^\]]+)\]\]/gi;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
@@ -67,6 +109,8 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Send the three opening hints.',
     '/c — Clear all chat history.',
     '/block — Check the current block height.',
+    '/a <provider> <apikey> [model] — Enable cloud model for agent replies (gpt/grok/gemini/kimi/qwen/deepseek).',
+    '/a off — Disable cloud model.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Save a welcome message on-chain.',
     '/h — Show all command descriptions.',
@@ -76,6 +120,8 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — 发送开场三句提示。',
     '/c — 清除所有聊天记录。',
     '/block — 查询当前区块高度。',
+    '/a <provider> <apikey> [model] — 启用云模型回复（gpt/grok/gemini/kimi/qwen/deepseek）。',
+    '/a off — 关闭云模型回复。',
     '/r — 生成角色扮演提示词，<text>为角色设定。',
     '/welcome — 将欢迎语上链保存。',
     '/h — 显示所有命令说明。',
@@ -85,6 +131,8 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — 發送開場三句提示。',
     '/c — 清除所有聊天記錄。',
     '/block — 查詢目前區塊高度。',
+    '/a <provider> <apikey> [model] — 啟用雲模型回覆（gpt/grok/gemini/kimi/qwen/deepseek）。',
+    '/a off — 關閉雲模型回覆。',
     '/r — 產生角色扮演提示詞，<text>為角色設定。',
     '/welcome — 將歡迎語上鏈保存。',
     '/h — 顯示所有命令說明。',
@@ -1189,6 +1237,7 @@ class AgentChat extends React.Component {
       messages: [],
       visibleCount: PAGE_SIZE,
       inputValue: '',
+      llmConfig: null,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1260,6 +1309,7 @@ class AgentChat extends React.Component {
   initializeChat = async () => {
     await this.ensureStorage();
     await this.setChatStorageKey(this.props.navigation.state.params || {});
+    const llmConfig = await this.loadLLMConfig();
     const history = await this.readHistory();
     if (!this._isMounted) {
       return;
@@ -1270,6 +1320,7 @@ class AgentChat extends React.Component {
         allMessages: history,
         visibleCount,
         messages: history.slice(-visibleCount),
+        llmConfig,
       },
       () => {
         this.shouldScrollToEnd = true;
@@ -1381,6 +1432,55 @@ class AgentChat extends React.Component {
   };
 
   getChatFilePath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}.json`;
+
+  getLLMConfigPath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}${LLM_CONFIG_SUFFIX}`;
+
+  loadLLMConfig = async () => {
+    if (!this.chatStorageKey) {
+      return null;
+    }
+    const path = this.getLLMConfigPath(this.chatStorageKey);
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) {
+        return null;
+      }
+      const raw = await RNFS.readFile(path, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.provider && parsed.apiKey) {
+        return parsed;
+      }
+    } catch (error) {
+      console.warn('Failed to load llm config', error);
+    }
+    return null;
+  };
+
+  saveLLMConfig = async config => {
+    if (!this.chatStorageKey) {
+      return;
+    }
+    const path = this.getLLMConfigPath(this.chatStorageKey);
+    try {
+      await RNFS.writeFile(path, JSON.stringify(config), 'utf8');
+    } catch (error) {
+      console.warn('Failed to save llm config', error);
+    }
+  };
+
+  clearLLMConfig = async () => {
+    if (!this.chatStorageKey) {
+      return;
+    }
+    const path = this.getLLMConfigPath(this.chatStorageKey);
+    try {
+      const exists = await RNFS.exists(path);
+      if (exists) {
+        await RNFS.unlink(path);
+      }
+    } catch (_) {}
+    this.setState({ llmConfig: null });
+  };
 
   readHistory = async () => {
     if (!this.chatStorageKey) {
@@ -1506,6 +1606,11 @@ class AgentChat extends React.Component {
 
   handleTriggers = async text => {
     const trimmed = text.trim();
+    const aMatch = /^\/a(?:\s+(.+))?$/i.exec(trimmed);
+    if (aMatch) {
+      await this.handleAIConfigCommand(trimmed);
+      return;
+    }
     const clearMatch = /^\/(c|clear)\b/i.exec(trimmed);
     if (clearMatch) {
       await this.clearChatHistory();
@@ -1560,7 +1665,197 @@ class AgentChat extends React.Component {
 
     if (normalized === '/BLOCK') {
       await this.replyWithCurrentBlock();
+      return;
     }
+
+    if (trimmed.startsWith('/')) {
+      this.replyFromAgent('Unknown command. Type /h');
+      return;
+    }
+
+    await this.replyFromLLM(trimmed);
+  };
+
+  handleAIConfigCommand = async trimmed => {
+    const parts = trimmed.trim().split(/\s+/);
+    if (parts.length === 1) {
+      const cur = this.state.llmConfig;
+      const curLine = cur ? `Current: ${cur.provider} / ${cur.model || ''}` : 'Current: (none)';
+      this.replyFromAgent(
+        `${curLine}\nUsage: /a <provider> <apikey> [model]\nProviders: gpt, grok, gemini, kimi, qwen, deepseek\nDisable: /a off`,
+      );
+      return;
+    }
+
+    const sub = String(parts[1] || '').toLowerCase();
+    if (sub === 'off' || sub === 'clear') {
+      await this.clearLLMConfig();
+      this.replyFromAgent('Cloud model disabled.');
+      return;
+    }
+
+    const provider = sub;
+    const apiKey = parts[2];
+    const providerDef = LLM_PROVIDERS[provider];
+
+    if (!providerDef) {
+      this.replyFromAgent('Unknown provider. Use: gpt/grok/gemini/kimi/qwen/deepseek');
+      return;
+    }
+    if (!apiKey) {
+      this.replyFromAgent('Missing apiKey. Usage: /a <provider> <apikey> [model]');
+      return;
+    }
+
+    const model = parts[3] || providerDef.defaultModel;
+    const baseUrl = providerDef.baseUrl;
+
+    const next = { provider, apiKey, model, baseUrl };
+    this.setState({ llmConfig: next });
+    await this.saveLLMConfig(next);
+
+    this.replyFromAgent(`Cloud model enabled: ${provider} / ${model}`);
+  };
+
+  buildLLMSystemPrompt = () => {
+    const params = this.props.navigation?.state?.params || {};
+    const name = params.displayName || 'Agent';
+    const short = params.shortCode ? `@${params.shortCode}` : '';
+    const id = params.shortCode || params.namespaceId || 'unknown';
+    return `You are ${name}${short} (Agent ID: ${id}) in xKEVA. Reply naturally, concise when possible.`;
+  };
+
+  getRecentChatMessagesForLLM = () => {
+    const msgs = (this.state.allMessages || []).filter(
+      message => message && (message.sender === 'user' || message.sender === 'agent') && message.text,
+    );
+    return msgs.slice(-LLM_HISTORY_LIMIT);
+  };
+
+  replyFromLLM = async userText => {
+    const cfg = this.state.llmConfig;
+    if (!cfg || !cfg.provider || !cfg.apiKey) {
+      this.replyFromAgent('No cloud model configured. Use: /a <provider> <apikey>');
+      return;
+    }
+
+    const providerDef = LLM_PROVIDERS[cfg.provider];
+    if (!providerDef) {
+      this.replyFromAgent('Cloud model provider missing. Re-run /a.');
+      return;
+    }
+
+    try {
+      const systemPrompt = this.buildLLMSystemPrompt();
+      const recent = this.getRecentChatMessagesForLLM();
+
+      let replyText = '';
+
+      if (providerDef.kind === 'openai_compat') {
+        replyText = await this.callOpenAICompatible({
+          baseUrl: cfg.baseUrl || providerDef.baseUrl,
+          apiKey: cfg.apiKey,
+          model: cfg.model || providerDef.defaultModel,
+          systemPrompt,
+          recent,
+          authHeader: providerDef.authHeader,
+        });
+      } else if (providerDef.kind === 'gemini') {
+        replyText = await this.callGemini({
+          baseUrl: cfg.baseUrl || providerDef.baseUrl,
+          apiKey: cfg.apiKey,
+          model: cfg.model || providerDef.defaultModel,
+          systemPrompt,
+          recent,
+          authHeader: providerDef.authHeader,
+        });
+      } else {
+        this.replyFromAgent('Unsupported provider kind.');
+        return;
+      }
+
+      if (!replyText) {
+        this.replyFromAgent('Model returned empty response.');
+        return;
+      }
+
+      this.replyFromAgent(replyText.trim());
+    } catch (error) {
+      console.warn('LLM call failed', error);
+      this.replyFromAgent('LLM call failed.');
+    }
+  };
+
+  callOpenAICompatible = async ({ baseUrl, apiKey, model, systemPrompt, recent, authHeader }) => {
+    const url = `${String(baseUrl || '').replace(/\/$/, '')}/chat/completions`;
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...recent.map(message => ({
+        role: message.sender === 'user' ? 'user' : 'assistant',
+        content: String(message.text),
+      })),
+    ];
+
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(authHeader ? authHeader(apiKey) : { Authorization: `Bearer ${apiKey}` }),
+    };
+
+    const body = {
+      model,
+      messages,
+      temperature: 0.7,
+      stream: false,
+    };
+
+    const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    const json = await resp.json().catch(() => ({}));
+
+    const text = json?.choices?.[0]?.message?.content ?? '';
+    if (!resp.ok) {
+      throw new Error(`openai_compat http ${resp.status}: ${JSON.stringify(json).slice(0, 200)}`);
+    }
+    return text;
+  };
+
+  callGemini = async ({ baseUrl, apiKey, model, systemPrompt, recent, authHeader }) => {
+    const root = String(baseUrl || '').replace(/\/$/, '');
+    const url = `${root}/models/${encodeURIComponent(model)}:generateContent`;
+
+    const contents = recent.map(message => ({
+      role: message.sender === 'user' ? 'user' : 'model',
+      parts: [{ text: String(message.text) }],
+    }));
+
+    if (contents.length > 0) {
+      const first = contents[0];
+      if (first.role === 'user' && first.parts?.[0]?.text) {
+        first.parts[0].text = `SYSTEM: ${systemPrompt}\n\n${first.parts[0].text}`;
+      } else {
+        contents.unshift({ role: 'user', parts: [{ text: `SYSTEM: ${systemPrompt}` }] });
+      }
+    } else {
+      contents.push({ role: 'user', parts: [{ text: `SYSTEM: ${systemPrompt}` }] });
+    }
+
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(authHeader ? authHeader(apiKey) : { 'x-goog-api-key': apiKey }),
+    };
+
+    const body = { contents };
+
+    const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    const json = await resp.json().catch(() => ({}));
+
+    const parts = json?.candidates?.[0]?.content?.parts || [];
+    const text = parts.map(part => part?.text || '').join('');
+
+    if (!resp.ok) {
+      throw new Error(`gemini http ${resp.status}: ${JSON.stringify(json).slice(0, 200)}`);
+    }
+    return text;
   };
 
   clearChatHistory = async () => {
@@ -2237,6 +2532,9 @@ class AgentChat extends React.Component {
       return true;
     }
     if (/^\/linkstart\b/i.test(trimmed)) {
+      return true;
+    }
+    if (/^\/a\b/i.test(trimmed)) {
       return true;
     }
     if (/^\/r\s+.+/i.test(trimmed)) {
