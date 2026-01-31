@@ -1559,6 +1559,34 @@ class AgentChat extends React.Component {
     );
   };
 
+  updateAgentMessage = (requestId, newText) => {
+    this.shouldScrollToEnd = true;
+    this.setState(
+      prevState => {
+        let didUpdate = false;
+        const allMessages = prevState.allMessages.map(message => {
+          if (message?.requestId === requestId) {
+            didUpdate = true;
+            return {
+              ...message,
+              text: newText,
+              pending: false,
+            };
+          }
+          return message;
+        });
+        if (!didUpdate) {
+          return null;
+        }
+        return {
+          allMessages,
+          messages: allMessages.slice(-prevState.visibleCount),
+        };
+      },
+      () => this.persistMessages(this.state.allMessages),
+    );
+  };
+
   hasIntroSequence = messages => {
     const lastIndex = messages.length - INTRO_MESSAGES.length;
     return (
@@ -1733,15 +1761,25 @@ class AgentChat extends React.Component {
   };
 
   replyFromLLM = async userText => {
+    const requestId = `${Date.now()}-${Math.random()}`;
+    const placeholder = {
+      id: `agent-${requestId}`,
+      sender: 'agent',
+      text: '…',
+      pending: true,
+      requestId,
+      timestamp: Date.now(),
+    };
+    this.appendMessage(placeholder);
     const cfg = this.state.llmConfig;
     if (!cfg || !cfg.provider || !cfg.apiKey) {
-      this.replyFromAgent('No cloud model configured. Use: /a <provider> <apikey>');
+      this.updateAgentMessage(requestId, 'No cloud model configured. Use: /a <provider> <apikey>');
       return;
     }
 
     const providerDef = LLM_PROVIDERS[cfg.provider];
     if (!providerDef) {
-      this.replyFromAgent('Cloud model provider missing. Re-run /a.');
+      this.updateAgentMessage(requestId, 'Cloud model provider missing. Re-run /a.');
       return;
     }
 
@@ -1770,19 +1808,19 @@ class AgentChat extends React.Component {
           authHeader: providerDef.authHeader,
         });
       } else {
-        this.replyFromAgent('Unsupported provider kind.');
+        this.updateAgentMessage(requestId, 'Unsupported provider kind.');
         return;
       }
 
       if (!replyText) {
-        this.replyFromAgent('Model returned empty response.');
+        this.updateAgentMessage(requestId, 'Model returned empty response.');
         return;
       }
 
-      this.replyFromAgent(replyText.trim());
+      this.updateAgentMessage(requestId, replyText.trim());
     } catch (error) {
       console.warn('LLM call failed', error);
-      this.replyFromAgent('LLM call failed.');
+      this.updateAgentMessage(requestId, 'LLM call failed.');
     }
   };
 
