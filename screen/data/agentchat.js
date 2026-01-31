@@ -76,8 +76,8 @@ const COMMAND_TOKEN_REGEX =
 const COMMAND_DISPLAY_TOKEN_REGEX = /\[\[([^\]|]+)\|([^\]]+)\]\]/gi;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
-  'Loading the on-device LLM… (not deployed yet)',
-  'Local mode is on. Keep talking—tap the avatar to one-tap commit on-chain, or type /d to load a Destiny Seed Card, /h for help.',
+  'Loading the on-device LLM…',
+  '/h for help.',
 ];
 const ROLECARD_KEY_PREFIX = '__ROLECARD__:';
 const ROLECARD_INDEX_KEY = '__ROLECARD__INDEX__';
@@ -113,6 +113,7 @@ const COMMAND_HELP_MESSAGES = {
     '/a off — Disable cloud model.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Save a welcome message on-chain.',
+    'Tap avatar — one-tap commit on-chain.',
     '/h — Show all command descriptions.',
   ].join('\n'),
   'zh-cn': [
@@ -124,6 +125,7 @@ const COMMAND_HELP_MESSAGES = {
     '/a off — 关闭云模型回复。',
     '/r — 生成角色扮演提示词，<text>为角色设定。',
     '/welcome — 将欢迎语上链保存。',
+    '点头像 — 一键提交上链。',
     '/h — 显示所有命令说明。',
   ].join('\n'),
   'zh-tw': [
@@ -135,6 +137,7 @@ const COMMAND_HELP_MESSAGES = {
     '/a off — 關閉雲模型回覆。',
     '/r — 產生角色扮演提示詞，<text>為角色設定。',
     '/welcome — 將歡迎語上鏈保存。',
+    '點頭像 — 一鍵提交上鏈。',
     '/h — 顯示所有命令說明。',
   ].join('\n'),
   'zar-afr': [
@@ -1248,6 +1251,8 @@ class AgentChat extends React.Component {
     this.hasAutoCommandRun = false;
     this.hasAutoLinkStartRun = false;
     this.lastAutoCommand = null;
+    this.hasIntroAutoAOnce = false;
+    this.isPlayingIntro = false;
     this.chatStorageKey = null;
     this.persistQueue = Promise.resolve();
   }
@@ -1588,26 +1593,51 @@ class AgentChat extends React.Component {
   };
 
   hasIntroSequence = messages => {
-    const lastIndex = messages.length - INTRO_MESSAGES.length;
-    return (
-      lastIndex >= 0 &&
-      INTRO_MESSAGES.every((text, idx) => {
-        const message = messages[lastIndex + idx];
-        return message?.text === text && message?.sender === 'agent';
-      })
-    );
+    if (messages.length < INTRO_MESSAGES.length) {
+      return false;
+    }
+    const lastIntroIndex = INTRO_MESSAGES.length - 1;
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage?.sender !== 'agent' || lastMessage?.text !== INTRO_MESSAGES[lastIntroIndex]) {
+      return false;
+    }
+    let introIndex = lastIntroIndex - 1;
+    for (let i = messages.length - 2; i >= 0 && introIndex >= 0; i -= 1) {
+      const message = messages[i];
+      if (message?.sender === 'agent' && message?.text === INTRO_MESSAGES[introIndex]) {
+        introIndex -= 1;
+      }
+    }
+    return introIndex < 0;
   };
 
-  ensureIntroMessage = () => {
-    const { allMessages } = this.state;
-    const hasIntroSequence = this.hasIntroSequence(allMessages);
+  waitForIntroStep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-    if (hasIntroSequence) {
+  playIntroSequence = async () => {
+    const { allMessages } = this.state;
+    if (this.hasIntroSequence(allMessages) || this.isPlayingIntro) {
       return;
     }
 
-    const introMessages = INTRO_MESSAGES.map(text => this.buildMessage(text, 'agent'));
-    this.appendMessages(introMessages);
+    this.isPlayingIntro = true;
+    this.hasIntroAutoAOnce = false;
+
+    try {
+      for (let i = 0; i < INTRO_MESSAGES.length; i += 1) {
+        this.appendMessage(this.buildMessage(INTRO_MESSAGES[i], 'agent'));
+
+        if (i === 1 && !this.hasIntroAutoAOnce) {
+          this.hasIntroAutoAOnce = true;
+          await this.waitForIntroStep(50);
+          await this.sendCommand('/a');
+          await this.waitForIntroStep(200);
+        }
+
+        await this.waitForIntroStep(600);
+      }
+    } finally {
+      this.isPlayingIntro = false;
+    }
   };
 
   handleSend = async () => {
@@ -1652,7 +1682,7 @@ class AgentChat extends React.Component {
     }
     const linkStartMatch = /^\/linkstart\b/i.exec(trimmed);
     if (linkStartMatch) {
-      this.ensureIntroMessage();
+      await this.playIntroSequence();
       return;
     }
     if (/^\/m\b/i.test(trimmed)) {
