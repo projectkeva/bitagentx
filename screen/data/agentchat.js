@@ -1618,7 +1618,7 @@ class AgentChat extends React.Component {
     const userMessage = this.buildMessage(text, 'user');
     this.appendMessage(userMessage);
     this.setState({ inputValue: '' });
-    await this.handleTriggers(text);
+    await this.handleTriggers(text, userMessage);
   };
 
   sendCommand = async commandText => {
@@ -1626,13 +1626,14 @@ class AgentChat extends React.Component {
     if (!text) {
       return;
     }
-    this.appendMessage(this.buildMessage(text, 'user'));
+    const userMessage = this.buildMessage(text, 'user');
+    this.appendMessage(userMessage);
     this.setState({ inputValue: '' });
-    await this.handleTriggers(text);
+    await this.handleTriggers(text, userMessage);
     this.shouldScrollToEnd = true;
   };
 
-  handleTriggers = async text => {
+  handleTriggers = async (text, userMessage = null) => {
     const trimmed = text.trim();
     const aMatch = /^\/a(?:\s+(.+))?$/i.exec(trimmed);
     if (aMatch) {
@@ -1701,7 +1702,7 @@ class AgentChat extends React.Component {
       return;
     }
 
-    await this.replyFromLLM(trimmed);
+    await this.replyFromLLM(trimmed, userMessage);
   };
 
   handleAIConfigCommand = async trimmed => {
@@ -1755,12 +1756,16 @@ class AgentChat extends React.Component {
 
   getRecentChatMessagesForLLM = () => {
     const msgs = (this.state.allMessages || []).filter(
-      message => message && (message.sender === 'user' || message.sender === 'agent') && message.text,
+      message =>
+        message &&
+        (message.sender === 'user' || message.sender === 'agent') &&
+        message.text &&
+        !message.pending,
     );
     return msgs.slice(-LLM_HISTORY_LIMIT);
   };
 
-  replyFromLLM = async userText => {
+  replyFromLLM = async (userText, userMessage = null) => {
     const requestId = `${Date.now()}-${Math.random()}`;
     const placeholder = {
       id: `agent-${requestId}`,
@@ -1785,7 +1790,21 @@ class AgentChat extends React.Component {
 
     try {
       const systemPrompt = this.buildLLMSystemPrompt();
-      const recent = this.getRecentChatMessagesForLLM();
+      let recent = this.getRecentChatMessagesForLLM();
+
+      if (userMessage && userMessage.id) {
+        recent = recent.filter(message => message.id !== userMessage.id);
+        recent.push(userMessage);
+      } else {
+        recent.push({
+          id: `ephemeral-${requestId}`,
+          sender: 'user',
+          text: userText,
+          timestamp: Date.now(),
+        });
+      }
+
+      recent = recent.slice(-LLM_HISTORY_LIMIT);
 
       let replyText = '';
 
@@ -1947,9 +1966,10 @@ class AgentChat extends React.Component {
     }
     this.hasAutoCommandRun = true;
     this.lastAutoCommand = commandText;
-    this.appendMessage(this.buildMessage(commandText, 'user'));
+    const userMessage = this.buildMessage(commandText, 'user');
+    this.appendMessage(userMessage);
     this.setState({ inputValue: '' });
-    await this.handleTriggers(commandText);
+    await this.handleTriggers(commandText, userMessage);
     this.shouldScrollToEnd = true;
     navigation?.setParams?.({ autoCommand: null });
   };
