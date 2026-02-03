@@ -1370,20 +1370,36 @@ class AgentChat extends React.Component {
     const { namespaceId, shortCode, walletId } = params || {};
     const norm = value => (value === null || typeof value === 'undefined' ? '' : String(value).trim());
 
-    let resolvedNamespaceId = norm(namespaceId);
     const sc = norm(shortCode);
+    const resolvedNamespaceId = norm(namespaceId);
     const wid = norm(walletId);
 
-    if (!resolvedNamespaceId && sc) {
-      const namespaces = this.props.namespaceList?.namespaces || {};
-      const hit = Object.values(namespaces).find(namespace => String(namespace?.shortCode || '').trim() === sc);
-      if (hit?.id) {
-        resolvedNamespaceId = String(hit.id).trim();
+    const id = sc || resolvedNamespaceId || wid || 'default';
+    return encodeURIComponent(`agentchat_${id}`);
+  };
+
+  getStorageKeyCandidates = params => {
+    const { namespaceId, shortCode, walletId } = params || {};
+    const candidates = [];
+    const pushKey = candidateParams => {
+      const key = this.getCanonicalChatStorageKey(candidateParams);
+      if (key && !candidates.includes(key)) {
+        candidates.push(key);
       }
+    };
+
+    if (namespaceId) {
+      pushKey({ namespaceId });
+    }
+    if (shortCode) {
+      pushKey({ shortCode });
+    }
+    if (walletId) {
+      pushKey({ walletId });
     }
 
-    const id = resolvedNamespaceId || sc || wid || 'default';
-    return encodeURIComponent(`agentchat_${id}`);
+    pushKey({});
+    return candidates;
   };
 
   selectChatStorageKey = async params => {
@@ -1441,7 +1457,19 @@ class AgentChat extends React.Component {
   };
 
   setChatStorageKey = async params => {
-    this.chatStorageKey = this.getCanonicalChatStorageKey(params);
+    const candidates = this.getStorageKeyCandidates(params);
+    for (const key of candidates) {
+      const chatPath = this.getChatFilePath(key);
+      const llmPath = this.getLLMConfigPath(key);
+      try {
+        const [hasChat, hasLLM] = await Promise.all([RNFS.exists(chatPath), RNFS.exists(llmPath)]);
+        if (hasChat || hasLLM) {
+          this.chatStorageKey = key;
+          return;
+        }
+      } catch (_) {}
+    }
+    this.chatStorageKey = candidates[0];
   };
 
   getChatFilePath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}.json`;
@@ -1449,26 +1477,32 @@ class AgentChat extends React.Component {
   getLLMConfigPath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}${LLM_CONFIG_SUFFIX}`;
 
   loadLLMConfig = async () => {
-    if (!this.chatStorageKey) {
-      return null;
-    }
-    const path = this.getLLMConfigPath(this.chatStorageKey);
-    try {
-      const exists = await RNFS.exists(path);
-      if (!exists) {
-        return null;
+    const params = this.props.navigation.state.params || {};
+    const candidates = this.getStorageKeyCandidates(params);
+    const keys = this.chatStorageKey
+      ? [this.chatStorageKey, ...candidates.filter(key => key !== this.chatStorageKey)]
+      : candidates;
+
+    for (const key of keys) {
+      const path = this.getLLMConfigPath(key);
+      try {
+        const exists = await RNFS.exists(path);
+        if (!exists) {
+          continue;
+        }
+        const raw = await RNFS.readFile(path, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (
+          parsed &&
+          parsed.provider &&
+          (parsed.provider === 'local' ? parsed.baseUrl : parsed.apiKey)
+        ) {
+          this.chatStorageKey = key;
+          return parsed;
+        }
+      } catch (error) {
+        console.warn('Failed to load llm config', error);
       }
-      const raw = await RNFS.readFile(path, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (
-        parsed &&
-        parsed.provider &&
-        (parsed.provider === 'local' ? parsed.baseUrl : parsed.apiKey)
-      ) {
-        return parsed;
-      }
-    } catch (error) {
-      console.warn('Failed to load llm config', error);
     }
     return null;
   };
