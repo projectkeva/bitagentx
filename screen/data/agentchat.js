@@ -53,13 +53,13 @@ const LLM_PROVIDERS = {
   },
   kimi: {
     kind: 'openai_compat',
-    baseUrl: 'https://api.moonshot.ai/v1',
-    defaultModel: 'moonshot-v1-8k',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    defaultModel: 'kimi-k2-turbo-preview',
     authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
   },
   qwen: {
     kind: 'openai_compat',
-    baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     defaultModel: 'qwen-plus',
     authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
   },
