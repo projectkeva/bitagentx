@@ -39,6 +39,12 @@ const LLM_PROVIDERS = {
     defaultModel: 'gpt-4o-mini',
     authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
   },
+  local: {
+    kind: 'openai_compat',
+    baseUrl: '',
+    defaultModel: 'default',
+    authHeader: apiKey => (apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+  },
   grok: {
     kind: 'openai_compat',
     baseUrl: 'https://api.x.ai/v1',
@@ -110,6 +116,8 @@ const COMMAND_HELP_MESSAGES = {
     '/c — Clear all chat history.',
     '/block — Check the current block height.',
     '/a <provider> <apikey> [model] — Enable cloud model for agent replies (gpt/grok/gemini/kimi/qwen/deepseek).',
+    '/a local <http_base_url> [key] — Use any OpenAI-compatible endpoint (local if no key).',
+    '/a model <model> — Switch model for current provider.',
     '/a off — Disable cloud model.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Save a welcome message on-chain.',
@@ -1452,7 +1460,11 @@ class AgentChat extends React.Component {
       }
       const raw = await RNFS.readFile(path, 'utf8');
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.provider && parsed.apiKey) {
+      if (
+        parsed &&
+        parsed.provider &&
+        (parsed.provider === 'local' ? parsed.baseUrl : parsed.apiKey)
+      ) {
         return parsed;
       }
     } catch (error) {
@@ -1735,18 +1747,77 @@ class AgentChat extends React.Component {
     await this.replyFromLLM(trimmed, userMessage);
   };
 
+  fetchOpenAICompatModels = async (baseUrl, apiKey, authHeaderFn) => {
+    const root = String(baseUrl || '').replace(/\/$/, '');
+    if (!root) {
+      return [];
+    }
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(authHeaderFn
+        ? authHeaderFn(apiKey)
+        : apiKey
+          ? { Authorization: `Bearer ${apiKey}` }
+          : {}),
+    };
+    try {
+      const resp = await fetch(`${root}/models`, { method: 'GET', headers });
+      const json = await resp.json().catch(() => ({}));
+      const list = Array.isArray(json?.data) ? json.data : Array.isArray(json?.models) ? json.models : [];
+      const models = [];
+      const seen = new Set();
+      list.forEach(entry => {
+        const id = typeof entry === 'string' ? entry : entry?.id;
+        if (!id || seen.has(id)) {
+          return;
+        }
+        seen.add(id);
+        models.push(id);
+      });
+      return models.slice(0, 30);
+    } catch (error) {
+      console.warn('Failed to fetch openai compatible models', error);
+      return [];
+    }
+  };
+
+  resolveDefaultModelForEndpoint = async (baseUrl, apiKey, authHeaderFn, fallbackModel) => {
+    const models = await this.fetchOpenAICompatModels(baseUrl, apiKey, authHeaderFn);
+    if (models.length > 0) {
+      return models[0];
+    }
+    return fallbackModel || 'default';
+  };
+
   handleAIConfigCommand = async trimmed => {
     const parts = trimmed.trim().split(/\s+/);
     if (parts.length === 1) {
       const cur = this.state.llmConfig;
       const curLine = cur ? `Current: ${cur.provider} / ${cur.model || ''}` : 'Current: (none)';
       this.replyFromAgent(
-        `${curLine}\nUsage: /a <provider> <apikey> [model]\nProviders: gpt, grok, gemini, kimi, qwen, deepseek\nDisable: /a off`,
+        `${curLine}\nUsage: /a <provider> <apikey> [model]\nProviders: gpt, grok, gemini, kimi, qwen, deepseek, local\nDisable: /a off`,
       );
       return;
     }
 
     const sub = String(parts[1] || '').toLowerCase();
+    if (sub === 'model') {
+      const model = parts[2];
+      if (!model) {
+        this.replyFromAgent('Usage: /a model <model>');
+        return;
+      }
+      const cur = this.state.llmConfig;
+      if (!cur || !cur.provider) {
+        this.replyFromAgent('No provider configured. Use: /a local <http_base_url> [key] or /a <provider> <apikey>');
+        return;
+      }
+      const next = { ...cur, model };
+      this.setState({ llmConfig: next });
+      await this.saveLLMConfig(next);
+      this.replyFromAgent(`Model selected: ${model}`);
+      return;
+    }
     if (sub === 'off' || sub === 'clear') {
       await this.clearLLMConfig();
       this.replyFromAgent('Cloud model disabled.');
@@ -1754,13 +1825,56 @@ class AgentChat extends React.Component {
     }
 
     const provider = sub;
-    const apiKey = parts[2];
     const providerDef = LLM_PROVIDERS[provider];
 
     if (!providerDef) {
-      this.replyFromAgent('Unknown provider. Use: gpt/grok/gemini/kimi/qwen/deepseek');
+      this.replyFromAgent('Unknown provider. Use: gpt/grok/gemini/kimi/qwen/deepseek/local');
       return;
     }
+    if (provider === 'local') {
+      const baseUrl = parts[2];
+      if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+        this.replyFromAgent('Usage: /a local <http_base_url> [key]');
+        return;
+      }
+      const apiKey = parts[3];
+      const modelArg = parts[4];
+      if (modelArg) {
+        const next = { provider, baseUrl, apiKey, model: modelArg };
+        this.setState({ llmConfig: next });
+        await this.saveLLMConfig(next);
+        this.replyFromAgent(`Local endpoint enabled: ${baseUrl} / ${modelArg}`);
+        return;
+      }
+
+      if (apiKey) {
+        const models = await this.fetchOpenAICompatModels(baseUrl, apiKey, providerDef.authHeader);
+        if (models.length > 0) {
+          const selected = models[0];
+          const next = { provider, baseUrl, apiKey, model: selected };
+          this.setState({ llmConfig: next });
+          await this.saveLLMConfig(next);
+          const today = getTodayDateString();
+          const modelLines = models.map(modelId => `${today}  [[/a model ${modelId}|${modelId}]]`);
+          this.replyFromAgent(`Local endpoint enabled: ${baseUrl}\nSelect model:\n${modelLines.join('\n')}`);
+          return;
+        }
+      }
+
+      const model = await this.resolveDefaultModelForEndpoint(
+        baseUrl,
+        apiKey,
+        providerDef.authHeader,
+        providerDef.defaultModel,
+      );
+      const next = { provider, baseUrl, apiKey, model };
+      this.setState({ llmConfig: next });
+      await this.saveLLMConfig(next);
+      this.replyFromAgent(`Local endpoint enabled: ${baseUrl} / ${model}`);
+      return;
+    }
+
+    const apiKey = parts[2];
     if (!apiKey) {
       this.replyFromAgent('Missing apiKey. Usage: /a <provider> <apikey> [model]');
       return;
@@ -1807,7 +1921,17 @@ class AgentChat extends React.Component {
     };
     this.appendMessage(placeholder);
     const cfg = this.state.llmConfig;
-    if (!cfg || !cfg.provider || !cfg.apiKey) {
+    if (!cfg || !cfg.provider) {
+      this.updateAgentMessage(requestId, 'No cloud model configured. Use: /a <provider> <apikey>');
+      return;
+    }
+
+    const isLocal = cfg.provider === 'local';
+    if (isLocal && !cfg.baseUrl) {
+      this.updateAgentMessage(requestId, 'Local endpoint missing baseUrl. Use: /a local <http_base_url> [key]');
+      return;
+    }
+    if (!isLocal && !cfg.apiKey) {
       this.updateAgentMessage(requestId, 'No cloud model configured. Use: /a <provider> <apikey>');
       return;
     }
@@ -1886,7 +2010,7 @@ class AgentChat extends React.Component {
 
     const headers = {
       'Content-Type': 'application/json',
-      ...(authHeader ? authHeader(apiKey) : { Authorization: `Bearer ${apiKey}` }),
+      ...(authHeader ? authHeader(apiKey) : apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
     };
 
     const body = {
