@@ -1263,6 +1263,7 @@ class AgentChat extends React.Component {
     this.isPlayingIntro = false;
     this.chatStorageKey = null;
     this.persistQueue = Promise.resolve();
+    this.currentLLMConfig = null;
   }
 
   static navigationOptions = ({ navigation }) => {
@@ -1336,6 +1337,7 @@ class AgentChat extends React.Component {
         llmConfig,
       },
       () => {
+        this.currentLLMConfig = llmConfig;
         this.shouldScrollToEnd = true;
         this.forceScrollToBottomOnce = true;
         this.runAutoCommand().then(() => this.runAutoLinkStart());
@@ -1511,6 +1513,7 @@ class AgentChat extends React.Component {
     if (!this.chatStorageKey) {
       return;
     }
+    this.currentLLMConfig = config;
     const path = this.getLLMConfigPath(this.chatStorageKey);
     try {
       await RNFS.writeFile(path, JSON.stringify(config), 'utf8');
@@ -1531,6 +1534,7 @@ class AgentChat extends React.Component {
       }
     } catch (_) {}
     this.setState({ llmConfig: null });
+    this.currentLLMConfig = null;
   };
 
   readHistory = async () => {
@@ -1841,7 +1845,15 @@ class AgentChat extends React.Component {
         this.replyFromAgent('Usage: /a model <model>');
         return;
       }
-      const cur = this.state.llmConfig;
+      let cur = this.currentLLMConfig || this.state.llmConfig;
+      if (
+        !cur ||
+        !cur.provider ||
+        (cur.provider === 'local' && !cur.baseUrl) ||
+        (cur.provider !== 'local' && !cur.apiKey)
+      ) {
+        cur = await this.loadLLMConfig();
+      }
       if (!cur || !cur.provider) {
         this.replyFromAgent('No provider configured. Use: /a local <http_base_url> [key] or /a <provider> <apikey>');
         return;
@@ -1866,7 +1878,9 @@ class AgentChat extends React.Component {
       return;
     }
     if (provider === 'local') {
-      const baseUrl = parts[2];
+      const baseUrl = String(parts[2] || '')
+        .trim()
+        .replace(/\/$/, '');
       if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
         this.replyFromAgent('Usage: /a local <http_base_url> [key]');
         return;
