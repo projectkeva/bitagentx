@@ -30,7 +30,9 @@ import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees'
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const LLM_CONFIG_SUFFIX = '.llm.json';
+const LLM_PROVIDERS_SUFFIX = '.providers.json';
 const LLM_HISTORY_LIMIT = 16;
+const DEFAULT_AUTH_HEADER = apiKey => (apiKey ? { Authorization: `Bearer ${apiKey}` } : {});
 
 const LLM_PROVIDERS = {
   gpt: {
@@ -1478,6 +1480,8 @@ class AgentChat extends React.Component {
 
   getLLMConfigPath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}${LLM_CONFIG_SUFFIX}`;
 
+  getLLMProvidersPath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}${LLM_PROVIDERS_SUFFIX}`;
+
   loadLLMConfig = async () => {
     const params = this.props.navigation.state.params || {};
     const candidates = this.getStorageKeyCandidates(params);
@@ -1494,17 +1498,71 @@ class AgentChat extends React.Component {
         }
         const raw = await RNFS.readFile(path, 'utf8');
         const parsed = JSON.parse(raw);
-        if (
-          parsed &&
-          parsed.provider &&
-          (parsed.provider === 'local' ? parsed.baseUrl : parsed.apiKey)
-        ) {
+        if (parsed && parsed.provider && parsed.baseUrl) {
           this.chatStorageKey = key;
           return parsed;
         }
       } catch (error) {
         console.warn('Failed to load llm config', error);
       }
+    }
+    return null;
+  };
+
+  loadProvidersRegistry = async () => {
+    if (!this.chatStorageKey) {
+      await this.setChatStorageKey(this.props.navigation.state.params || {});
+    }
+    const path = this.getLLMProvidersPath(this.chatStorageKey);
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) {
+        return {};
+      }
+      const raw = await RNFS.readFile(path, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch (error) {
+      console.warn('Failed to load providers registry', error);
+    }
+    return {};
+  };
+
+  saveProvidersRegistry = async registry => {
+    if (!this.chatStorageKey) {
+      await this.setChatStorageKey(this.props.navigation.state.params || {});
+    }
+    const path = this.getLLMProvidersPath(this.chatStorageKey);
+    try {
+      await RNFS.writeFile(path, JSON.stringify(registry || {}), 'utf8');
+    } catch (error) {
+      console.warn('Failed to save providers registry', error);
+    }
+  };
+
+  resolveProviderDef = async name => {
+    const normalized = String(name || '').toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    if (LLM_PROVIDERS[normalized]) {
+      return { name: normalized, def: LLM_PROVIDERS[normalized], source: 'builtin' };
+    }
+    const registry = await this.loadProvidersRegistry();
+    const entry = registry?.[normalized];
+    if (entry && entry.baseUrl) {
+      return {
+        name: normalized,
+        def: {
+          kind: 'openai_compat',
+          baseUrl: entry.baseUrl,
+          defaultModel: 'default',
+          authHeader: DEFAULT_AUTH_HEADER,
+        },
+        source: 'custom',
+      };
     }
     return null;
   };
@@ -1832,8 +1890,9 @@ class AgentChat extends React.Component {
     if (parts.length === 1) {
       const cur = this.state.llmConfig;
       const curLine = cur ? `Current: ${cur.provider} / ${cur.model || ''}` : 'Current: (none)';
+      const providersList = Object.keys(LLM_PROVIDERS).join(', ');
       this.replyFromAgent(
-        `${curLine}\nUsage: /a <provider> <apikey> [model]\nProviders: gpt, grok, gemini, kimi, qwen, deepseek, local\nDisable: /a off`,
+        `${curLine}\nUsage:\n/a list\n/a <provider> [key] [model]\n/a add <provider> <url> [key]\n/a del <provider>\n/a model <model>\n/a off\nProviders: ${providersList}`,
       );
       return;
     }
@@ -1846,16 +1905,11 @@ class AgentChat extends React.Component {
         return;
       }
       let cur = this.currentLLMConfig || this.state.llmConfig;
-      if (
-        !cur ||
-        !cur.provider ||
-        (cur.provider === 'local' && !cur.baseUrl) ||
-        (cur.provider !== 'local' && !cur.apiKey)
-      ) {
+      if (!cur || !cur.provider || !cur.baseUrl) {
         cur = await this.loadLLMConfig();
       }
       if (!cur || !cur.provider) {
-        this.replyFromAgent('No provider configured. Use: /a local <http_base_url> [key] or /a <provider> <apikey>');
+        this.replyFromAgent('No provider configured. Use: /a list or /a add <provider> <url> [key]');
         return;
       }
       const next = { ...cur, model };
@@ -1869,14 +1923,77 @@ class AgentChat extends React.Component {
       this.replyFromAgent('Cloud model disabled.');
       return;
     }
-
-    const provider = sub;
-    const providerDef = LLM_PROVIDERS[provider];
-
-    if (!providerDef) {
-      this.replyFromAgent('Unknown provider. Use: gpt/grok/gemini/kimi/qwen/deepseek/local');
+    if (sub === 'list') {
+      const cur = this.currentLLMConfig || this.state.llmConfig || (await this.loadLLMConfig());
+      const registry = await this.loadProvidersRegistry();
+      const currentProvider = cur?.provider || '';
+      const currentApiKey = cur?.apiKey || '';
+      const builtinLines = Object.keys(LLM_PROVIDERS).map(name => {
+        const def = LLM_PROVIDERS[name];
+        const baseUrl = def.baseUrl || (currentProvider === name ? cur?.baseUrl : '');
+        const hasKey = currentProvider === name && currentApiKey ? 'YES' : 'NO';
+        return `${name} baseUrl=${baseUrl || '(unset)'} key=${hasKey} [[/a ${name}|use]]`;
+      });
+      const customNames = Object.keys(registry || {});
+      const customLines = customNames.length
+        ? customNames.map(name => {
+            const entry = registry[name] || {};
+            const hasKey = entry.apiKey ? 'YES' : currentProvider === name && currentApiKey ? 'YES' : 'NO';
+            return `${name} baseUrl=${entry.baseUrl || '(unset)'} key=${hasKey} [[/a ${name}|use]]`;
+          })
+        : ['(none)'];
+      this.replyFromAgent(
+        `Builtin providers (from code):\n${builtinLines.join('\n')}\n\nCustom providers (stored):\n${customLines.join('\n')}`,
+      );
       return;
     }
+    if (sub === 'add') {
+      const name = String(parts[2] || '').toLowerCase();
+      if (!/^[a-z0-9_-]{1,32}$/i.test(name)) {
+        this.replyFromAgent('Usage: /a add <provider> <url> [key]');
+        return;
+      }
+      if (LLM_PROVIDERS[name]) {
+        this.replyFromAgent(`Cannot add builtin provider "${name}". Use /a ${name} <key> or choose a new name.`);
+        return;
+      }
+      const baseUrl = String(parts[3] || '')
+        .trim()
+        .replace(/\/$/, '');
+      if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+        this.replyFromAgent('Usage: /a add <provider> <url> [key]');
+        return;
+      }
+      const apiKey = parts[4] || '';
+      const registry = await this.loadProvidersRegistry();
+      registry[name] = { baseUrl, apiKey };
+      await this.saveProvidersRegistry(registry);
+      this.replyFromAgent(`Added provider: ${name} (${baseUrl}) key=${apiKey ? 'YES' : 'NO'}`);
+      return;
+    }
+    if (sub === 'del') {
+      const name = String(parts[2] || '').toLowerCase();
+      if (!name) {
+        this.replyFromAgent('Usage: /a del <provider>');
+        return;
+      }
+      if (LLM_PROVIDERS[name]) {
+        this.replyFromAgent('Cannot delete builtin provider.');
+        return;
+      }
+      const registry = await this.loadProvidersRegistry();
+      if (registry[name]) {
+        delete registry[name];
+        await this.saveProvidersRegistry(registry);
+      }
+      if (this.state.llmConfig?.provider === name || this.currentLLMConfig?.provider === name) {
+        await this.clearLLMConfig();
+      }
+      this.replyFromAgent(`Deleted provider: ${name}`);
+      return;
+    }
+
+    const provider = sub;
     if (provider === 'local') {
       const baseUrl = String(parts[2] || '')
         .trim()
@@ -1885,57 +2002,91 @@ class AgentChat extends React.Component {
         this.replyFromAgent('Usage: /a local <http_base_url> [key]');
         return;
       }
-      const apiKey = parts[3];
+      const apiKey = parts[3] || '';
       const modelArg = parts[4];
-      if (modelArg) {
-        const next = { provider, baseUrl, apiKey, model: modelArg };
-        this.setState({ llmConfig: next });
-        await this.saveLLMConfig(next);
-        this.replyFromAgent(`Local endpoint enabled: ${baseUrl} / ${modelArg}`);
-        return;
-      }
-
-      if (apiKey) {
-        const models = await this.fetchOpenAICompatModels(baseUrl, apiKey, providerDef.authHeader);
-        if (models.length > 0) {
-          const selected = models[0];
-          const next = { provider, baseUrl, apiKey, model: selected };
-          this.setState({ llmConfig: next });
-          await this.saveLLMConfig(next);
-          const today = getTodayDateString();
-          const modelLines = models.map(modelId => `${today}  [[/a model ${modelId}|${modelId}]]`);
-          this.replyFromAgent(`Local endpoint enabled: ${baseUrl}\nSelect model:\n${modelLines.join('\n')}`);
-          return;
-        }
-      }
-
-      const model = await this.resolveDefaultModelForEndpoint(
-        baseUrl,
-        apiKey,
-        providerDef.authHeader,
-        providerDef.defaultModel,
-      );
-      const next = { provider, baseUrl, apiKey, model };
+      const providerDef = LLM_PROVIDERS.local;
+      const models = await this.fetchOpenAICompatModels(baseUrl, apiKey, providerDef.authHeader);
+      const current = this.currentLLMConfig || this.state.llmConfig;
+      const selectedModel =
+        modelArg ||
+        (current && current.provider === provider ? current.model : '') ||
+        models[0] ||
+        providerDef.defaultModel ||
+        'default';
+      const next = { provider, baseUrl, apiKey, model: selectedModel };
       this.setState({ llmConfig: next });
       await this.saveLLMConfig(next);
-      this.replyFromAgent(`Local endpoint enabled: ${baseUrl} / ${model}`);
+      if (models.length === 0) {
+        if (!apiKey) {
+          this.replyFromAgent(`This provider may require a key. Try: /a ${provider} <key>`);
+        } else {
+          this.replyFromAgent('Failed to load models. Check baseUrl/key or endpoint compatibility.');
+        }
+        return;
+      }
+      const today = getTodayDateString();
+      const modelLines = models.map(modelId => `${today}  [[/a model ${modelId}|${modelId}]]`);
+      this.replyFromAgent(
+        `Connected: ${provider} ✅\nModel: ${selectedModel}\nEndpoint: ${baseUrl}\nSelect model:\n${modelLines.join('\n')}`,
+      );
       return;
     }
 
-    const apiKey = parts[2];
-    if (!apiKey) {
-      this.replyFromAgent('Missing apiKey. Usage: /a <provider> <apikey> [model]');
+    const keyArg = parts[2] || '';
+    const modelArg = parts[3];
+    const resolved = await this.resolveProviderDef(provider);
+    if (!resolved) {
+      this.replyFromAgent('Unknown provider. Try: /a list or /a add <provider> <url> [key]');
       return;
     }
-
-    const model = parts[3] || providerDef.defaultModel;
-    const baseUrl = providerDef.baseUrl;
-
-    const next = { provider, apiKey, model, baseUrl };
+    const providerDef = resolved.def;
+    let baseUrl = providerDef.baseUrl;
+    let apiKey = '';
+    if (resolved.source === 'custom') {
+      const registry = await this.loadProvidersRegistry();
+      baseUrl = registry[provider]?.baseUrl || baseUrl;
+      apiKey = keyArg || registry[provider]?.apiKey || '';
+      if (keyArg) {
+        registry[provider] = { baseUrl, apiKey: keyArg };
+        await this.saveProvidersRegistry(registry);
+      }
+    } else {
+      baseUrl = providerDef.baseUrl;
+      if (keyArg) {
+        apiKey = keyArg;
+      } else {
+        const cur = this.currentLLMConfig || this.state.llmConfig;
+        apiKey = cur && cur.provider === provider ? cur.apiKey || '' : '';
+      }
+    }
+    if (!baseUrl) {
+      this.replyFromAgent('Missing baseUrl for provider. Try: /a list or /a add <provider> <url> [key]');
+      return;
+    }
+    const models = await this.fetchOpenAICompatModels(baseUrl, apiKey, providerDef.authHeader);
+    const current = this.currentLLMConfig || this.state.llmConfig;
+    const selectedModel =
+      modelArg ||
+      (current && current.provider === provider ? current.model : '') ||
+      models[0] ||
+      providerDef.defaultModel ||
+      'default';
+    const next = { provider, baseUrl, apiKey, model: selectedModel };
     this.setState({ llmConfig: next });
     await this.saveLLMConfig(next);
-
-    this.replyFromAgent(`Cloud model enabled: ${provider} / ${model}`);
+    if (models.length === 0) {
+      if (!apiKey) {
+        this.replyFromAgent(`This provider may require a key. Try: /a ${provider} <key>`);
+      } else {
+        this.replyFromAgent('Failed to load models. Check baseUrl/key or endpoint compatibility.');
+      }
+      return;
+    }
+    const today = getTodayDateString();
+    const modelLines = models.map(modelId => `${today}  [[/a model ${modelId}|${modelId}]]`);
+    this.replyFromAgent(
+      `Connected: ${provider} ✅\nModel: ${selectedModel}\nEndpoint: ${baseUrl}\nSelect model:\n${modelLines.join('\n')}`,
+    );
   };
 
   buildLLMSystemPrompt = () => {
@@ -1974,19 +2125,15 @@ class AgentChat extends React.Component {
       return;
     }
 
-    const isLocal = cfg.provider === 'local';
-    if (isLocal && !cfg.baseUrl) {
-      this.updateAgentMessage(requestId, 'Local endpoint missing baseUrl. Use: /a local <http_base_url> [key]');
-      return;
-    }
-    if (!isLocal && !cfg.apiKey) {
-      this.updateAgentMessage(requestId, 'No cloud model configured. Use: /a <provider> <apikey>');
-      return;
-    }
-
-    const providerDef = LLM_PROVIDERS[cfg.provider];
-    if (!providerDef) {
+    const resolved = await this.resolveProviderDef(cfg.provider);
+    if (!resolved) {
       this.updateAgentMessage(requestId, 'Cloud model provider missing. Re-run /a.');
+      return;
+    }
+    const providerDef = resolved.def;
+    const baseUrl = cfg.baseUrl || providerDef.baseUrl;
+    if (!baseUrl) {
+      this.updateAgentMessage(requestId, 'Provider missing baseUrl. Re-run /a.');
       return;
     }
 
@@ -2012,16 +2159,16 @@ class AgentChat extends React.Component {
 
       if (providerDef.kind === 'openai_compat') {
         replyText = await this.callOpenAICompatible({
-          baseUrl: cfg.baseUrl || providerDef.baseUrl,
+          baseUrl,
           apiKey: cfg.apiKey,
           model: cfg.model || providerDef.defaultModel,
           systemPrompt,
           recent,
-          authHeader: providerDef.authHeader,
+          authHeader: providerDef.authHeader || DEFAULT_AUTH_HEADER,
         });
       } else if (providerDef.kind === 'gemini') {
         replyText = await this.callGemini({
-          baseUrl: cfg.baseUrl || providerDef.baseUrl,
+          baseUrl,
           apiKey: cfg.apiKey,
           model: cfg.model || providerDef.defaultModel,
           systemPrompt,
