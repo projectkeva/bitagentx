@@ -31,6 +31,7 @@ import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees'
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const LLM_CONFIG_SUFFIX = '.llm.json';
 const LLM_PROVIDERS_SUFFIX = '.providers.json';
+const ACTIVE_PROVIDER_SUFFIX = '.active_provider.json';
 const LLM_HISTORY_LIMIT = 16;
 const DEFAULT_AUTH_HEADER = apiKey => (apiKey ? { Authorization: `Bearer ${apiKey}` } : {});
 
@@ -1342,7 +1343,9 @@ class AgentChat extends React.Component {
         this.currentLLMConfig = llmConfig;
         this.shouldScrollToEnd = true;
         this.forceScrollToBottomOnce = true;
-        this.runAutoCommand().then(() => this.runAutoLinkStart());
+        this.restoreProviderFromDisk()
+          .then(() => this.runAutoCommand())
+          .then(() => this.runAutoLinkStart());
       },
     );
   };
@@ -1482,6 +1485,11 @@ class AgentChat extends React.Component {
 
   getLLMProvidersPath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}${LLM_PROVIDERS_SUFFIX}`;
 
+  getActiveProviderPath = storageKey => {
+    const key = storageKey || this.chatStorageKey || 'default';
+    return `${CHAT_DIR}/${key}${ACTIVE_PROVIDER_SUFFIX}`;
+  };
+
   loadLLMConfig = async () => {
     const params = this.props.navigation.state.params || {};
     const candidates = this.getStorageKeyCandidates(params);
@@ -1507,6 +1515,48 @@ class AgentChat extends React.Component {
       }
     }
     return null;
+  };
+
+  loadActiveProvider = async () => {
+    const params = this.props.navigation.state.params || {};
+    const candidates = this.getStorageKeyCandidates(params);
+    const keys = this.chatStorageKey
+      ? [this.chatStorageKey, ...candidates.filter(key => key !== this.chatStorageKey)]
+      : candidates;
+
+    for (const key of keys) {
+      const path = this.getActiveProviderPath(key);
+      try {
+        const exists = await RNFS.exists(path);
+        if (!exists) {
+          continue;
+        }
+        const raw = await RNFS.readFile(path, 'utf8');
+        const parsed = JSON.parse(raw);
+        const name = typeof parsed?.name === 'string' ? parsed.name.trim() : '';
+        if (name) {
+          this.chatStorageKey = key;
+          return { name };
+        }
+      } catch (_) {}
+    }
+    return null;
+  };
+
+  saveActiveProvider = async (name, storageKey) => {
+    if (!this.chatStorageKey && !storageKey) {
+      await this.setChatStorageKey(this.props.navigation.state.params || {});
+    }
+    const path = this.getActiveProviderPath(storageKey);
+    const payload = JSON.stringify({ name, updatedAt: Date.now() });
+    await RNFS.writeFile(path, payload, 'utf8');
+  };
+
+  clearActiveProvider = async storageKey => {
+    const path = this.getActiveProviderPath(storageKey);
+    try {
+      await RNFS.unlink(path);
+    } catch (_) {}
   };
 
   loadProvidersRegistry = async () => {
@@ -1539,6 +1589,95 @@ class AgentChat extends React.Component {
       await RNFS.writeFile(path, JSON.stringify(registry || {}), 'utf8');
     } catch (error) {
       console.warn('Failed to save providers registry', error);
+    }
+  };
+
+  applyProviderConfig = async ({
+    providerName,
+    providerDef,
+    registryEntry,
+    llmConfig,
+    baseUrlOverride,
+    apiKeyOverride,
+    modelOverride,
+    startup = false,
+  }) => {
+    const baseUrl = String(
+      baseUrlOverride || registryEntry?.baseUrl || providerDef?.baseUrl || llmConfig?.baseUrl || '',
+    )
+      .trim()
+      .replace(/\/$/, '');
+    const apiKey =
+      apiKeyOverride ||
+      registryEntry?.apiKey ||
+      (llmConfig?.provider === providerName ? llmConfig?.apiKey : '') ||
+      '';
+    if (!baseUrl) {
+      throw new Error('Missing baseUrl');
+    }
+    const models = await this.fetchOpenAICompatModels(baseUrl, apiKey, providerDef?.authHeader);
+    if (models.length === 0) {
+      if (!apiKey) {
+        throw new Error('Missing api key');
+      }
+      throw new Error('Failed to load models');
+    }
+    const selectedModel =
+      modelOverride ||
+      (llmConfig && llmConfig.provider === providerName ? llmConfig.model : '') ||
+      models[0] ||
+      providerDef?.defaultModel ||
+      'default';
+    const next = { provider: providerName, baseUrl, apiKey, model: selectedModel, updatedAt: Date.now() };
+    this.setState({ llmConfig: next });
+    await this.saveLLMConfig(next);
+    await this.saveActiveProvider(providerName);
+    this.currentLLMConfig = next;
+
+    const modeLabel = apiKey ? 'cloud' : 'local';
+    const hello = startup
+      ? `Provider restored: ${providerName} (${modeLabel})`
+      : `Provider loaded: ${providerName} (${modeLabel}) model=${selectedModel}`;
+    if (startup) {
+      this.replyFromAgent(hello);
+    } else {
+      const today = getTodayDateString();
+      const modelLines = models.map(modelId => `${today}  [[/a model ${modelId}|${modelId}]]`);
+      this.replyFromAgent(`${hello}\nEndpoint: ${baseUrl}\nSelect model:\n${modelLines.join('\n')}`);
+    }
+
+    return { models, selectedModel, baseUrl, apiKey };
+  };
+
+  restoreProviderFromDisk = async () => {
+    const active = await this.loadActiveProvider();
+    if (!active?.name) {
+      return;
+    }
+    const registry = await this.loadProvidersRegistry();
+    const resolved = await this.resolveProviderDef(active.name);
+    if (!resolved) {
+      return;
+    }
+    const providerDef = resolved.def;
+    const registryEntry = resolved.source === 'custom' ? registry?.[active.name] : null;
+    const llmConfig = await this.loadLLMConfig();
+
+    try {
+      await this.applyProviderConfig({
+        providerName: active.name,
+        providerDef,
+        registryEntry,
+        llmConfig,
+        startup: true,
+      });
+    } catch (error) {
+      const msg = String(error?.message || error || '');
+      if (/key/i.test(msg) || /api\s*key/i.test(msg) || /401|403/.test(msg)) {
+        this.replyFromAgent(`Provider "${active.name}" requires a key. Use: /a ${active.name} <key>`);
+      } else {
+        this.replyFromAgent(`Failed to restore provider "${active.name}": ${msg || 'unknown error'}`);
+      }
     }
   };
 
@@ -1915,11 +2054,13 @@ class AgentChat extends React.Component {
       const next = { ...cur, model };
       this.setState({ llmConfig: next });
       await this.saveLLMConfig(next);
+      await this.saveActiveProvider(cur.provider);
       this.replyFromAgent(`Model selected: ${model}`);
       return;
     }
     if (sub === 'off' || sub === 'clear') {
       await this.clearLLMConfig();
+      await this.clearActiveProvider();
       this.replyFromAgent('Cloud model disabled.');
       return;
     }
@@ -1988,6 +2129,7 @@ class AgentChat extends React.Component {
       }
       if (this.state.llmConfig?.provider === name || this.currentLLMConfig?.provider === name) {
         await this.clearLLMConfig();
+        await this.clearActiveProvider();
       }
       this.replyFromAgent(`Deleted provider: ${name}`);
       return;
@@ -2005,30 +2147,30 @@ class AgentChat extends React.Component {
       const apiKey = parts[3] || '';
       const modelArg = parts[4];
       const providerDef = LLM_PROVIDERS.local;
-      const models = await this.fetchOpenAICompatModels(baseUrl, apiKey, providerDef.authHeader);
-      const current = this.currentLLMConfig || this.state.llmConfig;
-      const selectedModel =
-        modelArg ||
-        (current && current.provider === provider ? current.model : '') ||
-        models[0] ||
-        providerDef.defaultModel ||
-        'default';
-      const next = { provider, baseUrl, apiKey, model: selectedModel };
-      this.setState({ llmConfig: next });
-      await this.saveLLMConfig(next);
-      if (models.length === 0) {
+      const current = this.currentLLMConfig || this.state.llmConfig || (await this.loadLLMConfig());
+      try {
+        await this.applyProviderConfig({
+          providerName: provider,
+          providerDef,
+          llmConfig: current,
+          baseUrlOverride: baseUrl,
+          apiKeyOverride: apiKey,
+          modelOverride: modelArg,
+          startup: false,
+        });
+      } catch (error) {
+        const msg = String(error?.message || error || '');
         if (!apiKey) {
+          this.replyFromAgent(`This provider may require a key. Try: /a ${provider} <key>`);
+          return;
+        }
+        if (/Missing api key/i.test(msg)) {
           this.replyFromAgent(`This provider may require a key. Try: /a ${provider} <key>`);
         } else {
           this.replyFromAgent('Failed to load models. Check baseUrl/key or endpoint compatibility.');
         }
         return;
       }
-      const today = getTodayDateString();
-      const modelLines = models.map(modelId => `${today}  [[/a model ${modelId}|${modelId}]]`);
-      this.replyFromAgent(
-        `Connected: ${provider} ✅\nModel: ${selectedModel}\nEndpoint: ${baseUrl}\nSelect model:\n${modelLines.join('\n')}`,
-      );
       return;
     }
 
@@ -2040,53 +2182,42 @@ class AgentChat extends React.Component {
       return;
     }
     const providerDef = resolved.def;
-    let baseUrl = providerDef.baseUrl;
-    let apiKey = '';
+    let registryEntry = null;
+    let apiKeyOverride = '';
     if (resolved.source === 'custom') {
       const registry = await this.loadProvidersRegistry();
-      baseUrl = registry[provider]?.baseUrl || baseUrl;
-      apiKey = keyArg || registry[provider]?.apiKey || '';
+      registryEntry = registry?.[provider] || null;
       if (keyArg) {
-        registry[provider] = { baseUrl, apiKey: keyArg };
+        registryEntry = { ...(registryEntry || {}), apiKey: keyArg };
+        registry[provider] = registryEntry;
         await this.saveProvidersRegistry(registry);
       }
-    } else {
-      baseUrl = providerDef.baseUrl;
-      if (keyArg) {
-        apiKey = keyArg;
-      } else {
-        const cur = this.currentLLMConfig || this.state.llmConfig;
-        apiKey = cur && cur.provider === provider ? cur.apiKey || '' : '';
+    } else if (keyArg) {
+      apiKeyOverride = keyArg;
+    }
+    const current = this.currentLLMConfig || this.state.llmConfig || (await this.loadLLMConfig());
+    try {
+      await this.applyProviderConfig({
+        providerName: provider,
+        providerDef,
+        registryEntry,
+        llmConfig: current,
+        apiKeyOverride,
+        modelOverride: modelArg,
+        startup: false,
+      });
+    } catch (error) {
+      const msg = String(error?.message || error || '');
+      if (/Missing baseUrl/i.test(msg)) {
+        this.replyFromAgent('Missing baseUrl for provider. Try: /a list or /a add <provider> <url> [key]');
+        return;
       }
-    }
-    if (!baseUrl) {
-      this.replyFromAgent('Missing baseUrl for provider. Try: /a list or /a add <provider> <url> [key]');
-      return;
-    }
-    const models = await this.fetchOpenAICompatModels(baseUrl, apiKey, providerDef.authHeader);
-    const current = this.currentLLMConfig || this.state.llmConfig;
-    const selectedModel =
-      modelArg ||
-      (current && current.provider === provider ? current.model : '') ||
-      models[0] ||
-      providerDef.defaultModel ||
-      'default';
-    const next = { provider, baseUrl, apiKey, model: selectedModel };
-    this.setState({ llmConfig: next });
-    await this.saveLLMConfig(next);
-    if (models.length === 0) {
-      if (!apiKey) {
+      if (/Missing api key/i.test(msg)) {
         this.replyFromAgent(`This provider may require a key. Try: /a ${provider} <key>`);
-      } else {
-        this.replyFromAgent('Failed to load models. Check baseUrl/key or endpoint compatibility.');
+        return;
       }
-      return;
+      this.replyFromAgent('Failed to load models. Check baseUrl/key or endpoint compatibility.');
     }
-    const today = getTodayDateString();
-    const modelLines = models.map(modelId => `${today}  [[/a model ${modelId}|${modelId}]]`);
-    this.replyFromAgent(
-      `Connected: ${provider} ✅\nModel: ${selectedModel}\nEndpoint: ${baseUrl}\nSelect model:\n${modelLines.join('\n')}`,
-    );
   };
 
   buildLLMSystemPrompt = () => {
