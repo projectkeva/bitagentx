@@ -1660,7 +1660,7 @@ class AgentChat extends React.Component {
       return;
     }
     const providerDef = resolved.def;
-    const registryEntry = resolved.source === 'custom' ? registry?.[active.name] : null;
+    const registryEntry = registry?.[active.name] || null;
     const llmConfig = await this.loadLLMConfig();
 
     try {
@@ -2072,7 +2072,8 @@ class AgentChat extends React.Component {
       const builtinLines = Object.keys(LLM_PROVIDERS).map(name => {
         const def = LLM_PROVIDERS[name];
         const baseUrl = def.baseUrl || (currentProvider === name ? cur?.baseUrl : '');
-        const hasKey = currentProvider === name && currentApiKey ? 'YES' : 'NO';
+        const storedKey = registry?.[name]?.apiKey || '';
+        const hasKey = (currentProvider === name && currentApiKey) || storedKey ? 'YES' : 'NO';
         return `${name} baseUrl=${baseUrl || '(unset)'} key=${hasKey} [[/a ${name}|use]]`;
       });
       const customNames = Object.keys(registry || {});
@@ -2194,6 +2195,15 @@ class AgentChat extends React.Component {
       }
     } else if (keyArg) {
       apiKeyOverride = keyArg;
+
+      // Persist builtin key so restoreProviderFromDisk() can reuse it.
+      const registry = await this.loadProvidersRegistry();
+      registry[provider] = {
+        ...(registry[provider] || {}),
+        // do NOT store baseUrl for builtin; builtin baseUrl lives in code
+        apiKey: keyArg,
+      };
+      await this.saveProvidersRegistry(registry);
     }
     const current = this.currentLLMConfig || this.state.llmConfig || (await this.loadLLMConfig());
     try {
