@@ -1686,11 +1686,19 @@ class AgentChat extends React.Component {
     if (!normalized) {
       return null;
     }
-    if (LLM_PROVIDERS[normalized]) {
-      return { name: normalized, def: LLM_PROVIDERS[normalized], source: 'builtin' };
-    }
     const registry = await this.loadProvidersRegistry();
     const entry = registry?.[normalized];
+    if (LLM_PROVIDERS[normalized]) {
+      const baseUrlOverride = entry?.baseUrl ? String(entry.baseUrl).trim().replace(/\/$/, '') : '';
+      return {
+        name: normalized,
+        def: {
+          ...LLM_PROVIDERS[normalized],
+          baseUrl: baseUrlOverride || LLM_PROVIDERS[normalized].baseUrl,
+        },
+        source: entry?.baseUrl ? 'builtin_override' : 'builtin',
+      };
+    }
     if (entry && entry.baseUrl) {
       return {
         name: normalized,
@@ -2071,12 +2079,22 @@ class AgentChat extends React.Component {
       const currentApiKey = cur?.apiKey || '';
       const builtinLines = Object.keys(LLM_PROVIDERS).map(name => {
         const def = LLM_PROVIDERS[name];
-        const baseUrl = def.baseUrl || (currentProvider === name ? cur?.baseUrl : '');
+        const entry = registry?.[name] || {};
+        const baseUrl = entry.baseUrl || def.baseUrl || (currentProvider === name ? cur?.baseUrl : '');
         const storedKey = registry?.[name]?.apiKey || '';
         const hasKey = (currentProvider === name && currentApiKey) || storedKey ? 'YES' : 'NO';
         return `${name} baseUrl=${baseUrl || '(unset)'} key=${hasKey} [[/a ${name}|use]]`;
       });
-      const customNames = Object.keys(registry || {});
+      const customNames = Object.keys(registry || {}).filter(name => {
+        const entry = registry?.[name] || {};
+        if (LLM_PROVIDERS[name] && !entry.baseUrl) {
+          return false;
+        }
+        if (!LLM_PROVIDERS[name] && !entry.baseUrl) {
+          return false;
+        }
+        return true;
+      });
       const customLines = customNames.length
         ? customNames.map(name => {
             const entry = registry[name] || {};
@@ -2093,10 +2111,6 @@ class AgentChat extends React.Component {
       const name = String(parts[2] || '').toLowerCase();
       if (!/^[a-z0-9_-]{1,32}$/i.test(name)) {
         this.replyFromAgent('Usage: /a add <provider> <url> [key]');
-        return;
-      }
-      if (LLM_PROVIDERS[name]) {
-        this.replyFromAgent(`Cannot add builtin provider "${name}". Use /a ${name} <key> or choose a new name.`);
         return;
       }
       const baseUrl = String(parts[3] || '')
@@ -2185,25 +2199,27 @@ class AgentChat extends React.Component {
     const providerDef = resolved.def;
     let registryEntry = null;
     let apiKeyOverride = '';
+    const registry = await this.loadProvidersRegistry();
     if (resolved.source === 'custom') {
-      const registry = await this.loadProvidersRegistry();
       registryEntry = registry?.[provider] || null;
       if (keyArg) {
         registryEntry = { ...(registryEntry || {}), apiKey: keyArg };
         registry[provider] = registryEntry;
         await this.saveProvidersRegistry(registry);
       }
-    } else if (keyArg) {
-      apiKeyOverride = keyArg;
+    } else {
+      registryEntry = registry?.[provider] || null;
+      if (keyArg) {
+        apiKeyOverride = keyArg;
 
-      // Persist builtin key so restoreProviderFromDisk() can reuse it.
-      const registry = await this.loadProvidersRegistry();
-      registry[provider] = {
-        ...(registry[provider] || {}),
-        // do NOT store baseUrl for builtin; builtin baseUrl lives in code
-        apiKey: keyArg,
-      };
-      await this.saveProvidersRegistry(registry);
+        // Persist builtin key so restoreProviderFromDisk() can reuse it.
+        registry[provider] = {
+          ...(registry[provider] || {}),
+          // do NOT store baseUrl for builtin; builtin baseUrl lives in code
+          apiKey: keyArg,
+        };
+        await this.saveProvidersRegistry(registry);
+      }
     }
     const current = this.currentLLMConfig || this.state.llmConfig || (await this.loadLLMConfig());
     try {
