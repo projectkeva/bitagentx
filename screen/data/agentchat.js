@@ -1490,6 +1490,15 @@ class AgentChat extends React.Component {
     return `${CHAT_DIR}/${key}${ACTIVE_PROVIDER_SUFFIX}`;
   };
 
+  syncChatStorageKeyForLLM = async () => {
+    try {
+      await this.loadLLMConfig();
+    } catch (_) {}
+    try {
+      await this.loadActiveProvider();
+    } catch (_) {}
+  };
+
   loadLLMConfig = async () => {
     const params = this.props.navigation.state.params || {};
     const candidates = this.getStorageKeyCandidates(params);
@@ -1560,6 +1569,7 @@ class AgentChat extends React.Component {
   };
 
   loadProvidersRegistry = async () => {
+    await this.syncChatStorageKeyForLLM();
     if (!this.chatStorageKey) {
       await this.setChatStorageKey(this.props.navigation.state.params || {});
     }
@@ -1581,6 +1591,7 @@ class AgentChat extends React.Component {
   };
 
   saveProvidersRegistry = async registry => {
+    await this.syncChatStorageKeyForLLM();
     if (!this.chatStorageKey) {
       await this.setChatStorageKey(this.props.navigation.state.params || {});
     }
@@ -2124,6 +2135,11 @@ class AgentChat extends React.Component {
       const registry = await this.loadProvidersRegistry();
       registry[name] = { baseUrl, apiKey };
       await this.saveProvidersRegistry(registry);
+      const verify = await this.loadProvidersRegistry();
+      if (!verify?.[name]?.baseUrl) {
+        this.replyFromAgent(`Failed to persist provider: ${name} (storage mismatch). Try again.`);
+        return;
+      }
       this.replyFromAgent(`Added provider: ${name} (${baseUrl}) key=${apiKey ? 'YES' : 'NO'}`);
       return;
     }
