@@ -2050,7 +2050,7 @@ class AgentChat extends React.Component {
       const curLine = cur ? `Current: ${cur.provider} / ${cur.model || ''}` : 'Current: (none)';
       const providersList = Object.keys(LLM_PROVIDERS).join(', ');
       this.replyFromAgent(
-        `${curLine}\nUsage:\n/a list\n/a <provider> [key] [model]\n/a add <provider> <url> [key]\n/a del <provider>\n/a model <model>\n/a off\nProviders: ${providersList}`,
+        `${curLine}\nUsage:\n[[/a list|/a list]]\n/a <provider> [key] [model]\n/a add <provider> <url> [key]\n/a del <provider>\n/a model <model>\n[[/a off|/a off]]\nProviders: ${providersList}`,
       );
       return;
     }
@@ -2093,8 +2093,8 @@ class AgentChat extends React.Component {
         const entry = registry?.[name] || {};
         const baseUrl = entry.baseUrl || def.baseUrl || (currentProvider === name ? cur?.baseUrl : '');
         const storedKey = registry?.[name]?.apiKey || '';
-        const hasKey = (currentProvider === name && currentApiKey) || storedKey ? 'YES' : 'NO';
-        return `${name} baseUrl=${baseUrl || '(unset)'} key=${hasKey} [[/a ${name}|use]]`;
+        const hasKey = (currentProvider === name && currentApiKey) || storedKey ? '🟩YES' : '🟥NO';
+        return `${name} baseUrl=${baseUrl || '(unset)'} key=${hasKey}`;
       });
       const customNames = Object.keys(registry || {}).filter(name => {
         const entry = registry?.[name] || {};
@@ -2109,8 +2109,8 @@ class AgentChat extends React.Component {
       const customLines = customNames.length
         ? customNames.map(name => {
             const entry = registry[name] || {};
-            const hasKey = entry.apiKey ? 'YES' : currentProvider === name && currentApiKey ? 'YES' : 'NO';
-            return `${name} baseUrl=${entry.baseUrl || '(unset)'} key=${hasKey} [[/a ${name}|use]]`;
+            const hasKey = entry.apiKey ? '🟩YES' : currentProvider === name && currentApiKey ? '🟩YES' : '🟥NO';
+            return `${name} baseUrl=${entry.baseUrl || '(unset)'} key=${hasKey}`;
           })
         : ['(none)'];
       this.replyFromAgent(
