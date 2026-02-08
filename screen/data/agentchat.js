@@ -1491,12 +1491,9 @@ class AgentChat extends React.Component {
   };
 
   syncChatStorageKeyForLLM = async () => {
-    try {
-      await this.loadLLMConfig();
-    } catch (_) {}
-    try {
-      await this.loadActiveProvider();
-    } catch (_) {}
+    if (!this.chatStorageKey) {
+      await this.setChatStorageKey(this.props.navigation.state.params || {});
+    }
   };
 
   loadLLMConfig = async () => {
@@ -2044,6 +2041,9 @@ class AgentChat extends React.Component {
   };
 
   handleAIConfigCommand = async trimmed => {
+    if (!this.chatStorageKey) {
+      await this.setChatStorageKey(this.props.navigation.state.params || {});
+    }
     const parts = trimmed.trim().split(/\s+/);
     if (parts.length === 1) {
       const cur = this.state.llmConfig;
