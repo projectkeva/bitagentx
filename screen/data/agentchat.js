@@ -2089,12 +2089,9 @@ class AgentChat extends React.Component {
       const currentProvider = cur?.provider || '';
       const currentApiKey = cur?.apiKey || '';
       const builtinLines = Object.keys(LLM_PROVIDERS).map(name => {
-        const def = LLM_PROVIDERS[name];
-        const entry = registry?.[name] || {};
-        const baseUrl = entry.baseUrl || def.baseUrl || (currentProvider === name ? cur?.baseUrl : '');
         const storedKey = registry?.[name]?.apiKey || '';
         const hasKey = (currentProvider === name && currentApiKey) || storedKey ? '🟩YES' : '🟥NO';
-        return `${name} baseUrl=${baseUrl || '(unset)'} key=${hasKey}`;
+        return `${name} key=${hasKey}`;
       });
       const customNames = Object.keys(registry || {}).filter(name => {
         const entry = registry?.[name] || {};
@@ -2110,7 +2107,7 @@ class AgentChat extends React.Component {
         ? customNames.map(name => {
             const entry = registry[name] || {};
             const hasKey = entry.apiKey ? '🟩YES' : currentProvider === name && currentApiKey ? '🟩YES' : '🟥NO';
-            return `${name} baseUrl=${entry.baseUrl || '(unset)'} key=${hasKey}`;
+            return `${name} key=${hasKey}`;
           })
         : ['(none)'];
       this.replyFromAgent(
