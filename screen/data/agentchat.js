@@ -1468,9 +1468,16 @@ class AgentChat extends React.Component {
     for (const key of candidates) {
       const chatPath = this.getChatFilePath(key);
       const llmPath = this.getLLMConfigPath(key);
+      const providersPath = this.getLLMProvidersPath(key);
+      const activePath = this.getActiveProviderPath(key);
       try {
-        const [hasChat, hasLLM] = await Promise.all([RNFS.exists(chatPath), RNFS.exists(llmPath)]);
-        if (hasChat || hasLLM) {
+        const [hasChat, hasLLM, hasProviders, hasActive] = await Promise.all([
+          RNFS.exists(chatPath),
+          RNFS.exists(llmPath),
+          RNFS.exists(providersPath),
+          RNFS.exists(activePath),
+        ]);
+        if (hasChat || hasLLM || hasProviders || hasActive) {
           this.chatStorageKey = key;
           return;
         }
@@ -1497,6 +1504,7 @@ class AgentChat extends React.Component {
   };
 
   loadLLMConfig = async () => {
+    await this.ensureStorage();
     const params = this.props.navigation.state.params || {};
     const candidates = this.getStorageKeyCandidates(params);
     const keys = this.chatStorageKey
@@ -1524,6 +1532,7 @@ class AgentChat extends React.Component {
   };
 
   loadActiveProvider = async () => {
+    await this.ensureStorage();
     const params = this.props.navigation.state.params || {};
     const candidates = this.getStorageKeyCandidates(params);
     const keys = this.chatStorageKey
@@ -1550,6 +1559,7 @@ class AgentChat extends React.Component {
   };
 
   saveActiveProvider = async (name, storageKey) => {
+    await this.ensureStorage();
     if (!this.chatStorageKey && !storageKey) {
       await this.setChatStorageKey(this.props.navigation.state.params || {});
     }
@@ -1566,6 +1576,7 @@ class AgentChat extends React.Component {
   };
 
   loadProvidersRegistry = async () => {
+    await this.ensureStorage();
     await this.syncChatStorageKeyForLLM();
     if (!this.chatStorageKey) {
       await this.setChatStorageKey(this.props.navigation.state.params || {});
@@ -1588,6 +1599,7 @@ class AgentChat extends React.Component {
   };
 
   saveProvidersRegistry = async registry => {
+    await this.ensureStorage();
     await this.syncChatStorageKeyForLLM();
     if (!this.chatStorageKey) {
       await this.setChatStorageKey(this.props.navigation.state.params || {});
@@ -1595,8 +1607,10 @@ class AgentChat extends React.Component {
     const path = this.getLLMProvidersPath(this.chatStorageKey);
     try {
       await RNFS.writeFile(path, JSON.stringify(registry || {}), 'utf8');
+      return true;
     } catch (error) {
       console.warn('Failed to save providers registry', error);
+      return false;
     }
   };
 
@@ -1723,6 +1737,10 @@ class AgentChat extends React.Component {
   };
 
   saveLLMConfig = async config => {
+    await this.ensureStorage();
+    if (!this.chatStorageKey) {
+      await this.setChatStorageKey(this.props.navigation.state.params || {});
+    }
     if (!this.chatStorageKey) {
       return;
     }
@@ -2131,10 +2149,19 @@ class AgentChat extends React.Component {
       const apiKey = parts[4] || '';
       const registry = await this.loadProvidersRegistry();
       registry[name] = { baseUrl, apiKey };
-      await this.saveProvidersRegistry(registry);
+      const ok = await this.saveProvidersRegistry(registry);
+      if (!ok) {
+        this.replyFromAgent('Failed to save provider registry (writeFile error).');
+        return;
+      }
       const verify = await this.loadProvidersRegistry();
       if (!verify?.[name]?.baseUrl) {
-        this.replyFromAgent(`Failed to persist provider: ${name} (storage mismatch). Try again.`);
+        this.replyFromAgent(
+          `Failed to persist provider: ${name}\n` +
+            `storageKey=${this.chatStorageKey}\n` +
+            `registryPath=${this.getLLMProvidersPath(this.chatStorageKey)}\n` +
+            `Tip: if this happens, writeFile likely failed or storageKey switched.`,
+        );
         return;
       }
       this.replyFromAgent(`Added provider: ${name} (${baseUrl}) key=${apiKey ? 'YES' : 'NO'}`);
