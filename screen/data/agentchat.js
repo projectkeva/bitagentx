@@ -29,12 +29,24 @@ import { decodeBase64, deleteKeyValue, getNamespaceScriptHash, toScriptHash, upd
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
-const LLM_CONFIG_SUFFIX = '.llm.json';
-const LLM_PROVIDERS_SUFFIX = '.providers.json';
-const ACTIVE_PROVIDER_SUFFIX = '.active_provider.json';
-const GLOBAL_PROVIDER_STORAGE_KEY = 'agentchat_global';
+const LLM_DIR = `${RNFS.DocumentDirectoryPath}/llm`;
+
+const LLM_PROVIDERS_PATH = `${LLM_DIR}/providers.json`;
+const LLM_ACTIVE_PATH = `${LLM_DIR}/active.json`;
+
+// 可选：如果你未来要“每个 agent 绑定不同模型”，再用它
+const getLLMOverridePath = agentId => `${LLM_DIR}/overrides_${encodeURIComponent(agentId)}.json`;
 const LLM_HISTORY_LIMIT = 16;
 const DEFAULT_AUTH_HEADER = apiKey => (apiKey ? { Authorization: `Bearer ${apiKey}` } : {});
+
+function getAgentIdFromParams(params = {}) {
+  // 聊天只绑定 agent 身份，不要跟 walletId / 页面路径耦合
+  return (params.shortCode || params.namespaceId || params.agentId || 'default').toString();
+}
+
+function getChatFilePath(agentId) {
+  return `${CHAT_DIR}/chat_${encodeURIComponent(agentId)}.json`;
+}
 
 const LLM_PROVIDERS = {
   gpt: {
@@ -1260,7 +1272,8 @@ class AgentChat extends React.Component {
     this.lastAutoCommand = null;
     this.hasIntroAutoAOnce = false;
     this.isPlayingIntro = false;
-    this.chatStorageKey = null;
+    this.agentId = getAgentIdFromParams(this.props.navigation?.state?.params);
+    this.chatFilePath = getChatFilePath(this.agentId);
     this.persistQueue = Promise.resolve();
     this.currentLLMConfig = null;
   }
@@ -1320,10 +1333,17 @@ class AgentChat extends React.Component {
   }
 
   initializeChat = async () => {
-    await this.ensureStorage();
-    await this.setChatStorageKey(this.props.navigation.state.params || {});
-    const llmConfig = await this.loadLLMConfig();
+    await this.ensureDirs();
     const history = await this.readHistory();
+    const providers = await this.readLLMProviders();
+    if (!providers) {
+      await this.writeLLMProviders({});
+    }
+    const active = await this.readActiveProvider();
+    if (!active) {
+      await this.writeActiveProvider({ name: '' });
+    }
+    const llmConfig = await this.loadLLMConfig();
     if (!this._isMounted) {
       return;
     }
@@ -1346,253 +1366,97 @@ class AgentChat extends React.Component {
     );
   };
 
-  ensureStorage = async () => {
+  ensureDirs = async () => {
+    const ensure = async p => {
+      const ok = await RNFS.exists(p);
+      if (!ok) await RNFS.mkdir(p);
+    };
     try {
-      const exists = await RNFS.exists(CHAT_DIR);
-      if (!exists) {
-        await RNFS.mkdir(CHAT_DIR);
-      }
+      await ensure(CHAT_DIR);
+      await ensure(LLM_DIR);
     } catch (error) {
       console.warn('Failed to prepare chat storage', error);
     }
   };
 
-  resolveChatStorageKey = params => {
-    const { namespaceId, shortCode, walletId } = params || {};
-    const fallback = [namespaceId, shortCode, walletId].find(value => {
-      if (value === null || typeof value === 'undefined') {
-        return false;
-      }
-      return String(value).trim().length > 0;
-    });
-    const key = fallback || 'default';
-    return encodeURIComponent(String(key));
-  };
-
-  getCanonicalChatStorageKey = params => {
-    const { namespaceId, shortCode, walletId } = params || {};
-    const norm = value => (value === null || typeof value === 'undefined' ? '' : String(value).trim());
-
-    const sc = norm(shortCode);
-    const resolvedNamespaceId = norm(namespaceId);
-    const wid = norm(walletId);
-
-    const id = sc || resolvedNamespaceId || wid || 'default';
-    return encodeURIComponent(`agentchat_${id}`);
-  };
-
-  getStorageKeyCandidates = params => {
-    const { namespaceId, shortCode, walletId } = params || {};
-    const candidates = [];
-    const pushKey = candidateParams => {
-      const key = this.getCanonicalChatStorageKey(candidateParams);
-      if (key && !candidates.includes(key)) {
-        candidates.push(key);
-      }
-    };
-
-    if (namespaceId) {
-      pushKey({ namespaceId });
-    }
-    if (shortCode) {
-      pushKey({ shortCode });
-    }
-    if (walletId) {
-      pushKey({ walletId });
-    }
-
-    pushKey({});
-    return candidates;
-  };
-
-  selectChatStorageKey = async params => {
-    const { namespaceId, shortCode, walletId } = params || {};
-    const rawCandidates = [namespaceId, shortCode, walletId]
-      .filter(value => value !== null && typeof value !== 'undefined')
-      .map(value => String(value).trim())
-      .filter(value => value.length > 0);
-    const candidates = Array.from(new Set(rawCandidates)).map(value => encodeURIComponent(value));
-    let bestKey = null;
-    let bestLen = -1;
-    let bestTime = -1;
-
-    for (const candidate of candidates) {
-      const path = this.getChatFilePath(candidate);
-      try {
-        const exists = await RNFS.exists(path);
-        if (!exists) {
-          continue;
-        }
-
-        let len = 0;
-        try {
-          const content = await RNFS.readFile(path, 'utf8');
-          const parsed = JSON.parse(content);
-          if (Array.isArray(parsed)) {
-            len = parsed.filter(message => !message?.hidden).length;
-          }
-        } catch (_) {
-          len = 0;
-        }
-
-        let mtime = 0;
-        try {
-          const stat = await RNFS.stat(path);
-          mtime = stat?.mtime ? new Date(stat.mtime).getTime() : 0;
-          if (!Number.isFinite(mtime)) {
-            mtime = 0;
-          }
-        } catch (_) {
-          mtime = 0;
-        }
-
-        if (len > bestLen || (len === bestLen && mtime > bestTime)) {
-          bestKey = candidate;
-          bestLen = len;
-          bestTime = mtime;
-        }
-      } catch (error) {
-        console.warn('Failed to inspect chat storage candidate', error);
-      }
-    }
-
-    return bestKey || this.resolveChatStorageKey(params);
-  };
-
-  setChatStorageKey = async params => {
-    const candidates = this.getStorageKeyCandidates(params);
-    for (const key of candidates) {
-      const chatPath = this.getChatFilePath(key);
-      const llmPath = this.getLLMConfigPath(key);
-      const providersPath = this.getLLMProvidersPath(key);
-      const activePath = this.getActiveProviderPath(key);
-      try {
-        const [hasChat, hasLLM, hasProviders, hasActive] = await Promise.all([
-          RNFS.exists(chatPath),
-          RNFS.exists(llmPath),
-          RNFS.exists(providersPath),
-          RNFS.exists(activePath),
-        ]);
-        if (hasChat || hasLLM || hasProviders || hasActive) {
-          this.chatStorageKey = key;
-          return;
-        }
-      } catch (_) {}
-    }
-    this.chatStorageKey = candidates[0];
-  };
-
-  getChatFilePath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}.json`;
-
-  getLLMConfigPath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}${LLM_CONFIG_SUFFIX}`;
-
-  getLLMProvidersPath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}${LLM_PROVIDERS_SUFFIX}`;
-
-  getGlobalProvidersPath = () => `${CHAT_DIR}/${GLOBAL_PROVIDER_STORAGE_KEY}${LLM_PROVIDERS_SUFFIX}`;
-
-  getActiveProviderPath = storageKey => {
-    const key = storageKey || this.chatStorageKey || 'default';
-    return `${CHAT_DIR}/${key}${ACTIVE_PROVIDER_SUFFIX}`;
-  };
-
-  getGlobalActiveProviderPath = () => `${CHAT_DIR}/${GLOBAL_PROVIDER_STORAGE_KEY}${ACTIVE_PROVIDER_SUFFIX}`;
-
-  syncChatStorageKeyForLLM = async () => {
-    if (!this.chatStorageKey) {
-      await this.setChatStorageKey(this.props.navigation.state.params || {});
-    }
-  };
-
   loadLLMConfig = async () => {
-    await this.ensureStorage();
-    const params = this.props.navigation.state.params || {};
-    const candidates = this.getStorageKeyCandidates(params);
-    const keys = this.chatStorageKey
-      ? [this.chatStorageKey, ...candidates.filter(key => key !== this.chatStorageKey)]
-      : candidates;
-
-    for (const key of keys) {
-      const path = this.getLLMConfigPath(key);
-      try {
-        const exists = await RNFS.exists(path);
-        if (!exists) {
-          continue;
-        }
-        const raw = await RNFS.readFile(path, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (parsed && parsed.provider && parsed.baseUrl) {
-          this.chatStorageKey = key;
-          return parsed;
-        }
-      } catch (error) {
-        console.warn('Failed to load llm config', error);
-      }
-    }
-    return null;
-  };
-
-  loadActiveProvider = async () => {
-    await this.ensureStorage();
-    const path = this.getGlobalActiveProviderPath();
     try {
-      const exists = await RNFS.exists(path);
-      if (!exists) {
+      const active = await this.readActiveProvider();
+      if (!active?.name) {
         return null;
       }
-      const raw = await RNFS.readFile(path, 'utf8');
-      const parsed = JSON.parse(raw);
-      const name = typeof parsed?.name === 'string' ? parsed.name.trim() : '';
-      if (name) {
-        return { name };
+      const providers = await this.readLLMProviders();
+      if (!providers || typeof providers !== 'object') {
+        return null;
       }
-    } catch (_) {}
-    return null;
+      const entry = providers?.[active.name];
+      if (!entry || !entry.baseUrl) {
+        return null;
+      }
+      return {
+        provider: active.name,
+        baseUrl: entry.baseUrl,
+        apiKey: entry.apiKey || '',
+        model: entry.model || 'default',
+        updatedAt: entry.updatedAt || Date.now(),
+      };
+    } catch (error) {
+      console.warn('Failed to load llm config', error);
+      return null;
+    }
   };
 
-  saveActiveProvider = async name => {
-    await this.ensureStorage();
-    const path = this.getGlobalActiveProviderPath();
-    const payload = JSON.stringify({ name, updatedAt: Date.now() });
-    await RNFS.writeFile(path, payload, 'utf8');
+  readActiveProvider = async () => {
+    try {
+      const exists = await RNFS.exists(LLM_ACTIVE_PATH);
+      if (!exists) return null;
+      return JSON.parse(await RNFS.readFile(LLM_ACTIVE_PATH, 'utf8'));
+    } catch (e) {
+      return null;
+    }
+  };
+
+  writeActiveProvider = async active => {
+    try {
+      await RNFS.writeFile(LLM_ACTIVE_PATH, JSON.stringify(active, null, 2), 'utf8');
+    } catch (e) {}
   };
 
   clearActiveProvider = async () => {
-    const path = this.getGlobalActiveProviderPath();
     try {
-      await RNFS.unlink(path);
+      await RNFS.unlink(LLM_ACTIVE_PATH);
     } catch (_) {}
   };
 
-  loadProvidersRegistry = async () => {
-    await this.ensureStorage();
-    const path = this.getGlobalProvidersPath();
+  readLLMProviders = async () => {
     try {
-      const exists = await RNFS.exists(path);
-      if (!exists) {
-        return {};
-      }
-      const raw = await RNFS.readFile(path, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed;
-      }
+      const exists = await RNFS.exists(LLM_PROVIDERS_PATH);
+      if (!exists) return null;
+      return JSON.parse(await RNFS.readFile(LLM_PROVIDERS_PATH, 'utf8'));
+    } catch (e) {
+      return null;
+    }
+  };
+
+  writeLLMProviders = async providers => {
+    try {
+      await RNFS.writeFile(LLM_PROVIDERS_PATH, JSON.stringify(providers, null, 2), 'utf8');
+      return true;
     } catch (error) {
-      console.warn('Failed to load providers registry', error);
+      console.warn('Failed to save providers registry', { path: LLM_PROVIDERS_PATH, error });
+      return false;
+    }
+  };
+
+  loadProvidersRegistry = async () => {
+    const parsed = await this.readLLMProviders();
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed;
     }
     return {};
   };
 
-  saveProvidersRegistry = async registry => {
-    await this.ensureStorage();
-    const path = this.getGlobalProvidersPath();
-    try {
-      await RNFS.writeFile(path, JSON.stringify(registry || {}), 'utf8');
-      return true;
-    } catch (error) {
-      console.warn('Failed to save providers registry', { path, error });
-      return false;
-    }
-  };
+  saveProvidersRegistry = async registry => this.writeLLMProviders(registry || {});
 
   getEffectiveProviderEntry = (name, registry, currentConfig) => {
     const builtin = LLM_PROVIDERS[name] || null;
@@ -1642,7 +1506,7 @@ class AgentChat extends React.Component {
     const next = { provider: providerName, baseUrl, apiKey, model: selectedModel, updatedAt: Date.now() };
     this.setState({ llmConfig: next });
     await this.saveLLMConfig(next);
-    await this.saveActiveProvider(providerName);
+    await this.writeActiveProvider({ name: providerName, updatedAt: Date.now() });
     this.currentLLMConfig = next;
 
     const modeLabel = apiKey ? 'cloud' : 'local';
@@ -1661,7 +1525,7 @@ class AgentChat extends React.Component {
   };
 
   restoreProviderFromDisk = async () => {
-    const active = await this.loadActiveProvider();
+    const active = await this.readActiveProvider();
     if (!active?.name) {
       return;
     }
@@ -1726,66 +1590,46 @@ class AgentChat extends React.Component {
   };
 
   saveLLMConfig = async config => {
-    await this.ensureStorage();
-    if (!this.chatStorageKey) {
-      await this.setChatStorageKey(this.props.navigation.state.params || {});
-    }
-    if (!this.chatStorageKey) {
-      return;
-    }
+    await this.ensureDirs();
     this.currentLLMConfig = config;
-    const path = this.getLLMConfigPath(this.chatStorageKey);
-    try {
-      await RNFS.writeFile(path, JSON.stringify(config), 'utf8');
-    } catch (error) {
-      console.warn('Failed to save llm config', error);
-    }
+    const providers = (await this.loadProvidersRegistry()) || {};
+    providers[config.provider] = {
+      ...(providers[config.provider] || {}),
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey || '',
+      model: config.model || 'default',
+      updatedAt: Date.now(),
+    };
+    await this.saveProvidersRegistry(providers);
   };
 
   clearLLMConfig = async () => {
-    if (!this.chatStorageKey) {
-      return;
-    }
-    const path = this.getLLMConfigPath(this.chatStorageKey);
-    try {
-      const exists = await RNFS.exists(path);
-      if (exists) {
-        await RNFS.unlink(path);
-      }
-    } catch (_) {}
     this.setState({ llmConfig: null });
     this.currentLLMConfig = null;
   };
 
   readHistory = async () => {
-    if (!this.chatStorageKey) {
-      await this.setChatStorageKey(this.props.navigation.state.params || {});
-    }
-    const path = this.getChatFilePath(this.chatStorageKey);
     try {
-      const fileExists = await RNFS.exists(path);
-      if (!fileExists) {
-        await RNFS.writeFile(path, '[]', 'utf8');
-        return [];
-      }
-      const content = await RNFS.readFile(path, 'utf8');
-      const parsed = JSON.parse(content);
-      if (Array.isArray(parsed)) {
-        return parsed.filter(message => !message?.hidden);
-      }
-    } catch (error) {
-      console.warn('Failed to read chat history', error);
+      const exists = await RNFS.exists(this.chatFilePath);
+      if (!exists) return [];
+      const raw = await RNFS.readFile(this.chatFilePath, 'utf8');
+      const json = JSON.parse(raw);
+      const messages = Array.isArray(json) ? json : json.messages || [];
+      return messages.filter(message => !message?.hidden);
+    } catch (e) {
+      return [];
     }
-    return [];
+  };
+
+  writeHistory = async messages => {
+    try {
+      await RNFS.writeFile(this.chatFilePath, JSON.stringify(messages), 'utf8');
+    } catch (e) {}
   };
 
   persistMessages = async messages => {
-    if (!this.chatStorageKey) {
-      await this.setChatStorageKey(this.props.navigation.state.params || {});
-    }
-    const path = this.getChatFilePath(this.chatStorageKey);
     this.persistQueue = this.persistQueue
-      .then(() => RNFS.writeFile(path, JSON.stringify(messages), 'utf8'))
+      .then(() => this.writeHistory(messages))
       .catch(error => {
         console.warn('Failed to save chat history', error);
       });
@@ -2048,9 +1892,6 @@ class AgentChat extends React.Component {
   };
 
   handleAIConfigCommand = async trimmed => {
-    if (!this.chatStorageKey) {
-      await this.setChatStorageKey(this.props.navigation.state.params || {});
-    }
     const parts = trimmed.trim().split(/\s+/);
     if (parts.length === 1) {
       const cur = this.state.llmConfig;
@@ -2080,7 +1921,7 @@ class AgentChat extends React.Component {
       const next = { ...cur, model };
       this.setState({ llmConfig: next });
       await this.saveLLMConfig(next);
-      await this.saveActiveProvider(cur.provider);
+      await this.writeActiveProvider({ name: cur.provider, updatedAt: Date.now() });
       this.replyFromAgent(`Model selected: ${model}`);
       return;
     }
@@ -2157,7 +1998,7 @@ class AgentChat extends React.Component {
       if (!verify?.[name]?.baseUrl) {
         this.replyFromAgent(
           `Failed to persist provider: ${name}\n` +
-            `registryPath=${this.getGlobalProvidersPath()}\n` +
+            `registryPath=${LLM_PROVIDERS_PATH}\n` +
             `Tip: check app file permissions or RNFS writeFile failure.`,
         );
         return;
@@ -2472,27 +2313,13 @@ class AgentChat extends React.Component {
         resolve,
       );
     });
-    const params = this.props.navigation.state.params || {};
-    const keysToClear = new Set([this.getCanonicalChatStorageKey(params)]);
-
-    ['namespaceId', 'shortCode', 'walletId'].forEach(key => {
-      const value = params?.[key];
-      if (value !== null && typeof value !== 'undefined' && String(value).trim()) {
-        keysToClear.add(encodeURIComponent(String(value).trim()));
+    try {
+      const exists = await RNFS.exists(this.chatFilePath);
+      if (exists) {
+        await RNFS.unlink(this.chatFilePath);
       }
-    });
+    } catch (_) {}
 
-    for (const storageKey of keysToClear) {
-      const path = this.getChatFilePath(storageKey);
-      try {
-        const exists = await RNFS.exists(path);
-        if (exists) {
-          await RNFS.unlink(path);
-        }
-      } catch (_) {}
-    }
-
-    this.chatStorageKey = this.getCanonicalChatStorageKey(params);
     await this.persistMessages([]);
   };
 
