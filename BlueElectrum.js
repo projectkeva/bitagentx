@@ -850,6 +850,24 @@ module.exports.testConnection = async function(host, tcpPort, sslPort) {
   }
 };
 
+module.exports.probeBlockHeight = async function(host, tcpPort, sslPort) {
+  const client = new ElectrumClient(sslPort || tcpPort, host, sslPort ? 'tls' : 'tcp');
+  try {
+    await client.connect();
+    await client.server_version('2.7.11', '1.4');
+    const countValue = await client.blockchainBlock_count();
+    client.close();
+    const n = Number(countValue);
+    if (Number.isFinite(n) && n > 0) return n;
+    return null;
+  } catch (_) {
+    try {
+      client.close();
+    } catch (__) {}
+    return null;
+  }
+};
+
 module.exports.forceDisconnect = () => {
   mainClient.close();
 };

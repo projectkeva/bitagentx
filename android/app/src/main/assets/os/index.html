@@ -271,6 +271,84 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
   }
 }
 
+
+#nodeWindow {
+  width: min(92vw, 720px);
+  height: min(70vh, calc(100vh - 100px));
+  min-height: 320px;
+  left: 50%;
+  top: 55px;
+  transform: translate(-50%, 0);
+}
+
+#nodeWindow .content {
+  padding: 12px;
+  font-family: system-ui, sans-serif;
+  color: #111;
+  background: #f4f4f4;
+  height: calc(100% - 44px);
+  overflow: auto;
+}
+
+#nodeCurrent {
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.node-list {
+  display: grid;
+  row-gap: 8px;
+}
+
+.node-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.node-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.node-host {
+  font-size: 14px;
+  color: #111;
+}
+
+.node-height {
+  font-size: 12px;
+  color: #666;
+}
+
+.node-action {
+  border: 1px solid #999;
+  background: #efefef;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.node-action[disabled] {
+  opacity: 0.7;
+  cursor: default;
+}
+
+#nodeRefresh {
+  margin-top: 10px;
+  border: 1px solid #777;
+  background: #fff;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
 </style>
 <script>
 
@@ -386,6 +464,15 @@ window.addEventListener('load', updateDesktopScale);
     </div>
   </div>
 
+<div class="notepad-window" id="nodeWindow">
+  <div class="title-bar"><span>Node</span><button class="close-btn">×</button></div>
+  <div class="content">
+    <div id="nodeCurrent">Current: -</div>
+    <div id="nodeList" class="node-list"></div>
+    <button id="nodeRefresh" type="button">Refresh</button>
+  </div>
+</div>
+
     <div class="start-menu" id="startMenu" aria-hidden="true">
       <form>
         <label><input type="checkbox" data-app="keva" data-visibility-toggle checked> Node</label>
@@ -432,6 +519,91 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
 });
 
   const desktopIcons=document.getElementById('icons');
+  const nodeState={current:null,nodes:[],resultById:{}};
+
+  function postToNative(payload){
+    if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
+      window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+    }
+  }
+
+  function nodeAddress(node){
+    const port=node && (node.ssl || node.tcp || '');
+    return `${node && node.host ? node.host : ''}${port ? ':'+port : ''}`;
+  }
+
+  function renderNodeWindow(){
+    const current=nodeState.current || {};
+    const currentText=nodeAddress(current) || '-';
+    document.getElementById('nodeCurrent').textContent=`Current: ${currentText}`;
+
+    const list=document.getElementById('nodeList');
+    list.innerHTML='';
+
+    nodeState.nodes.forEach(node=>{
+      const result=nodeState.resultById[node.id];
+      const status=result ? (result.ok ? '🟩' : '🟥') : '⬛';
+      const heightText=result && result.ok && Number.isFinite(result.height) ? `#${result.height}` : '-';
+      const isUsing=current.host===node.host && String(current.ssl || '')===String(node.ssl || '') && String(current.tcp || '')===String(node.tcp || '');
+      const row=document.createElement('div');
+      row.className='node-row';
+      row.innerHTML=`
+        <div>${status}</div>
+        <div class="node-meta">
+          <div class="node-host">${nodeAddress(node)} (SSL)</div>
+          <div class="node-height">height: ${heightText}</div>
+        </div>
+        <button class="node-action" data-node-id="${node.id}" ${isUsing ? 'disabled' : ''}>${isUsing ? 'Using' : 'Use'}</button>
+      `;
+      row.querySelector('button').addEventListener('click',()=>{
+        postToNative({type:'electrum_use',id:node.id});
+      });
+      list.appendChild(row);
+    });
+  }
+
+  function openNodeWindow(){
+    document.getElementById('nodeWindow').style.display='block';
+    nodeState.resultById={};
+    renderNodeWindow();
+    postToNative({type:'electrum_get_state'});
+  }
+
+  document.getElementById('nodeRefresh').addEventListener('click',()=>{
+    nodeState.resultById={};
+    renderNodeWindow();
+    postToNative({type:'electrum_probe_heights'});
+  });
+
+  function handleNativeMessage(rawData){
+    let payload;
+    try{
+      payload=typeof rawData==='string' ? JSON.parse(rawData) : rawData;
+    }catch(_){return;}
+
+    if(!payload || !payload.type)return;
+
+    if(payload.type==='electrum_state'){
+      nodeState.current=payload.current || {};
+      nodeState.nodes=Array.isArray(payload.nodes) ? payload.nodes : [];
+      renderNodeWindow();
+      postToNative({type:'electrum_probe_heights'});
+      return;
+    }
+
+    if(payload.type==='electrum_probe_heights_result'){
+      nodeState.resultById=payload.resultById || {};
+      renderNodeWindow();
+      return;
+    }
+
+    if(payload.type==='electrum_used'){
+      postToNative({type:'electrum_get_state'});
+    }
+  }
+
+  window.addEventListener('message',event=>handleNativeMessage(event.data));
+  document.addEventListener('message',event=>handleNativeMessage(event.data));
 
   // === 桌面图标点击逻辑（含自定义网址） ===
   desktopIcons.addEventListener('click',e=>{
@@ -451,6 +623,10 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
       monero:'https://www.getmonero.org'
     };
 
+    if(app==='keva'){
+      openNodeWindow();
+      return;
+    }
     if(app==='readme'){
       document.getElementById('readmeWindow').style.display='block';
       return;
