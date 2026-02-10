@@ -23,6 +23,7 @@ const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
 let loc = require('../../loc');
 const Rolecards = require('./agentchat_rolecards');
+const Roleplay = require('./agentchat_roleplay');
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
 import ActionSheet from '../ActionSheet';
@@ -1698,12 +1699,23 @@ class AgentChat extends React.Component {
     }
     const roleMatch = /^\/r\s+(.+)/i.exec(trimmed);
     if (roleMatch) {
-      await this.handleRoleCommand(roleMatch[1]);
+      await Roleplay.handleRoleCommand(this, roleMatch[1], {
+        Rolecards,
+        buildRoleplayPrompt,
+      });
       return;
     }
     if (/^\/r\b/i.test(trimmed)) {
-      await this.handleRoleCommand('unknown');
-      this.replyFromAgent(this.buildRoleHistoryMessage());
+      await Roleplay.handleRoleCommand(this, 'unknown', {
+        Rolecards,
+        buildRoleplayPrompt,
+      });
+      this.replyFromAgent(
+        Roleplay.buildRoleHistoryMessage(this, {
+          getRoleHistoryTitle,
+          getCommandUsageMessage,
+        }),
+      );
       return;
     }
     const welcomeMatch = /^\/welcome\s+(.+)/i.exec(trimmed);
@@ -2437,87 +2449,6 @@ class AgentChat extends React.Component {
       console.warn('AgentChat: failed to save welcome message', error);
       this.replyFromAgent('Failed to save welcome message.');
     }
-  };
-
-  handleRoleCommand = async rawValue => {
-    const roleText = rawValue.trim().slice(0, 1000);
-    const normalizedRole = roleText.toLowerCase() === 'unknown' ? 'unknown' : roleText;
-    if (!normalizedRole) {
-      this.replyFromAgent('Role text is empty.');
-      return;
-    }
-    const { namespaceId, shortCode } = this.props.navigation.state.params || {};
-    const agentId = shortCode || namespaceId;
-    let roleMemoryCard = null;
-    const roleSlug = Rolecards.normalizeRoleSlug(normalizedRole);
-    if (roleSlug && !Rolecards.ROLECARD_RESERVED_SLUGS.has(roleSlug)) {
-      const indexText = await this.fetchLatestKeyValue(Rolecards.ROLECARD_INDEX_KEY);
-      if (indexText) {
-        const { entries } = Rolecards.parseRoleIndexLines(indexText);
-        const matched = entries.find(entry => entry.roleSlug === roleSlug);
-        if (matched) {
-          const keyName = `${Rolecards.ROLECARD_KEY_PREFIX}${roleSlug}`;
-          const value = await this.fetchLatestKeyValue(keyName);
-          if (value) {
-            roleMemoryCard = value;
-          }
-        }
-      }
-    }
-    const rolePrompt = buildRoleplayPrompt(normalizedRole, agentId, roleMemoryCard);
-    const cardText = `Roleplay Prompt\nAgent ID: ${agentId || 'Unknown'}\nRole: ${normalizedRole}\nReady to copy the full prompt.`;
-    this.replyFromAgentSeedCard(cardText, rolePrompt, 'Copy full roleplay prompt');
-    this.replyFromAgent(
-      'Click the link above to copy. Paste into GPT, Grok, DeepSeek, or any base model to start a roleplay conversation as the role you provided.',
-    );
-  };
-
-  getRecentRoleCommands = () => {
-    const { allMessages } = this.state;
-    const recentCommands = [];
-    let unknownCommand = null;
-
-    for (let index = allMessages.length - 1; index >= 0; index -= 1) {
-      const message = allMessages[index];
-      if (message?.sender !== 'user') {
-        continue;
-      }
-      const trimmed = message.text?.trim();
-      if (!trimmed || !/^\/r\b/i.test(trimmed)) {
-        continue;
-      }
-      const roleValue = trimmed.replace(/^\/r\b/i, '').trim();
-      if (!roleValue || roleValue.toLowerCase() === 'unknown') {
-        if (!unknownCommand) {
-          unknownCommand = '/r unknown';
-        }
-        continue;
-      }
-      recentCommands.push(`/r ${roleValue}`);
-      if (recentCommands.length >= 3 && unknownCommand) {
-        break;
-      }
-    }
-
-    return {
-      recentCommands,
-      unknownCommand: unknownCommand || '/r unknown',
-    };
-  };
-
-  buildRoleHistoryMessage = () => {
-    const { recentCommands, unknownCommand } = this.getRecentRoleCommands();
-    const lines = [getRoleHistoryTitle()];
-    if (recentCommands.length > 0) {
-      lines.push(...recentCommands);
-    }
-    lines.push(unknownCommand);
-    const usage = getCommandUsageMessage('r');
-    if (usage) {
-      lines.push('');
-      lines.push(usage);
-    }
-    return lines.join('\n');
   };
 
   replyWithCurrentBlock = async () => {
