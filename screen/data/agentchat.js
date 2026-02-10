@@ -2097,20 +2097,31 @@ class AgentChat extends React.Component {
     }
     if (sub === 'list') {
       const cur = this.currentLLMConfig || this.state.llmConfig || (await this.loadLLMConfig());
+      const activeName = String(cur?.provider || '').toLowerCase();
       const registry = await this.loadProvidersRegistry();
+
+      const fmtName = name => String(name).padEnd(10, ' ');
+      const fmtKey = hasKey => (hasKey ? '🟩YES' : '🟥NO');
+      const fmtPrefix = name => (String(name).toLowerCase() === activeName ? '* ' : '- ');
+
       const builtinLines = Object.keys(LLM_PROVIDERS).map(name => {
         const entry = this.getEffectiveProviderEntry(name, registry, cur);
-        return `${name} baseUrl=${entry.baseUrl || '(unset)'} key=${entry.hasKey ? '🟩YES' : '🟥NO'}  [[/a ${name}|use]]`;
+        return `${fmtPrefix(name)}${fmtName(name)} key=${fmtKey(entry.hasKey)}  [[/a ${name}|use]]`;
       });
-      const customNames = Object.keys(registry || {}).filter(name => !LLM_PROVIDERS[name] && registry?.[name]?.baseUrl);
+
+      const customNames = Object.keys(registry || {}).filter(
+        name => !LLM_PROVIDERS[name] && registry?.[name]?.baseUrl,
+      );
+
       const customLines = customNames.length
         ? customNames.map(name => {
             const entry = registry[name] || {};
-            return `${name} baseUrl=${entry.baseUrl} key=${entry.apiKey ? '🟩YES' : '🟥NO'}  [[/a ${name}|use]] [[/a del ${name}|del]]`;
+            return `${fmtPrefix(name)}${fmtName(name)} key=${fmtKey(!!entry.apiKey)}  [[/a ${name}|use]] [[/a del ${name}|del]]`;
           })
         : ['(none)'];
+
       this.replyFromAgent(
-        `Builtin providers (from code):\n${builtinLines.join('\n')}\n\nCustom providers (stored):\n${customLines.join('\n')}`,
+        `Builtin providers:\n${builtinLines.join('\n')}\n\nCustom providers:\n${customLines.join('\n')}`,
       );
       return;
     }
