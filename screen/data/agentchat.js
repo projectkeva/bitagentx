@@ -2097,16 +2097,28 @@ class AgentChat extends React.Component {
     }
     if (sub === 'list') {
       const cur = this.currentLLMConfig || this.state.llmConfig || (await this.loadLLMConfig());
-      const activeName = String(cur?.provider || '').toLowerCase();
       const registry = await this.loadProvidersRegistry();
 
-      const fmtName = name => String(name).padEnd(10, ' ');
-      const fmtKey = hasKey => (hasKey ? '🟩YES' : '🟥NO');
-      const fmtPrefix = name => (String(name).toLowerCase() === activeName ? '* ' : '- ');
+      const USE_COL_WIDTH = 18;
+      const NAME_COL_WIDTH = 10;
+
+      const pad = (s, n) => String(s).padEnd(n, ' ');
+      const statusDot = hasKey => (hasKey ? '🟩' : '🟥');
+
+      const makeBuiltinLine = (name, hasKey) => {
+        const useToken = `[[/a ${name}|use]]`;
+        return `${statusDot(hasKey)} ${pad(useToken, USE_COL_WIDTH)} ${name}`;
+      };
+
+      const makeCustomLine = (name, hasKey) => {
+        const useToken = `[[/a ${name}|use]]`;
+        const delToken = `[[/a del ${name}|del]]`;
+        return `${statusDot(hasKey)} ${pad(useToken, USE_COL_WIDTH)} ${pad(name, NAME_COL_WIDTH)} ${delToken}`;
+      };
 
       const builtinLines = Object.keys(LLM_PROVIDERS).map(name => {
         const entry = this.getEffectiveProviderEntry(name, registry, cur);
-        return `${fmtPrefix(name)}${fmtName(name)} key=${fmtKey(entry.hasKey)}  [[/a ${name}|use]]`;
+        return makeBuiltinLine(name, entry.hasKey);
       });
 
       const customNames = Object.keys(registry || {}).filter(
@@ -2115,8 +2127,8 @@ class AgentChat extends React.Component {
 
       const customLines = customNames.length
         ? customNames.map(name => {
-            const entry = registry[name] || {};
-            return `${fmtPrefix(name)}${fmtName(name)} key=${fmtKey(!!entry.apiKey)}  [[/a ${name}|use]] [[/a del ${name}|del]]`;
+            const hasKey = !!String(registry?.[name]?.apiKey || '').trim();
+            return makeCustomLine(name, hasKey);
           })
         : ['(none)'];
 
