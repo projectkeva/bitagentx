@@ -119,7 +119,7 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — Send the three opening hints.',
     '/c — Clear all chat history.',
     '/block — Check the current block height.',
-    '/a — Configure and load an LLM provider (cloud or local). Type /a for usage, /a list for saved providers.',
+    '/a — Configure and load an LLM (cloud or local).',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Save a welcome message on-chain.',
     'Tap avatar — one-tap commit on-chain.',
