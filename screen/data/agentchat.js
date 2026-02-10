@@ -32,6 +32,7 @@ const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const LLM_CONFIG_SUFFIX = '.llm.json';
 const LLM_PROVIDERS_SUFFIX = '.providers.json';
 const ACTIVE_PROVIDER_SUFFIX = '.active_provider.json';
+const GLOBAL_PROVIDER_STORAGE_KEY = 'agentchat_global';
 const LLM_HISTORY_LIMIT = 16;
 const DEFAULT_AUTH_HEADER = apiKey => (apiKey ? { Authorization: `Bearer ${apiKey}` } : {});
 
@@ -1492,10 +1493,14 @@ class AgentChat extends React.Component {
 
   getLLMProvidersPath = storageKey => `${CHAT_DIR}/${storageKey || 'default'}${LLM_PROVIDERS_SUFFIX}`;
 
+  getGlobalProvidersPath = () => `${CHAT_DIR}/${GLOBAL_PROVIDER_STORAGE_KEY}${LLM_PROVIDERS_SUFFIX}`;
+
   getActiveProviderPath = storageKey => {
     const key = storageKey || this.chatStorageKey || 'default';
     return `${CHAT_DIR}/${key}${ACTIVE_PROVIDER_SUFFIX}`;
   };
+
+  getGlobalActiveProviderPath = () => `${CHAT_DIR}/${GLOBAL_PROVIDER_STORAGE_KEY}${ACTIVE_PROVIDER_SUFFIX}`;
 
   syncChatStorageKeyForLLM = async () => {
     if (!this.chatStorageKey) {
@@ -1533,43 +1538,31 @@ class AgentChat extends React.Component {
 
   loadActiveProvider = async () => {
     await this.ensureStorage();
-    const params = this.props.navigation.state.params || {};
-    const candidates = this.getStorageKeyCandidates(params);
-    const keys = this.chatStorageKey
-      ? [this.chatStorageKey, ...candidates.filter(key => key !== this.chatStorageKey)]
-      : candidates;
-
-    for (const key of keys) {
-      const path = this.getActiveProviderPath(key);
-      try {
-        const exists = await RNFS.exists(path);
-        if (!exists) {
-          continue;
-        }
-        const raw = await RNFS.readFile(path, 'utf8');
-        const parsed = JSON.parse(raw);
-        const name = typeof parsed?.name === 'string' ? parsed.name.trim() : '';
-        if (name) {
-          this.chatStorageKey = key;
-          return { name };
-        }
-      } catch (_) {}
-    }
+    const path = this.getGlobalActiveProviderPath();
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) {
+        return null;
+      }
+      const raw = await RNFS.readFile(path, 'utf8');
+      const parsed = JSON.parse(raw);
+      const name = typeof parsed?.name === 'string' ? parsed.name.trim() : '';
+      if (name) {
+        return { name };
+      }
+    } catch (_) {}
     return null;
   };
 
-  saveActiveProvider = async (name, storageKey) => {
+  saveActiveProvider = async name => {
     await this.ensureStorage();
-    if (!this.chatStorageKey && !storageKey) {
-      await this.setChatStorageKey(this.props.navigation.state.params || {});
-    }
-    const path = this.getActiveProviderPath(storageKey);
+    const path = this.getGlobalActiveProviderPath();
     const payload = JSON.stringify({ name, updatedAt: Date.now() });
     await RNFS.writeFile(path, payload, 'utf8');
   };
 
-  clearActiveProvider = async storageKey => {
-    const path = this.getActiveProviderPath(storageKey);
+  clearActiveProvider = async () => {
+    const path = this.getGlobalActiveProviderPath();
     try {
       await RNFS.unlink(path);
     } catch (_) {}
@@ -1577,11 +1570,7 @@ class AgentChat extends React.Component {
 
   loadProvidersRegistry = async () => {
     await this.ensureStorage();
-    await this.syncChatStorageKeyForLLM();
-    if (!this.chatStorageKey) {
-      await this.setChatStorageKey(this.props.navigation.state.params || {});
-    }
-    const path = this.getLLMProvidersPath(this.chatStorageKey);
+    const path = this.getGlobalProvidersPath();
     try {
       const exists = await RNFS.exists(path);
       if (!exists) {
@@ -1600,18 +1589,23 @@ class AgentChat extends React.Component {
 
   saveProvidersRegistry = async registry => {
     await this.ensureStorage();
-    await this.syncChatStorageKeyForLLM();
-    if (!this.chatStorageKey) {
-      await this.setChatStorageKey(this.props.navigation.state.params || {});
-    }
-    const path = this.getLLMProvidersPath(this.chatStorageKey);
+    const path = this.getGlobalProvidersPath();
     try {
       await RNFS.writeFile(path, JSON.stringify(registry || {}), 'utf8');
       return true;
     } catch (error) {
-      console.warn('Failed to save providers registry', error);
+      console.warn('Failed to save providers registry', { path, error });
       return false;
     }
+  };
+
+  getEffectiveProviderEntry = (name, registry, currentConfig) => {
+    const builtin = LLM_PROVIDERS[name] || null;
+    const entry = registry?.[name] || {};
+    const baseUrl = String(entry.baseUrl || builtin?.baseUrl || '').trim();
+    const currentKey = currentConfig?.provider === name ? currentConfig.apiKey || '' : '';
+    const hasKey = !!String(entry.apiKey || currentKey || '').trim();
+    return { name, baseUrl, hasKey, isBuiltin: !!builtin };
   };
 
   applyProviderConfig = async ({
@@ -2104,28 +2098,15 @@ class AgentChat extends React.Component {
     if (sub === 'list') {
       const cur = this.currentLLMConfig || this.state.llmConfig || (await this.loadLLMConfig());
       const registry = await this.loadProvidersRegistry();
-      const currentProvider = cur?.provider || '';
-      const currentApiKey = cur?.apiKey || '';
       const builtinLines = Object.keys(LLM_PROVIDERS).map(name => {
-        const storedKey = registry?.[name]?.apiKey || '';
-        const hasKey = (currentProvider === name && currentApiKey) || storedKey ? '🟩YES' : '🟥NO';
-        return `${name} key=${hasKey}`;
+        const entry = this.getEffectiveProviderEntry(name, registry, cur);
+        return `${name} baseUrl=${entry.baseUrl || '(unset)'} key=${entry.hasKey ? '🟩YES' : '🟥NO'}  [[/a ${name}|use]]`;
       });
-      const customNames = Object.keys(registry || {}).filter(name => {
-        const entry = registry?.[name] || {};
-        if (LLM_PROVIDERS[name] && !entry.baseUrl) {
-          return false;
-        }
-        if (!LLM_PROVIDERS[name] && !entry.baseUrl) {
-          return false;
-        }
-        return true;
-      });
+      const customNames = Object.keys(registry || {}).filter(name => !LLM_PROVIDERS[name] && registry?.[name]?.baseUrl);
       const customLines = customNames.length
         ? customNames.map(name => {
             const entry = registry[name] || {};
-            const hasKey = entry.apiKey ? '🟩YES' : currentProvider === name && currentApiKey ? '🟩YES' : '🟥NO';
-            return `${name} key=${hasKey}`;
+            return `${name} baseUrl=${entry.baseUrl} key=${entry.apiKey ? '🟩YES' : '🟥NO'}  [[/a ${name}|use]] [[/a del ${name}|del]]`;
           })
         : ['(none)'];
       this.replyFromAgent(
@@ -2158,9 +2139,8 @@ class AgentChat extends React.Component {
       if (!verify?.[name]?.baseUrl) {
         this.replyFromAgent(
           `Failed to persist provider: ${name}\n` +
-            `storageKey=${this.chatStorageKey}\n` +
-            `registryPath=${this.getLLMProvidersPath(this.chatStorageKey)}\n` +
-            `Tip: if this happens, writeFile likely failed or storageKey switched.`,
+            `registryPath=${this.getGlobalProvidersPath()}\n` +
+            `Tip: check app file permissions or RNFS writeFile failure.`,
         );
         return;
       }
@@ -2255,8 +2235,9 @@ class AgentChat extends React.Component {
         // Persist builtin key so restoreProviderFromDisk() can reuse it.
         registry[provider] = {
           ...(registry[provider] || {}),
-          // do NOT store baseUrl for builtin; builtin baseUrl lives in code
+          baseUrl: providerDef.baseUrl,
           apiKey: keyArg,
+          updatedAt: Date.now(),
         };
         await this.saveProvidersRegistry(registry);
       }
