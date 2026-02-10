@@ -34,6 +34,7 @@ const LLM_DIR = `${RNFS.DocumentDirectoryPath}/llm`;
 const LLM_BUILTIN_PATH = `${LLM_DIR}/builtin.json`;
 const LLM_CUSTOM_PATH = `${LLM_DIR}/custom.json`;
 const LLM_ACTIVE_PATH = `${LLM_DIR}/active.json`;
+const LLM_LAST_USED_PATH = `${LLM_DIR}/last_used.json`;
 
 // 可选：如果你未来要“每个 agent 绑定不同模型”，再用它
 const getLLMOverridePath = agentId => `${LLM_DIR}/overrides_${encodeURIComponent(agentId)}.json`;
@@ -1510,6 +1511,13 @@ class AgentChat extends React.Component {
     this.setState({ llmConfig: next });
     await this.saveLLMConfig(next);
     await this.writeActiveProvider({ name: providerName, updatedAt: Date.now() });
+    await this.writeJsonFile(LLM_LAST_USED_PATH, {
+      provider: String(providerName || '').trim().toLowerCase(),
+      baseUrl: String(baseUrl || providerDef?.baseUrl || '').trim().replace(/\/$/, ''),
+      apiKey: String(apiKey || '').trim(),
+      model: String(selectedModel || providerDef?.defaultModel || 'default').trim(),
+      updatedAt: Date.now(),
+    });
     this.currentLLMConfig = next;
 
     const modeLabel = apiKey ? 'cloud' : 'local';
@@ -1528,6 +1536,32 @@ class AgentChat extends React.Component {
   };
 
   restoreProviderFromDisk = async () => {
+    const snap = await this.readJsonFile(LLM_LAST_USED_PATH);
+    if (snap?.provider && snap?.baseUrl) {
+      const providerName = String(snap.provider).trim().toLowerCase();
+      const resolved = await this.resolveProviderDef(providerName);
+      if (resolved?.def) {
+        try {
+          await this.applyProviderConfig({
+            providerName,
+            providerDef: resolved.def,
+            registryEntry: null,
+            llmConfig: {
+              provider: providerName,
+              baseUrl: String(snap.baseUrl || '').trim().replace(/\/$/, ''),
+              apiKey: String(snap.apiKey || '').trim(),
+              model: String(snap.model || resolved.def.defaultModel || 'default').trim(),
+              updatedAt: snap.updatedAt || Date.now(),
+            },
+            startup: true,
+          });
+          return;
+        } catch (error) {
+          console.warn('Failed to restore provider from last used snapshot', error);
+        }
+      }
+    }
+
     const active = await this.readActiveProvider();
     if (!active?.name) {
       return;
