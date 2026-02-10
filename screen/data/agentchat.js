@@ -31,7 +31,8 @@ import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees'
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const LLM_DIR = `${RNFS.DocumentDirectoryPath}/llm`;
 
-const LLM_PROVIDERS_PATH = `${LLM_DIR}/providers.json`;
+const LLM_BUILTIN_PATH = `${LLM_DIR}/builtin.json`;
+const LLM_CUSTOM_PATH = `${LLM_DIR}/custom.json`;
 const LLM_ACTIVE_PATH = `${LLM_DIR}/active.json`;
 
 // 可选：如果你未来要“每个 agent 绑定不同模型”，再用它
@@ -1335,10 +1336,10 @@ class AgentChat extends React.Component {
   initializeChat = async () => {
     await this.ensureDirs();
     const history = await this.readHistory();
-    const providers = await this.readLLMProviders();
-    if (!providers) {
-      await this.writeLLMProviders({});
-    }
+    const builtin = await this.readJsonFile(LLM_BUILTIN_PATH);
+    if (!builtin) await this.writeBuiltinRegistry({});
+    const custom = await this.readJsonFile(LLM_CUSTOM_PATH);
+    if (!custom) await this.writeCustomRegistry({});
     const active = await this.readActiveProvider();
     if (!active) {
       await this.writeActiveProvider({ name: '' });
@@ -1382,23 +1383,23 @@ class AgentChat extends React.Component {
   loadLLMConfig = async () => {
     try {
       const active = await this.readActiveProvider();
-      if (!active?.name) {
-        return null;
-      }
-      const providers = await this.readLLMProviders();
-      if (!providers || typeof providers !== 'object') {
-        return null;
-      }
-      const entry = providers?.[active.name];
-      if (!entry || !entry.baseUrl) {
-        return null;
-      }
+      const providerName = String(active?.name || '').toLowerCase();
+      if (!providerName) return null;
+
+      const merged = await this.loadMergedRegistry();
+      const override = merged?.[providerName] || {};
+      const builtinDef = LLM_PROVIDERS[providerName] || null;
+      const baseUrl = String(override.baseUrl || builtinDef?.baseUrl || '')
+        .trim()
+        .replace(/\/$/, '');
+      if (!baseUrl) return null;
+
       return {
-        provider: active.name,
-        baseUrl: entry.baseUrl,
-        apiKey: entry.apiKey || '',
-        model: entry.model || 'default',
-        updatedAt: entry.updatedAt || Date.now(),
+        provider: providerName,
+        baseUrl,
+        apiKey: override.apiKey || '',
+        model: override.model || (builtinDef?.defaultModel || 'default'),
+        updatedAt: override.updatedAt || Date.now(),
       };
     } catch (error) {
       console.warn('Failed to load llm config', error);
@@ -1428,44 +1429,46 @@ class AgentChat extends React.Component {
     } catch (_) {}
   };
 
-  readLLMProviders = async () => {
+  readJsonFile = async path => {
     try {
-      const exists = await RNFS.exists(LLM_PROVIDERS_PATH);
+      const exists = await RNFS.exists(path);
       if (!exists) return null;
-      return JSON.parse(await RNFS.readFile(LLM_PROVIDERS_PATH, 'utf8'));
-    } catch (e) {
+      return JSON.parse(await RNFS.readFile(path, 'utf8'));
+    } catch (_) {
       return null;
     }
   };
 
-  writeLLMProviders = async providers => {
+  writeJsonFile = async (path, data) => {
     try {
-      await RNFS.writeFile(LLM_PROVIDERS_PATH, JSON.stringify(providers, null, 2), 'utf8');
+      await RNFS.writeFile(path, JSON.stringify(data, null, 2), 'utf8');
       return true;
     } catch (error) {
-      console.warn('Failed to save providers registry', { path: LLM_PROVIDERS_PATH, error });
+      console.warn('Failed to write json', { path, error });
       return false;
     }
   };
 
-  loadProvidersRegistry = async () => {
-    const parsed = await this.readLLMProviders();
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed;
-    }
-    return {};
+  readBuiltinRegistry = async () => {
+    const obj = await this.readJsonFile(LLM_BUILTIN_PATH);
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {};
   };
 
-  saveProvidersRegistry = async registry => this.writeLLMProviders(registry || {});
+  writeBuiltinRegistry = async registry => this.writeJsonFile(LLM_BUILTIN_PATH, registry || {});
 
-  getEffectiveProviderEntry = (name, registry, currentConfig) => {
-    const builtin = LLM_PROVIDERS[name] || null;
-    const entry = registry?.[name] || {};
-    const baseUrl = String(entry.baseUrl || builtin?.baseUrl || '').trim();
-    const currentKey = currentConfig?.provider === name ? currentConfig.apiKey || '' : '';
-    const hasKey = !!String(entry.apiKey || currentKey || '').trim();
-    return { name, baseUrl, hasKey, isBuiltin: !!builtin };
+  readCustomRegistry = async () => {
+    const obj = await this.readJsonFile(LLM_CUSTOM_PATH);
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {};
   };
+
+  writeCustomRegistry = async registry => this.writeJsonFile(LLM_CUSTOM_PATH, registry || {});
+
+  loadMergedRegistry = async () => {
+    const [builtin, custom] = await Promise.all([this.readBuiltinRegistry(), this.readCustomRegistry()]);
+    return { ...(builtin || {}), ...(custom || {}) };
+  };
+
+  isBuiltinProvider = name => !!LLM_PROVIDERS[String(name || '').toLowerCase()];
 
   applyProviderConfig = async ({
     providerName,
@@ -1529,7 +1532,7 @@ class AgentChat extends React.Component {
     if (!active?.name) {
       return;
     }
-    const registry = await this.loadProvidersRegistry();
+    const registry = await this.loadMergedRegistry();
     const resolved = await this.resolveProviderDef(active.name);
     if (!resolved) {
       return;
@@ -1561,25 +1564,27 @@ class AgentChat extends React.Component {
     if (!normalized) {
       return null;
     }
-    const registry = await this.loadProvidersRegistry();
-    const entry = registry?.[normalized];
+    const builtinReg = await this.readBuiltinRegistry();
+    const customReg = await this.readCustomRegistry();
+    const entryBuiltin = builtinReg?.[normalized];
+    const entryCustom = customReg?.[normalized];
     if (LLM_PROVIDERS[normalized]) {
-      const baseUrlOverride = entry?.baseUrl ? String(entry.baseUrl).trim().replace(/\/$/, '') : '';
+      const baseUrlOverride = entryBuiltin?.baseUrl ? String(entryBuiltin.baseUrl).trim().replace(/\/$/, '') : '';
       return {
         name: normalized,
         def: {
           ...LLM_PROVIDERS[normalized],
           baseUrl: baseUrlOverride || LLM_PROVIDERS[normalized].baseUrl,
         },
-        source: entry?.baseUrl ? 'builtin_override' : 'builtin',
+        source: baseUrlOverride ? 'builtin_override' : 'builtin',
       };
     }
-    if (entry && entry.baseUrl) {
+    if (entryCustom && entryCustom.baseUrl) {
       return {
         name: normalized,
         def: {
           kind: 'openai_compat',
-          baseUrl: entry.baseUrl,
+          baseUrl: entryCustom.baseUrl,
           defaultModel: 'default',
           authHeader: DEFAULT_AUTH_HEADER,
         },
@@ -1592,15 +1597,25 @@ class AgentChat extends React.Component {
   saveLLMConfig = async config => {
     await this.ensureDirs();
     this.currentLLMConfig = config;
-    const providers = (await this.loadProvidersRegistry()) || {};
-    providers[config.provider] = {
-      ...(providers[config.provider] || {}),
-      baseUrl: config.baseUrl,
+    const name = String(config.provider || '').toLowerCase();
+    const entry = {
+      baseUrl: String(config.baseUrl || '')
+        .trim()
+        .replace(/\/$/, ''),
       apiKey: config.apiKey || '',
       model: config.model || 'default',
       updatedAt: Date.now(),
     };
-    await this.saveProvidersRegistry(providers);
+
+    if (this.isBuiltinProvider(name)) {
+      const reg = await this.readBuiltinRegistry();
+      reg[name] = { ...(reg[name] || {}), ...entry };
+      await this.writeBuiltinRegistry(reg);
+    } else {
+      const reg = await this.readCustomRegistry();
+      reg[name] = { ...(reg[name] || {}), ...entry };
+      await this.writeCustomRegistry(reg);
+    }
   };
 
   clearLLMConfig = async () => {
@@ -1933,7 +1948,8 @@ class AgentChat extends React.Component {
     }
     if (sub === 'list') {
       const cur = this.currentLLMConfig || this.state.llmConfig || (await this.loadLLMConfig());
-      const registry = await this.loadProvidersRegistry();
+      const builtinReg = await this.readBuiltinRegistry();
+      const customReg = await this.readCustomRegistry();
 
       const USE_COL_WIDTH = 18;
       const NAME_COL_WIDTH = 10;
@@ -1953,17 +1969,16 @@ class AgentChat extends React.Component {
       };
 
       const builtinLines = Object.keys(LLM_PROVIDERS).map(name => {
-        const entry = this.getEffectiveProviderEntry(name, registry, cur);
-        return makeBuiltinLine(name, entry.hasKey);
+        const hasCurrentKey = cur?.provider === name && !!String(cur?.apiKey || '').trim();
+        const hasKey = !!String(builtinReg?.[name]?.apiKey || '').trim() || hasCurrentKey;
+        return makeBuiltinLine(name, hasKey);
       });
 
-      const customNames = Object.keys(registry || {}).filter(
-        name => !LLM_PROVIDERS[name] && registry?.[name]?.baseUrl,
-      );
+      const customNames = Object.keys(customReg || {}).filter(name => customReg?.[name]?.baseUrl);
 
       const customLines = customNames.length
         ? customNames.map(name => {
-            const hasKey = !!String(registry?.[name]?.apiKey || '').trim();
+            const hasKey = !!String(customReg?.[name]?.apiKey || '').trim();
             return makeCustomLine(name, hasKey);
           })
         : ['(none)'];
@@ -1987,18 +2002,18 @@ class AgentChat extends React.Component {
         return;
       }
       const apiKey = parts[4] || '';
-      const registry = await this.loadProvidersRegistry();
-      registry[name] = { baseUrl, apiKey };
-      const ok = await this.saveProvidersRegistry(registry);
+      const registry = await this.readCustomRegistry();
+      registry[name] = { baseUrl, apiKey, updatedAt: Date.now() };
+      const ok = await this.writeCustomRegistry(registry);
       if (!ok) {
         this.replyFromAgent('Failed to save provider registry (writeFile error).');
         return;
       }
-      const verify = await this.loadProvidersRegistry();
+      const verify = await this.readCustomRegistry();
       if (!verify?.[name]?.baseUrl) {
         this.replyFromAgent(
           `Failed to persist provider: ${name}\n` +
-            `registryPath=${LLM_PROVIDERS_PATH}\n` +
+            `registryPath=${LLM_CUSTOM_PATH}\n` +
             `Tip: check app file permissions or RNFS writeFile failure.`,
         );
         return;
@@ -2016,10 +2031,10 @@ class AgentChat extends React.Component {
         this.replyFromAgent('Cannot delete builtin provider.');
         return;
       }
-      const registry = await this.loadProvidersRegistry();
+      const registry = await this.readCustomRegistry();
       if (registry[name]) {
         delete registry[name];
-        await this.saveProvidersRegistry(registry);
+        await this.writeCustomRegistry(registry);
       }
       if (this.state.llmConfig?.provider === name || this.currentLLMConfig?.provider === name) {
         await this.clearLLMConfig();
@@ -2078,27 +2093,28 @@ class AgentChat extends React.Component {
     const providerDef = resolved.def;
     let registryEntry = null;
     let apiKeyOverride = '';
-    const registry = await this.loadProvidersRegistry();
+    const builtinReg = await this.readBuiltinRegistry();
+    const customReg = await this.readCustomRegistry();
     if (resolved.source === 'custom') {
-      registryEntry = registry?.[provider] || null;
+      registryEntry = customReg?.[provider] || null;
       if (keyArg) {
-        registryEntry = { ...(registryEntry || {}), apiKey: keyArg };
-        registry[provider] = registryEntry;
-        await this.saveProvidersRegistry(registry);
+        registryEntry = { ...(registryEntry || {}), apiKey: keyArg, updatedAt: Date.now() };
+        customReg[provider] = registryEntry;
+        await this.writeCustomRegistry(customReg);
       }
     } else {
-      registryEntry = registry?.[provider] || null;
+      registryEntry = builtinReg?.[provider] || null;
       if (keyArg) {
         apiKeyOverride = keyArg;
 
-        // Persist builtin key so restoreProviderFromDisk() can reuse it.
-        registry[provider] = {
-          ...(registry[provider] || {}),
+        builtinReg[provider] = {
+          ...(builtinReg[provider] || {}),
           baseUrl: providerDef.baseUrl,
           apiKey: keyArg,
           updatedAt: Date.now(),
         };
-        await this.saveProvidersRegistry(registry);
+        await this.writeBuiltinRegistry(builtinReg);
+        registryEntry = builtinReg[provider];
       }
     }
     const current = this.currentLLMConfig || this.state.llmConfig || (await this.loadLLMConfig());
