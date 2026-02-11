@@ -28,15 +28,6 @@ const withTimeout = (p, ms) =>
 
 const nowMs = () => Date.now();
 
-const isCacheFresh = () => {
-  return lastProbeCache.ts && nowMs() - lastProbeCache.ts < PROBE_COOLDOWN_MS;
-};
-
-const secondsLeft = () => {
-  const left = PROBE_COOLDOWN_MS - (nowMs() - lastProbeCache.ts);
-  return Math.max(0, Math.ceil(left / 1000));
-};
-
 export default function HomeScreen() {
   const navigation = useNavigation();
   const webviewRef = useRef(null);
@@ -137,19 +128,23 @@ export default function HomeScreen() {
       if (obj && obj.type === 'electrum_probe_get_or_run') {
         const mySeq = ++probeSeqRef.current;
 
-        if (isCacheFresh()) {
+        // 2分钟内：只回缓存，不做任何连接
+        if (lastProbeCache.ts && nowMs() - lastProbeCache.ts < PROBE_COOLDOWN_MS) {
+          const left = PROBE_COOLDOWN_MS - (nowMs() - lastProbeCache.ts);
           postToWeb({
             type: 'electrum_probe_cached',
             seq: mySeq,
             ts: lastProbeCache.ts,
-            cooldownLeftSec: secondsLeft(),
+            cooldownLeftSec: Math.max(0, Math.ceil(left / 1000)),
             resultById: lastProbeCache.resultById || {},
           });
           return;
         }
 
-        lastProbeCache = { ts: nowMs(), resultById: {} };
-        postToWeb({ type: 'electrum_probe_reset', seq: mySeq, cooldownLeftSec: secondsLeft() });
+        // 新一轮探测：先 reset（灰），允许逐个点亮
+        postToWeb({ type: 'electrum_probe_reset', seq: mySeq, cooldownLeftSec: 0 });
+
+        const tempResultById = {};
 
         for (const node of OFFICIAL_NODES) {
           if (mySeq !== probeSeqRef.current) {
@@ -171,11 +166,7 @@ export default function HomeScreen() {
             height = null;
           }
 
-          lastProbeCache.resultById = {
-            ...(lastProbeCache.resultById || {}),
-            [node.id]: { ok, height },
-          };
-          lastProbeCache.ts = nowMs();
+          tempResultById[node.id] = { ok, height };
 
           postToWeb({
             type: 'electrum_probe_one',
@@ -183,11 +174,23 @@ export default function HomeScreen() {
             id: node.id,
             ok,
             height,
-            cooldownLeftSec: secondsLeft(),
+            cooldownLeftSec: 0,
           });
         }
 
-        postToWeb({ type: 'electrum_probe_done', seq: mySeq, cooldownLeftSec: secondsLeft() });
+        // 全部检测完毕后：一次性写缓存并开始 2 分钟冷却
+        lastProbeCache = {
+          ts: nowMs(),
+          resultById: tempResultById,
+        };
+
+        postToWeb({
+          type: 'electrum_probe_done',
+          seq: mySeq,
+          cooldownLeftSec: Math.ceil(PROBE_COOLDOWN_MS / 1000),
+          ts: lastProbeCache.ts,
+          resultById: lastProbeCache.resultById,
+        });
         return;
       }
 
