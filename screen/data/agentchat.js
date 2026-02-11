@@ -1482,7 +1482,7 @@ class AgentChat extends React.Component {
     }
 
     if (/^\/block\b/i.test(trimmed)) {
-      await this.replyWithCurrentBlockLocal();
+      await this.replyWithCurrentBlock();
       return;
     }
 
@@ -1626,39 +1626,16 @@ class AgentChat extends React.Component {
     return result;
   };
 
-  replyWithCurrentBlockLocal = async () => {
+  replyWithCurrentBlock = async () => {
     try {
       await BlueElectrum.ping();
       if (typeof BlueElectrum.waitTillConnected === 'function') {
         await BlueElectrum.waitTillConnected();
       }
-
-      const resp = await BlueElectrum.blockchainHeaders_subscribe();
-
-      const rawHeight =
-        typeof resp === 'number'
-          ? resp
-          : typeof resp?.height !== 'undefined'
-            ? resp.height
-            : typeof resp?.result?.height !== 'undefined'
-              ? resp.result.height
-              : null;
-
-      const height =
-        typeof rawHeight === 'number'
-          ? rawHeight
-          : typeof rawHeight === 'string' && /^[0-9]+$/.test(rawHeight)
-            ? parseInt(rawHeight, 10)
-            : null;
-
-      this.replyFromAgent(
-        height
-          ? `CURRENT_BLOCK = ${height}`
-          : `Failed to fetch CURRENT_BLOCK (resp=${JSON.stringify(resp).slice(0, 180)})`,
-      );
+      const resp = await BlueElectrum.blockchainBlock_count();
+      this.replyFromAgent(`CURRENT_BLOCK = ${resp?.count || ''}`);
     } catch (e) {
-      const msg = e?.message ? e.message : String(e);
-      this.replyFromAgent(`Failed to fetch CURRENT_BLOCK: ${msg}`);
+      this.replyFromAgent(`Failed to fetch CURRENT_BLOCK: ${String(e?.message || e)}`);
       console.warn('AgentChat: /block failed', e);
     }
   };
