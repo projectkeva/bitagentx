@@ -11,6 +11,7 @@ const OFFICIAL_NODES = [
   { id: 'n0', host: 'x.xkeva.com', ssl: '50002', tcp: '' },
   { id: 'n1', host: 'y.xkeva.com', ssl: '50002', tcp: '' },
   { id: 'n2', host: 'z.xkeva.com', ssl: '50002', tcp: '' },
+  { id: 'n3', host: 'ec.kevacoin.org', ssl: '50002', tcp: '' },
 ];
 
 const DEFAULT_NODE = OFFICIAL_NODES[0];
