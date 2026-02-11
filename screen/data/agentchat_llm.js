@@ -25,21 +25,44 @@ export function attachAgentChatLLM(agent, deps) {
     (async path => {
       try {
         const exists = await RNFS.exists(path);
-        if (!exists) return null;
-        return JSON.parse(await RNFS.readFile(path, 'utf8'));
-      } catch (_) {
-        return null;
+        if (!exists) return { __missing: true, __parseError: false, value: null };
+
+        const raw = await RNFS.readFile(path, 'utf8');
+        try {
+          return { __missing: false, __parseError: false, value: JSON.parse(raw) };
+        } catch (parseError) {
+          const backup = `${path}.broken_${Date.now()}.txt`;
+          try {
+            await RNFS.writeFile(backup, raw || '', 'utf8');
+          } catch (_) {}
+          console.warn('JSON parse failed; kept original file; backup created', { path, backup, parseError });
+          return { __missing: false, __parseError: true, value: null };
+        }
+      } catch (e) {
+        return { __missing: false, __parseError: true, value: null };
       }
     });
 
   agent.writeJsonFile =
     agent.writeJsonFile ||
     (async (path, data) => {
+      const tmpPath = `${path}.tmp_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const json = JSON.stringify(data, null, 2);
       try {
-        await RNFS.writeFile(path, JSON.stringify(data, null, 2), 'utf8');
+        await RNFS.writeFile(tmpPath, json, 'utf8');
+        const exists = await RNFS.exists(path);
+        if (exists) {
+          try {
+            await RNFS.unlink(path);
+          } catch (_) {}
+        }
+        await RNFS.moveFile(tmpPath, path);
         return true;
       } catch (error) {
-        console.warn('Failed to write json', { path, error });
+        console.warn('writeJsonFile failed', { path, error });
+        try {
+          await RNFS.unlink(tmpPath);
+        } catch (_) {}
         return false;
       }
     });
@@ -47,22 +70,13 @@ export function attachAgentChatLLM(agent, deps) {
   agent.readActiveProvider =
     agent.readActiveProvider ||
     (async () => {
-      try {
-        const exists = await RNFS.exists(LLM_ACTIVE_PATH);
-        if (!exists) return null;
-        return JSON.parse(await RNFS.readFile(LLM_ACTIVE_PATH, 'utf8'));
-      } catch (e) {
-        return null;
-      }
+      const r = await agent.readJsonFile(LLM_ACTIVE_PATH);
+      return r && r.value ? r.value : null;
     });
 
   agent.writeActiveProvider =
     agent.writeActiveProvider ||
-    (async active => {
-      try {
-        await RNFS.writeFile(LLM_ACTIVE_PATH, JSON.stringify(active, null, 2), 'utf8');
-      } catch (e) {}
-    });
+    (async active => agent.writeJsonFile(LLM_ACTIVE_PATH, active || {}));
 
   agent.clearActiveProvider =
     agent.clearActiveProvider ||
@@ -75,7 +89,8 @@ export function attachAgentChatLLM(agent, deps) {
   agent.readBuiltinRegistry =
     agent.readBuiltinRegistry ||
     (async () => {
-      const obj = await agent.readJsonFile(LLM_BUILTIN_PATH);
+      const r = await agent.readJsonFile(LLM_BUILTIN_PATH);
+      const obj = r.value;
       return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {};
     });
 
@@ -86,7 +101,8 @@ export function attachAgentChatLLM(agent, deps) {
   agent.readCustomRegistry =
     agent.readCustomRegistry ||
     (async () => {
-      const obj = await agent.readJsonFile(LLM_CUSTOM_PATH);
+      const r = await agent.readJsonFile(LLM_CUSTOM_PATH);
+      const obj = r.value;
       return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {};
     });
 
@@ -303,7 +319,8 @@ export function attachAgentChatLLM(agent, deps) {
   agent.restoreProviderFromDisk =
     agent.restoreProviderFromDisk ||
     (async () => {
-      const snap = await agent.readJsonFile(LLM_LAST_USED_PATH);
+      const snapRead = await agent.readJsonFile(LLM_LAST_USED_PATH);
+      const snap = snapRead.value;
       if (snap?.provider && snap?.baseUrl) {
         const providerName = String(snap.provider).trim().toLowerCase();
         const resolved = await agent.resolveProviderDef(providerName);

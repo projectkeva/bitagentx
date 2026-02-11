@@ -1193,13 +1193,25 @@ class AgentChat extends React.Component {
   initializeChat = async () => {
     await this.ensureDirs();
     const history = await this.readHistory();
-    const builtin = await this.readJsonFile(LLM_BUILTIN_PATH);
-    if (!builtin) await this.writeBuiltinRegistry({});
-    const custom = await this.readJsonFile(LLM_CUSTOM_PATH);
-    if (!custom) await this.writeCustomRegistry({});
-    const active = await this.readActiveProvider();
-    if (!active) {
+    const builtinRead = await this.readJsonFile(LLM_BUILTIN_PATH);
+    if (builtinRead.__missing) {
+      await this.writeBuiltinRegistry({});
+    } else if (builtinRead.__parseError) {
+      this.replyFromAgent(`LLM builtin registry is corrupted. Backup created. Please fix/delete: ${LLM_BUILTIN_PATH}`);
+    }
+
+    const customRead = await this.readJsonFile(LLM_CUSTOM_PATH);
+    if (customRead.__missing) {
+      await this.writeCustomRegistry({});
+    } else if (customRead.__parseError) {
+      this.replyFromAgent(`LLM custom registry is corrupted. Backup created. Please fix/delete: ${LLM_CUSTOM_PATH}`);
+    }
+
+    const activeRead = await this.readJsonFile(LLM_ACTIVE_PATH);
+    if (activeRead.__missing) {
       await this.writeActiveProvider({ name: '' });
+    } else if (activeRead.__parseError) {
+      this.replyFromAgent(`LLM active state is corrupted. Backup created. Please fix/delete: ${LLM_ACTIVE_PATH}`);
     }
     const llmConfig = await this.loadLLMConfig();
     if (!this._isMounted) {
