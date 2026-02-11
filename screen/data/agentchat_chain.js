@@ -1,8 +1,11 @@
 // app/screen/data/agentchat_chain.js
 // Attach chain / on-chain / namespace related handlers onto AgentChat instance.
 
-export function attachAgentChatChain(agent) {
+export function attachAgentChatChain(agent, deps = {}) {
   if (!agent) return;
+
+  const BlueElectrum = deps.BlueElectrum || agent.BlueElectrum;
+  const BlueApp = deps.BlueApp || agent.BlueApp;
 
   // ---- namespace context helpers ----
   agent.resolveNamespaceContext = agent.resolveNamespaceContext || (() => {
@@ -28,8 +31,8 @@ export function attachAgentChatChain(agent) {
     if (!context) return null;
 
     try {
-      await agent.BlueElectrum.ping();
-      const response = await agent.BlueElectrum.blockchainKeva_getKeyValues(context.scriptHash, -1);
+      await BlueElectrum.ping();
+      const response = await BlueElectrum.blockchainKeva_getKeyValues(context.scriptHash, -1);
       const keyvalues = Array.isArray(response) ? response : response?.keyvalues || [];
       const decoded = keyvalues.map(agent.decodeKeyValueEntry);
       return { context, keyvalues: decoded };
@@ -103,7 +106,7 @@ export function attachAgentChatChain(agent) {
       return;
     }
 
-    const wallet = agent.BlueApp.getWallets().find(w => w.getID() === walletId);
+    const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
     if (!wallet) {
       agent.replyFromAgent('Wallet not found for this agent.');
       return;
@@ -133,8 +136,8 @@ export function attachAgentChatChain(agent) {
   // ---- current block ----
   agent.replyWithCurrentBlock = agent.replyWithCurrentBlock || (async () => {
     try {
-      await agent.BlueElectrum.ping();
-      const height = await agent.BlueElectrum.blockchainHeaders_subscribe();
+      await BlueElectrum.ping();
+      const height = await BlueElectrum.blockchainHeaders_subscribe();
       // 你的工程里这个 subscribe 可能返回对象或 height，按你原实现格式化即可
       const block =
         typeof height === 'number'

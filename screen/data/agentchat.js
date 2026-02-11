@@ -1121,7 +1121,7 @@ class AgentChat extends React.Component {
     this.getNamespaceScriptHash = getNamespaceScriptHash;
     this.toScriptHash = toScriptHash;
     this.getCommandUsageMessage = getCommandUsageMessage;
-    attachAgentChatChain(this);
+    attachAgentChatChain(this, { BlueElectrum, BlueApp });
     attachAgentChatLLM(this, {
       loc,
       LLM_DIR,
