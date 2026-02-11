@@ -584,6 +584,25 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
     }
   }
 
+  let cooldownTimer=null;
+
+  function startCooldownTicker(leftSec){
+    let s=Number(leftSec || 0);
+    if(cooldownTimer) clearInterval(cooldownTimer);
+    updateRefreshCooldown(s);
+    if(s<=0) return;
+
+    cooldownTimer=setInterval(()=>{
+      s--;
+      updateRefreshCooldown(s);
+      if(s<=0){
+        clearInterval(cooldownTimer);
+        cooldownTimer=null;
+        updateRefreshCooldown(0);
+      }
+    },1000);
+  }
+
   function handleNativeMessage(rawData){
     let payload;
     try{
@@ -621,14 +640,14 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
 
     if(payload.type==='electrum_probe_done'){
       renderNodeWindow();
-      updateRefreshCooldown(payload.cooldownLeftSec);
+      startCooldownTicker(payload.cooldownLeftSec);
       return;
     }
 
     if(payload.type==='electrum_probe_cached'){
       nodeState.resultById=payload.resultById || {};
       renderNodeWindow();
-      updateRefreshCooldown(payload.cooldownLeftSec);
+      startCooldownTicker(payload.cooldownLeftSec);
       return;
     }
 
