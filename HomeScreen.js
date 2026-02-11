@@ -22,6 +22,7 @@ const withTimeout = (p, ms) =>
 export default function HomeScreen() {
   const navigation = useNavigation();
   const webviewRef = useRef(null);
+  const probeSeqRef = useRef(0);
 
   const ensureDefaultElectrum = useCallback(async () => {
     const host = (await AsyncStorage.getItem(AppStorage.ELECTRUM_HOST)) || '';
@@ -78,19 +79,40 @@ export default function HomeScreen() {
       }
 
       if (obj && obj.type === 'electrum_probe_heights') {
-        const resultById = {};
+        const mySeq = ++probeSeqRef.current;
+
+        postToWeb({ type: 'electrum_probe_reset', seq: mySeq });
+
         for (const node of OFFICIAL_NODES) {
+          if (mySeq !== probeSeqRef.current) {
+            return;
+          }
+
+          let ok = false;
+          let height = null;
+
           try {
             const h = await withTimeout(
               BlueElectrum.probeBlockHeight(node.host, node.tcp, node.ssl),
               6000,
             );
-            resultById[node.id] = { ok: Number.isFinite(h), height: h };
+            ok = Number.isFinite(h) && Number(h) > 0;
+            height = ok ? Number(h) : null;
           } catch (e) {
-            resultById[node.id] = { ok: false, height: null };
+            ok = false;
+            height = null;
           }
+
+          postToWeb({
+            type: 'electrum_probe_one',
+            seq: mySeq,
+            id: node.id,
+            ok,
+            height,
+          });
         }
-        postToWeb({ type: 'electrum_probe_heights_result', resultById });
+
+        postToWeb({ type: 'electrum_probe_done', seq: mySeq });
         return;
       }
 

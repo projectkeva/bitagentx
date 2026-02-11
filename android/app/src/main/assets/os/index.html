@@ -591,8 +591,24 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
       return;
     }
 
-    if(payload.type==='electrum_probe_heights_result'){
-      nodeState.resultById=payload.resultById || {};
+    if(payload.type==='electrum_probe_reset'){
+      nodeState.resultById={};
+      renderNodeWindow();
+      return;
+    }
+
+    if(payload.type==='electrum_probe_one'){
+      if(payload.id){
+        nodeState.resultById[payload.id]={
+          ok: !!payload.ok,
+          height: Number.isFinite(payload.height) ? payload.height : null,
+        };
+      }
+      renderNodeWindow();
+      return;
+    }
+
+    if(payload.type==='electrum_probe_done'){
       renderNodeWindow();
       return;
     }
