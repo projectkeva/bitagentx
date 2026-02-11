@@ -31,7 +31,7 @@ export function attachAgentChatLLM(agent, deps) {
         try {
           return { __missing: false, __parseError: false, value: JSON.parse(raw) };
         } catch (parseError) {
-          const backup = `${path}.broken_${Date.now()}.txt`;
+          const backup = `${path}.broken`;
           try {
             await RNFS.writeFile(backup, raw || '', 'utf8');
           } catch (_) {}
