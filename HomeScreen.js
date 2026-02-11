@@ -16,6 +16,9 @@ const OFFICIAL_NODES = [
 
 const DEFAULT_NODE = OFFICIAL_NODES[0];
 
+const withTimeout = (p, ms) =>
+  Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
 export default function HomeScreen() {
   const navigation = useNavigation();
   const webviewRef = useRef(null);
@@ -34,10 +37,23 @@ export default function HomeScreen() {
   }, [ensureDefaultElectrum]);
 
   const postToWeb = useCallback(payload => {
-    const serialized = JSON.stringify(payload).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    webviewRef.current?.injectJavaScript(
-      `window.dispatchEvent(new MessageEvent('message', { data: '${serialized}' })); true;`,
-    );
+    // Use template string + escape backslash + backtick + ${} to avoid breaking injected JS
+    const serialized = JSON.stringify(payload)
+      .replace(/\\/g, '\\\\')
+      .replace(/`/g, '\\`')
+      .replace(/\$\{/g, '\\${')
+      // Avoid JS parse issues with U+2028/U+2029 in injected script
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029');
+
+    webviewRef.current?.injectJavaScript(`
+      (function(){
+        var data = \`${serialized}\`;
+        try { window.dispatchEvent(new MessageEvent('message', { data: data })); } catch(e) {}
+        try { document.dispatchEvent(new MessageEvent('message', { data: data })); } catch(e) {}
+      })();
+      true;
+    `);
   }, []);
 
   const handleMessage = useCallback(
@@ -64,8 +80,15 @@ export default function HomeScreen() {
       if (obj && obj.type === 'electrum_probe_heights') {
         const resultById = {};
         for (const node of OFFICIAL_NODES) {
-          const h = await BlueElectrum.probeBlockHeight(node.host, node.tcp, node.ssl);
-          resultById[node.id] = { ok: Number.isFinite(h), height: h };
+          try {
+            const h = await withTimeout(
+              BlueElectrum.probeBlockHeight(node.host, node.tcp, node.ssl),
+              6000,
+            );
+            resultById[node.id] = { ok: Number.isFinite(h), height: h };
+          } catch (e) {
+            resultById[node.id] = { ok: false, height: null };
+          }
         }
         postToWeb({ type: 'electrum_probe_heights_result', resultById });
         return;
