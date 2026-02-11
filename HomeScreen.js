@@ -7,6 +7,8 @@ import { useNavigation } from 'react-navigation-hooks';
 import BlueElectrum from './BlueElectrum';
 import { AppStorage } from './class';
 
+const ELECTRUM_INIT_FLAG = 'ELECTRUM_INIT_DONE_V1';
+
 const OFFICIAL_NODES = [
   { id: 'n0', host: 'x.xkeva.com', ssl: '50002', tcp: '' },
   { id: 'n1', host: 'y.xkeva.com', ssl: '50002', tcp: '' },
@@ -14,7 +16,6 @@ const OFFICIAL_NODES = [
   { id: 'n3', host: 'ec.kevacoin.org', ssl: '50002', tcp: '' },
 ];
 
-const DEFAULT_NODE = OFFICIAL_NODES[0];
 const PROBE_COOLDOWN_MS = 2 * 60 * 1000;
 
 // in-memory cache (good enough for "close window then reopen"; persists while app stays alive)
@@ -33,18 +34,28 @@ export default function HomeScreen() {
   const webviewRef = useRef(null);
   const probeSeqRef = useRef(0);
 
-  const ensureDefaultElectrum = useCallback(async () => {
+  const initElectrumOnce = useCallback(async () => {
+    const inited = await AsyncStorage.getItem(ELECTRUM_INIT_FLAG);
+    if (inited === '1') return;
+
     const host = (await AsyncStorage.getItem(AppStorage.ELECTRUM_HOST)) || '';
-    if (!host) {
-      await AsyncStorage.setItem(AppStorage.ELECTRUM_HOST, DEFAULT_NODE.host);
-      await AsyncStorage.setItem(AppStorage.ELECTRUM_SSL_PORT, DEFAULT_NODE.ssl);
-      await AsyncStorage.setItem(AppStorage.ELECTRUM_TCP_PORT, DEFAULT_NODE.tcp || '');
+    const ssl = (await AsyncStorage.getItem(AppStorage.ELECTRUM_SSL_PORT)) || '';
+    const tcp = (await AsyncStorage.getItem(AppStorage.ELECTRUM_TCP_PORT)) || '';
+
+    // only set defaults when nothing has ever been configured
+    const hasAnyConfig = !!(host || ssl || tcp);
+    if (!hasAnyConfig) {
+      await AsyncStorage.setItem(AppStorage.ELECTRUM_HOST, 'x.xkeva.com');
+      await AsyncStorage.setItem(AppStorage.ELECTRUM_SSL_PORT, '50002');
+      await AsyncStorage.setItem(AppStorage.ELECTRUM_TCP_PORT, '');
     }
+
+    await AsyncStorage.setItem(ELECTRUM_INIT_FLAG, '1');
   }, []);
 
   useEffect(() => {
-    ensureDefaultElectrum();
-  }, [ensureDefaultElectrum]);
+    initElectrumOnce();
+  }, [initElectrumOnce]);
 
   const postToWeb = useCallback(payload => {
     // Use template string + escape backslash + backtick + ${} to avoid breaking injected JS
@@ -79,7 +90,6 @@ export default function HomeScreen() {
       } catch (_) {}
 
       if (obj && obj.type === 'electrum_get_state') {
-        await ensureDefaultElectrum();
         const host = (await AsyncStorage.getItem(AppStorage.ELECTRUM_HOST)) || '';
         const ssl = (await AsyncStorage.getItem(AppStorage.ELECTRUM_SSL_PORT)) || '';
         const tcp = (await AsyncStorage.getItem(AppStorage.ELECTRUM_TCP_PORT)) || '';
@@ -235,7 +245,7 @@ export default function HomeScreen() {
 
       // legacy structured messages are ignored now that Get Agents runs as a native screen
     },
-    [ensureDefaultElectrum, navigation, postToWeb],
+    [navigation, postToWeb],
   );
 
   return (
