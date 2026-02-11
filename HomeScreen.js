@@ -15,9 +15,27 @@ const OFFICIAL_NODES = [
 ];
 
 const DEFAULT_NODE = OFFICIAL_NODES[0];
+const PROBE_COOLDOWN_MS = 2 * 60 * 1000;
+
+// in-memory cache (good enough for "close window then reopen"; persists while app stays alive)
+let lastProbeCache = {
+  ts: 0,
+  resultById: {},
+};
 
 const withTimeout = (p, ms) =>
   Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
+const nowMs = () => Date.now();
+
+const isCacheFresh = () => {
+  return lastProbeCache.ts && nowMs() - lastProbeCache.ts < PROBE_COOLDOWN_MS;
+};
+
+const secondsLeft = () => {
+  const left = PROBE_COOLDOWN_MS - (nowMs() - lastProbeCache.ts);
+  return Math.max(0, Math.ceil(left / 1000));
+};
 
 export default function HomeScreen() {
   const navigation = useNavigation();
@@ -113,6 +131,63 @@ export default function HomeScreen() {
         }
 
         postToWeb({ type: 'electrum_probe_done', seq: mySeq });
+        return;
+      }
+
+      if (obj && obj.type === 'electrum_probe_get_or_run') {
+        const mySeq = ++probeSeqRef.current;
+
+        if (isCacheFresh()) {
+          postToWeb({
+            type: 'electrum_probe_cached',
+            seq: mySeq,
+            ts: lastProbeCache.ts,
+            cooldownLeftSec: secondsLeft(),
+            resultById: lastProbeCache.resultById || {},
+          });
+          return;
+        }
+
+        lastProbeCache = { ts: nowMs(), resultById: {} };
+        postToWeb({ type: 'electrum_probe_reset', seq: mySeq, cooldownLeftSec: secondsLeft() });
+
+        for (const node of OFFICIAL_NODES) {
+          if (mySeq !== probeSeqRef.current) {
+            return;
+          }
+
+          let ok = false;
+          let height = null;
+
+          try {
+            const h = await withTimeout(
+              BlueElectrum.probeBlockHeight(node.host, node.tcp, node.ssl),
+              6000,
+            );
+            ok = Number.isFinite(h) && Number(h) > 0;
+            height = ok ? Number(h) : null;
+          } catch (_) {
+            ok = false;
+            height = null;
+          }
+
+          lastProbeCache.resultById = {
+            ...(lastProbeCache.resultById || {}),
+            [node.id]: { ok, height },
+          };
+          lastProbeCache.ts = nowMs();
+
+          postToWeb({
+            type: 'electrum_probe_one',
+            seq: mySeq,
+            id: node.id,
+            ok,
+            height,
+            cooldownLeftSec: secondsLeft(),
+          });
+        }
+
+        postToWeb({ type: 'electrum_probe_done', seq: mySeq, cooldownLeftSec: secondsLeft() });
         return;
       }
 
