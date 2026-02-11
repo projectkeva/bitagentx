@@ -133,26 +133,6 @@ export function attachAgentChatChain(agent, deps = {}) {
     }
   });
 
-  // ---- current block ----
-  agent.replyWithCurrentBlock = agent.replyWithCurrentBlock || (async () => {
-    try {
-      await BlueElectrum.ping();
-      const height = await BlueElectrum.blockchainHeaders_subscribe();
-      // 你的工程里这个 subscribe 可能返回对象或 height，按你原实现格式化即可
-      const block =
-        typeof height === 'number'
-          ? height
-          : typeof height?.height === 'number'
-            ? height.height
-            : null;
-
-      agent.replyFromAgent(block ? `CURRENT_BLOCK = ${block}` : 'Failed to fetch CURRENT_BLOCK.');
-    } catch (e) {
-      console.warn('AgentChat(chain): failed to get current block', e);
-      agent.replyFromAgent('Failed to fetch CURRENT_BLOCK.');
-    }
-  });
-
   // ---- avatar press => open submit ----
   agent.handleAvatarPress = agent.handleAvatarPress || (async messageText => {
     // 这里保持你现有逻辑：点头像打开提交表单/写链
@@ -175,12 +155,6 @@ export function attachAgentChatChain(agent, deps = {}) {
       const payload = trimmed.replace(/^\/welcome\b/i, '').trim();
       if (payload) await agent.handleWelcomeCommand(payload);
       else await agent.handleWelcomeLookup();
-      return true;
-    }
-
-    // /block
-    if (/^\/block\b/.test(lower)) {
-      await agent.replyWithCurrentBlock();
       return true;
     }
 
