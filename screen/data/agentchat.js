@@ -24,6 +24,7 @@ import { BlueNavigationStyle } from '../../BlueComponents';
 let loc = require('../../loc');
 const Rolecards = require('./agentchat_rolecards');
 const Roleplay = require('./agentchat_roleplay');
+const Destiny = require('./agentchat_destiny');
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
 import ActionSheet from '../ActionSheet';
@@ -1730,14 +1731,7 @@ class AgentChat extends React.Component {
 
     const normalized = trimmed.toUpperCase();
     if (normalized === '/D') {
-      const { namespaceId, shortCode } = this.props.navigation.state.params || {};
-      const agentId = shortCode || namespaceId;
-      const seedPrompt = buildDestinySeedPrompt(agentId);
-      const cardText = `Destiny Seed Card\nAgent ID: ${agentId || 'Unknown'}\nReady to copy the full card.`;
-      this.replyFromAgentSeedCard(cardText, seedPrompt);
-      this.replyFromAgent(
-        'Click the link above to copy. Paste into GPT, Grok, DeepSeek, or any base model to start the Interactive Destiny story game. When you finish the run, paste the result here to commit it on-chain for your next level. Have fun!',
-      );
+      Destiny.handleDestinyCommand(this, { buildDestinySeedPrompt });
       return;
     }
 
