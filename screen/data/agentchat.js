@@ -50,10 +50,6 @@ function getAgentIdFromParams(params = {}) {
   return (params.shortCode || params.namespaceId || params.agentId || 'default').toString();
 }
 
-function getChatFilePath(agentId) {
-  return `${CHAT_DIR}/chat_${encodeURIComponent(agentId)}.json`;
-}
-
 const LLM_PROVIDERS = {
   gpt: {
     kind: 'openai_compat',
@@ -466,7 +462,12 @@ const getRoleHistoryTitle = () => {
   const title = getLocalizedMessage(ROLE_HISTORY_TITLES);
   return title.replace('/r', '/\u200Br');
 };
-const getTodayDateString = () => new Date().toISOString().slice(0, 10);
+// 用手机系统本地时间（local day），不是 UTC
+const getLocalDateKey = (ts = Date.now()) => {
+  const d = new Date(ts);
+  const pad = n => (n < 10 ? `0${n}` : `${n}`);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
 const PAGE_SIZE = 10;
 const ATTR_SEED_LABELS = [
   'scene',
@@ -1112,7 +1113,10 @@ class AgentChat extends React.Component {
     this.hasIntroAutoAOnce = false;
     this.isPlayingIntro = false;
     this.agentId = getAgentIdFromParams(this.props.navigation?.state?.params);
-    this.chatFilePath = getChatFilePath(this.agentId);
+    this.agentChatDir = `${CHAT_DIR}/${encodeURIComponent(this.agentId)}`;
+    this.getDayFilePath = dateKey => `${this.agentChatDir}/${dateKey}.json`;
+    this.loadedDateKeys = [];
+    this.allDateKeys = [];
     this.persistQueue = Promise.resolve();
     this.currentLLMConfig = null;
     this.getCommandUsageMessage = getCommandUsageMessage;
@@ -1126,7 +1130,7 @@ class AgentChat extends React.Component {
       LLM_PROVIDERS,
       DEFAULT_AUTH_HEADER,
       LLM_HISTORY_LIMIT,
-      getTodayDateString,
+      getTodayDateString: getLocalDateKey,
     });
   }
 
@@ -1237,36 +1241,69 @@ class AgentChat extends React.Component {
     };
     try {
       await ensure(CHAT_DIR);
+      await ensure(this.agentChatDir);
       await ensure(LLM_DIR);
     } catch (error) {
       console.warn('Failed to prepare chat storage', error);
     }
   };
 
-  readHistory = async () => {
+  listDateKeys = async () => {
     try {
-      const exists = await RNFS.exists(this.chatFilePath);
+      const exists = await RNFS.exists(this.agentChatDir);
       if (!exists) return [];
-      const raw = await RNFS.readFile(this.chatFilePath, 'utf8');
-      const json = JSON.parse(raw);
-      const messages = Array.isArray(json) ? json : json.messages || [];
-      return messages.filter(message => !message?.hidden);
-    } catch (e) {
+      const entries = await RNFS.readDir(this.agentChatDir);
+      return entries
+        .map(entry => entry.name)
+        .filter(name => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
+        .map(name => name.replace('.json', ''))
+        .sort()
+        .reverse();
+    } catch {
       return [];
     }
   };
 
-  writeHistory = async messages => {
+  readDayMessages = async dateKey => {
     try {
-      await RNFS.writeFile(this.chatFilePath, JSON.stringify(messages), 'utf8');
+      const path = this.getDayFilePath(dateKey);
+      const exists = await RNFS.exists(path);
+      if (!exists) return [];
+      const raw = await RNFS.readFile(path, 'utf8');
+      const json = JSON.parse(raw);
+      const messages = Array.isArray(json) ? json : json?.messages || [];
+      return messages.filter(message => !message?.hidden);
+    } catch {
+      return [];
+    }
+  };
+
+  readHistory = async () => {
+    const keys = await this.listDateKeys();
+    this.allDateKeys = keys;
+    if (keys.length === 0) {
+      this.loadedDateKeys = [];
+      return [];
+    }
+    const latestKey = keys[0];
+    const latestMessages = await this.readDayMessages(latestKey);
+    this.loadedDateKeys = [latestKey];
+    return latestMessages;
+  };
+
+  writeDayMessages = async (dateKey, messages) => {
+    try {
+      const path = this.getDayFilePath(dateKey);
+      await RNFS.writeFile(path, JSON.stringify(messages), 'utf8');
     } catch (e) {}
   };
 
-  persistMessages = async messages => {
+  persistMessageByDay = async (dateKey, allMessagesInMemory) => {
+    const dayMessages = allMessagesInMemory.filter(message => getLocalDateKey(message.timestamp) === dateKey);
     this.persistQueue = this.persistQueue
-      .then(() => this.writeHistory(messages))
+      .then(() => this.writeDayMessages(dateKey, dayMessages))
       .catch(error => {
-        console.warn('Failed to save chat history', error);
+        console.warn('Failed to save day history', error);
       });
     return this.persistQueue;
   };
@@ -1291,7 +1328,7 @@ class AgentChat extends React.Component {
           messages: allMessages.slice(-visibleCount),
         };
       },
-      () => this.persistMessages(this.state.allMessages),
+      () => this.persistMessageByDay(getLocalDateKey(message.timestamp), this.state.allMessages),
     );
   };
 
@@ -1309,7 +1346,12 @@ class AgentChat extends React.Component {
           messages: allMessages.slice(-visibleCount),
         };
       },
-      () => this.persistMessages(this.state.allMessages),
+      () => {
+        const dateKeys = [...new Set(messages.map(message => getLocalDateKey(message.timestamp)))];
+        dateKeys.forEach(dateKey => {
+          this.persistMessageByDay(dateKey, this.state.allMessages);
+        });
+      },
     );
   };
 
@@ -1337,7 +1379,11 @@ class AgentChat extends React.Component {
           messages: allMessages.slice(-prevState.visibleCount),
         };
       },
-      () => this.persistMessages(this.state.allMessages),
+      () => {
+        const updated = this.state.allMessages.find(message => message?.requestId === requestId);
+        const key = updated ? getLocalDateKey(updated.timestamp) : getLocalDateKey();
+        this.persistMessageByDay(key, this.state.allMessages);
+      },
     );
   };
 
@@ -1508,13 +1554,15 @@ class AgentChat extends React.Component {
       );
     });
     try {
-      const exists = await RNFS.exists(this.chatFilePath);
+      const exists = await RNFS.exists(this.agentChatDir);
       if (exists) {
-        await RNFS.unlink(this.chatFilePath);
+        await RNFS.unlink(this.agentChatDir);
       }
     } catch (_) {}
-
-    await this.persistMessages([]);
+    this.loadedDateKeys = [];
+    this.allDateKeys = [];
+    this.persistQueue = Promise.resolve();
+    await this.ensureDirs();
   };
 
   runAutoCommand = async () => {
@@ -1994,24 +2042,50 @@ class AgentChat extends React.Component {
     });
   };
 
-  loadMoreHistory = () => {
+  loadMoreHistory = async () => {
     if (this.loadingMore) {
       return;
     }
     const { allMessages, visibleCount } = this.state;
-    if (visibleCount >= allMessages.length) {
+    if (visibleCount < allMessages.length) {
+      this.loadingMore = true;
+      this.setState(
+        prevState => {
+          const nextCount = Math.min(prevState.allMessages.length, prevState.visibleCount + PAGE_SIZE);
+          return {
+            visibleCount: nextCount,
+            messages: prevState.allMessages.slice(-nextCount),
+          };
+        },
+        () => {
+          this.loadingMore = false;
+        },
+      );
       return;
     }
+
+    const loadedEarliestKey = this.loadedDateKeys[this.loadedDateKeys.length - 1];
+    const loadedIndex = this.allDateKeys.indexOf(loadedEarliestKey);
+    const nextIndex = loadedIndex + 1;
+    if (nextIndex < 0 || nextIndex >= this.allDateKeys.length) {
+      return;
+    }
+
     this.loadingMore = true;
+    const nextKey = this.allDateKeys[nextIndex];
+    const olderMessages = await this.readDayMessages(nextKey);
     this.setState(
       prevState => {
-        const nextCount = Math.min(prevState.allMessages.length, prevState.visibleCount + PAGE_SIZE);
+        const mergedMessages = [...olderMessages, ...prevState.allMessages];
+        const nextCount = Math.min(mergedMessages.length, prevState.visibleCount + PAGE_SIZE);
         return {
+          allMessages: mergedMessages,
           visibleCount: nextCount,
-          messages: prevState.allMessages.slice(-nextCount),
+          messages: mergedMessages.slice(-nextCount),
         };
       },
       () => {
+        this.loadedDateKeys.push(nextKey);
         this.loadingMore = false;
       },
     );
