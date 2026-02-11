@@ -25,6 +25,7 @@ let loc = require('../../loc');
 const Rolecards = require('./agentchat_rolecards');
 const Roleplay = require('./agentchat_roleplay');
 const Destiny = require('./agentchat_destiny');
+import { attachAgentChatChain } from './agentchat_chain';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
 import ActionSheet from '../ActionSheet';
@@ -1114,6 +1115,12 @@ class AgentChat extends React.Component {
     this.chatFilePath = getChatFilePath(this.agentId);
     this.persistQueue = Promise.resolve();
     this.currentLLMConfig = null;
+    this.BlueElectrum = BlueElectrum;
+    this.BlueApp = BlueApp;
+    this.getNamespaceScriptHash = getNamespaceScriptHash;
+    this.toScriptHash = toScriptHash;
+    this.getCommandUsageMessage = getCommandUsageMessage;
+    attachAgentChatChain(this);
   }
 
   static navigationOptions = ({ navigation }) => {
@@ -1719,24 +1726,13 @@ class AgentChat extends React.Component {
       );
       return;
     }
-    const welcomeMatch = /^\/welcome\s+(.+)/i.exec(trimmed);
-    if (welcomeMatch) {
-      await this.handleWelcomeCommand(welcomeMatch[1]);
-      return;
-    }
-    if (/^\/welcome\b/i.test(trimmed)) {
-      await this.handleWelcomeLookup();
-      return;
-    }
-
     const normalized = trimmed.toUpperCase();
     if (normalized === '/D') {
       Destiny.handleDestinyCommand(this, { buildDestinySeedPrompt });
       return;
     }
 
-    if (normalized === '/BLOCK') {
-      await this.replyWithCurrentBlock();
+    if (await this.handleChainCommand(trimmed)) {
       return;
     }
 
@@ -2300,164 +2296,47 @@ class AgentChat extends React.Component {
     }
   };
 
-  resolveNamespaceContext = () => {
-    const { navigation, namespaceList } = this.props;
-    const { namespaceId, shortCode } = navigation.state.params || {};
-
-    let resolvedNamespaceId = namespaceId;
-    let namespace = namespaceId ? namespaceList?.namespaces?.[namespaceId] : null;
-
-    if (!namespace && shortCode) {
-      const namespaces = namespaceList?.namespaces || {};
-      const match = Object.values(namespaces).find(entry => String(entry?.shortCode || '').trim() === String(shortCode).trim());
-      if (match?.id) {
-        resolvedNamespaceId = match.id;
-        namespace = match;
-      }
+  getNamespaceById = namespaceId => {
+    const namespaces = this.props?.namespaceList?.namespaces || {};
+    const direct = namespaces?.[namespaceId];
+    if (direct) {
+      return {
+        ...direct,
+        namespaceId: direct.namespaceId || direct.id || namespaceId,
+      };
     }
-
-    if (!resolvedNamespaceId) {
-      return null;
-    }
-
-    const scriptHash = namespace?.rootAddress ? toScriptHash(namespace.rootAddress) : getNamespaceScriptHash(resolvedNamespaceId);
-    const agentId = shortCode || resolvedNamespaceId;
-
-    return {
-      agentId,
-      namespace,
-      namespaceId: resolvedNamespaceId,
-      scriptHash,
-    };
+    const target = String(namespaceId || '').trim();
+    return (
+      Object.values(namespaces).find(entry => String(entry?.namespaceId || entry?.id || '').trim() === target) || null
+    );
   };
 
-  fetchNamespaceKeyValues = async () => {
-    const context = this.resolveNamespaceContext();
-    if (!context) {
-      return null;
+  updateKeyValue = async ({ wallet, namespaceId, key, value }) => {
+    await BlueElectrum.ping();
+    if (typeof BlueElectrum.waitTillConnected === 'function') {
+      await BlueElectrum.waitTillConnected();
     }
-    try {
-      await BlueElectrum.ping();
-      const response = await BlueElectrum.blockchainKeva_getKeyValues(context.scriptHash, -1);
-      const keyvalues = Array.isArray(response) ? response : response?.keyvalues || [];
-      const decoded = keyvalues.map(this.decodeKeyValueEntry);
-      return { ...context, keyvalues: decoded };
-    } catch (error) {
-      console.warn('AgentChat: failed to fetch keyvalues', error);
-      return null;
+    const { tx } = await updateKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, namespaceId, key, value);
+    const result = await BlueElectrum.broadcast(tx);
+    if (result?.code) {
+      throw new Error(result.message || 'Broadcast failed');
     }
+    await BlueApp.saveToDisk();
+    return result;
   };
 
-  fetchLatestKeyValue = async keyName => {
-    const data = await this.fetchNamespaceKeyValues();
-    if (!data?.keyvalues?.length) {
-      return null;
-    }
-    const entry = data.keyvalues
-      .slice()
-      .reverse()
-      .find(item => item?.key === keyName);
-    if (!entry) {
-      return null;
-    }
-    if (typeof entry.value === 'string') {
-      return entry.value;
-    }
-    if (entry.value === null || typeof entry.value === 'undefined') {
-      return '';
-    }
-    return String(entry.value || '');
-  };
-
-  fetchWelcomeValue = async () => {
-    try {
-      const data = await this.fetchNamespaceKeyValues();
-      if (!data?.keyvalues?.length) {
-        return null;
-      }
-
-      const welcomeEntry = data.keyvalues
-        .slice()
-        .reverse()
-        .find(entry => entry?.key === 'welcome' && entry.value);
-
-      if (!welcomeEntry) {
-        return null;
-      }
-
-      const parsedValue = this.parseWelcomeEnvelope(welcomeEntry.value);
-      const welcomeText = typeof parsedValue === 'string'
-        ? parsedValue.trim()
-        : String(parsedValue || '').trim();
-
-      return welcomeText || null;
-    } catch (error) {
-      console.warn('AgentChat: failed to load welcome message', error);
-      return null;
-    }
-  };
-
-  handleWelcomeLookup = async () => {
-    const welcomeText = await this.fetchWelcomeValue();
-    if (welcomeText) {
-      this.replyFromAgent(welcomeText);
-      return;
-    }
-    this.replyFromAgent(getCommandUsageMessage('welcome'));
-  };
-
-  handleWelcomeCommand = async rawValue => {
+  openSubmitFromMessage = messageText => {
     const { navigation } = this.props;
     const { namespaceId, walletId } = navigation.state.params || {};
-
-    const value = rawValue.trim().slice(0, 1000);
-    if (!value) {
-      this.replyFromAgent('Welcome message is empty.');
+    if (!navigation || typeof navigation.navigate !== 'function') {
       return;
     }
-
-    if (!namespaceId || !walletId) {
-      this.replyFromAgent('Missing namespace or wallet information to save welcome message.');
-      return;
-    }
-
-    const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
-    if (!wallet) {
-      this.replyFromAgent('Wallet not found for this agent.');
-      return;
-    }
-
-    try {
-      await BlueElectrum.ping();
-      if (typeof BlueElectrum.waitTillConnected === 'function') {
-        await BlueElectrum.waitTillConnected();
-      }
-      const { tx } = await updateKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, namespaceId, 'welcome', value);
-      const result = await BlueElectrum.broadcast(tx);
-      if (result?.code) {
-        throw new Error(result.message || 'Broadcast failed');
-      }
-      await BlueApp.saveToDisk();
-      this.replyFromAgent('Welcome message anchored on-chain and stored permanently.');
-    } catch (error) {
-      console.warn('AgentChat: failed to save welcome message', error);
-      this.replyFromAgent('Failed to save welcome message.');
-    }
-  };
-
-  replyWithCurrentBlock = async () => {
-    try {
-      await BlueElectrum.ping();
-      const height = await BlueElectrum.blockchainBlock_count();
-      if (Number.isFinite(height)) {
-        this.replyFromAgent(`Current block: ${height}`);
-      } else {
-        this.replyFromAgent('Current block height unavailable.');
-      }
-    } catch (error) {
-      console.warn('AgentChat: failed to fetch current block height', error);
-      this.replyFromAgent('Failed to fetch current block height.');
-    }
+    navigation.navigate('AddKeyValue', {
+      namespaceId,
+      walletId,
+      key: this.formatSubmitTitle(),
+      value: messageText,
+    });
   };
 
   replyFromAgent = text => {
@@ -2651,19 +2530,7 @@ class AgentChat extends React.Component {
     }
   };
 
-  handleAvatarPress = messageText => {
-    const { navigation } = this.props;
-    const { namespaceId, walletId } = navigation.state.params || {};
-    if (!navigation || typeof navigation.navigate !== 'function') {
-      return;
-    }
-    navigation.navigate('AddKeyValue', {
-      namespaceId,
-      walletId,
-      key: this.formatSubmitTitle(),
-      value: messageText,
-    });
-  };
+  handleAvatarPress = messageText => this.openSubmitFromMessage(messageText);
 
   handleTitlePress = () => {
     const { navigation, namespaceList } = this.props;
