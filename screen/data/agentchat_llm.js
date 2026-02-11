@@ -556,6 +556,44 @@ export function attachAgentChatLLM(agent, deps) {
     });
 
   // ---- /a command dispatcher ----
+  agent.renderAIProviderList =
+    agent.renderAIProviderList ||
+    (async () => {
+      const cur = agent.currentLLMConfig || agent.state.llmConfig || (await agent.loadLLMConfig());
+      const builtinReg = await agent.readBuiltinRegistry();
+      const customReg = await agent.readCustomRegistry();
+
+      const USE_COL_WIDTH = 18;
+      const NAME_COL_WIDTH = 10;
+
+      const pad = (s, n) => String(s).padEnd(n, ' ');
+      const statusDot = hasKey => (hasKey ? '🟩' : '🟥');
+
+      const makeBuiltinLine = (name, hasKey) => {
+        const useToken = `[[/a ${name}|use]]`;
+        return `${statusDot(hasKey)} ${pad(useToken, USE_COL_WIDTH)} ${name}`;
+      };
+
+      const makeCustomLine = (name, hasKey) => {
+        const useToken = `[[/a ${name}|use]]`;
+        const delToken = `[[/a del ${name}|del]]`;
+        return `${statusDot(hasKey)} ${pad(useToken, USE_COL_WIDTH)} ${pad(name, NAME_COL_WIDTH)} ${delToken}`;
+      };
+
+      const builtinLines = Object.keys(LLM_PROVIDERS).map(name => {
+        const hasCurrentKey = cur?.provider === name && !!String(cur?.apiKey || '').trim();
+        const hasKey = !!String(builtinReg?.[name]?.apiKey || '').trim() || hasCurrentKey;
+        return makeBuiltinLine(name, hasKey);
+      });
+
+      const customNames = Object.keys(customReg || {}).filter(name => customReg?.[name]?.baseUrl);
+      const customLines = customNames.length
+        ? customNames.map(name => makeCustomLine(name, !!String(customReg?.[name]?.apiKey || '').trim()))
+        : ['(none)'];
+
+      agent.replyFromAgent(`Builtin providers:\n${builtinLines.join('\n')}\n\nCustom providers:\n${customLines.join('\n')}`);
+    });
+
   agent.handleAIConfigCommand =
     agent.handleAIConfigCommand ||
     (async trimmed => {
@@ -600,39 +638,7 @@ export function attachAgentChatLLM(agent, deps) {
       }
 
       if (sub === 'list') {
-        const cur = agent.currentLLMConfig || agent.state.llmConfig || (await agent.loadLLMConfig());
-        const builtinReg = await agent.readBuiltinRegistry();
-        const customReg = await agent.readCustomRegistry();
-
-        const USE_COL_WIDTH = 18;
-        const NAME_COL_WIDTH = 10;
-
-        const pad = (s, n) => String(s).padEnd(n, ' ');
-        const statusDot = hasKey => (hasKey ? '🟩' : '🟥');
-
-        const makeBuiltinLine = (name, hasKey) => {
-          const useToken = `[[/a ${name}|use]]`;
-          return `${statusDot(hasKey)} ${pad(useToken, USE_COL_WIDTH)} ${name}`;
-        };
-
-        const makeCustomLine = (name, hasKey) => {
-          const useToken = `[[/a ${name}|use]]`;
-          const delToken = `[[/a del ${name}|del]]`;
-          return `${statusDot(hasKey)} ${pad(useToken, USE_COL_WIDTH)} ${pad(name, NAME_COL_WIDTH)} ${delToken}`;
-        };
-
-        const builtinLines = Object.keys(LLM_PROVIDERS).map(name => {
-          const hasCurrentKey = cur?.provider === name && !!String(cur?.apiKey || '').trim();
-          const hasKey = !!String(builtinReg?.[name]?.apiKey || '').trim() || hasCurrentKey;
-          return makeBuiltinLine(name, hasKey);
-        });
-
-        const customNames = Object.keys(customReg || {}).filter(name => customReg?.[name]?.baseUrl);
-        const customLines = customNames.length
-          ? customNames.map(name => makeCustomLine(name, !!String(customReg?.[name]?.apiKey || '').trim()))
-          : ['(none)'];
-
-        agent.replyFromAgent(`Builtin providers:\n${builtinLines.join('\n')}\n\nCustom providers:\n${customLines.join('\n')}`);
+        await agent.renderAIProviderList();
         return;
       }
 
@@ -665,6 +671,7 @@ export function attachAgentChatLLM(agent, deps) {
           return;
         }
         agent.replyFromAgent(`Added provider: ${name} (${baseUrl}) key=${apiKey ? 'YES' : 'NO'}`);
+        await agent.renderAIProviderList();
         return;
       }
 
