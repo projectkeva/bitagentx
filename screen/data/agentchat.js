@@ -1471,7 +1471,7 @@ class AgentChat extends React.Component {
     }
     const normalized = trimmed.toUpperCase();
     if (normalized === '/D') {
-      Destiny.handleDestinyCommand(this, { buildDestinySeedPrompt });
+      await Destiny.handleDestinyCommand(this, { buildDestinySeedPrompt, loc });
       return;
     }
 

@@ -470,7 +470,8 @@ export function attachAgentChatLLM(agent, deps) {
 
   agent.replyFromLLM =
     agent.replyFromLLM ||
-    (async (userText, userMessage = null) => {
+    (async (userText, userMessage = null, options = {}) => {
+      const { silentUser = false } = options || {};
       const requestId = `${Date.now()}-${Math.random()}`;
       const placeholder = {
         id: `agent-${requestId}`,
@@ -505,7 +506,14 @@ export function attachAgentChatLLM(agent, deps) {
         const systemPrompt = agent.buildLLMSystemPrompt();
         let recent = agent.getRecentChatMessagesForLLM();
 
-        if (userMessage && userMessage.id) {
+        if (silentUser) {
+          recent.push({
+            id: `ephemeral-${requestId}`,
+            sender: 'user',
+            text: userText,
+            timestamp: Date.now(),
+          });
+        } else if (userMessage && userMessage.id) {
           recent = recent.filter(message => message.id !== userMessage.id);
           recent.push(userMessage);
         } else {
