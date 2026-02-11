@@ -25,7 +25,6 @@ let loc = require('../../loc');
 const Rolecards = require('./agentchat_rolecards');
 const Roleplay = require('./agentchat_roleplay');
 const Destiny = require('./agentchat_destiny');
-import { attachAgentChatChain } from './agentchat_chain';
 import { attachAgentChatLLM } from './agentchat_llm';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
@@ -1116,12 +1115,7 @@ class AgentChat extends React.Component {
     this.chatFilePath = getChatFilePath(this.agentId);
     this.persistQueue = Promise.resolve();
     this.currentLLMConfig = null;
-    this.BlueElectrum = BlueElectrum;
-    this.BlueApp = BlueApp;
-    this.getNamespaceScriptHash = getNamespaceScriptHash;
-    this.toScriptHash = toScriptHash;
     this.getCommandUsageMessage = getCommandUsageMessage;
-    attachAgentChatChain(this, { BlueElectrum, BlueApp });
     attachAgentChatLLM(this, {
       loc,
       LLM_DIR,
@@ -1486,7 +1480,10 @@ class AgentChat extends React.Component {
       return;
     }
 
-    if (await this.handleChainCommand(trimmed)) {
+    if (/^\/welcome\b/i.test(trimmed)) {
+      const payload = trimmed.replace(/^\/welcome\b/i, '').trim();
+      if (payload) await this.handleWelcomeCommand(payload);
+      else await this.handleWelcomeLookup();
       return;
     }
 
@@ -1612,6 +1609,135 @@ class AgentChat extends React.Component {
     );
   };
 
+
+  resolveNamespaceContext = () => {
+    const { navigation } = this.props;
+    const { namespaceId, shortCode } = navigation.state.params || {};
+    if (!namespaceId) {
+      return null;
+    }
+
+    const namespace = this.getNamespaceById(namespaceId);
+    const resolvedNamespaceId = namespace?.namespaceId || namespaceId;
+    const scriptHash = namespace?.rootAddress
+      ? toScriptHash(namespace.rootAddress)
+      : getNamespaceScriptHash(resolvedNamespaceId);
+    const agentId = shortCode || resolvedNamespaceId;
+
+    return {
+      agentId,
+      namespace,
+      namespaceId: resolvedNamespaceId,
+      scriptHash,
+    };
+  };
+
+  fetchNamespaceKeyValues = async () => {
+    const context = this.resolveNamespaceContext();
+    if (!context) {
+      return null;
+    }
+
+    try {
+      await BlueElectrum.ping();
+      if (typeof BlueElectrum.waitTillConnected === 'function') {
+        await BlueElectrum.waitTillConnected();
+      }
+      const response = await BlueElectrum.blockchainKeva_getKeyValues(context.scriptHash, -1);
+      const keyvalues = Array.isArray(response) ? response : response?.keyvalues || [];
+      return {
+        context,
+        keyvalues: keyvalues.map(this.decodeKeyValueEntry),
+      };
+    } catch (error) {
+      console.warn('AgentChat: failed to fetch keyvalues', error);
+      return null;
+    }
+  };
+
+  fetchLatestKeyValue = async keyName => {
+    const data = await this.fetchNamespaceKeyValues();
+    if (!data?.keyvalues?.length) {
+      return null;
+    }
+
+    const entry = data.keyvalues
+      .slice()
+      .reverse()
+      .find(item => item?.key === keyName);
+
+    if (!entry) {
+      return null;
+    }
+    if (typeof entry.value === 'string') {
+      return entry.value;
+    }
+    if (entry.value === null || typeof entry.value === 'undefined') {
+      return '';
+    }
+    return String(entry.value || '');
+  };
+
+  fetchWelcomeValue = async () => {
+    try {
+      const value = await this.fetchLatestKeyValue('welcome');
+      if (!value) {
+        return null;
+      }
+      const parsedValue = this.parseWelcomeEnvelope(value);
+      const welcomeText = typeof parsedValue === 'string' ? parsedValue.trim() : String(parsedValue || '').trim();
+      return welcomeText || null;
+    } catch (error) {
+      console.warn('AgentChat: failed to load welcome message', error);
+      return null;
+    }
+  };
+
+  handleWelcomeLookup = async () => {
+    const welcomeText = await this.fetchWelcomeValue();
+    if (welcomeText) {
+      this.replyFromAgent(welcomeText);
+      return;
+    }
+    this.replyFromAgent(getCommandUsageMessage('welcome'));
+  };
+
+  handleWelcomeCommand = async rawValue => {
+    const { navigation } = this.props;
+    const { namespaceId, walletId } = navigation.state.params || {};
+    const value = String(rawValue || '')
+      .trim()
+      .slice(0, 1000);
+
+    if (!value) {
+      this.replyFromAgent('Welcome message is empty.');
+      return;
+    }
+    if (!namespaceId || !walletId) {
+      this.replyFromAgent('Missing namespace or wallet information to save welcome message.');
+      return;
+    }
+
+    const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
+    if (!wallet) {
+      this.replyFromAgent('Wallet not found for this agent.');
+      return;
+    }
+
+    try {
+      await this.updateKeyValue({
+        wallet,
+        namespaceId,
+        key: 'welcome',
+        value,
+      });
+      this.replyFromAgent('Saved welcome message on-chain.');
+    } catch (e) {
+      console.warn('AgentChat: failed to save welcome', e);
+      this.replyFromAgent('Failed to save welcome message.');
+    }
+  };
+
   updateKeyValue = async ({ wallet, namespaceId, key, value }) => {
     await BlueElectrum.ping();
     if (typeof BlueElectrum.waitTillConnected === 'function') {
@@ -1632,10 +1758,10 @@ class AgentChat extends React.Component {
       if (typeof BlueElectrum.waitTillConnected === 'function') {
         await BlueElectrum.waitTillConnected();
       }
-      const resp = await BlueElectrum.blockchainBlock_count();
-      this.replyFromAgent(`CURRENT_BLOCK = ${resp?.count || ''}`);
+      const height = await BlueElectrum.blockchainBlock_count();
+      this.replyFromAgent(`Current block: ${height}`);
     } catch (e) {
-      this.replyFromAgent(`Failed to fetch CURRENT_BLOCK: ${String(e?.message || e)}`);
+      this.replyFromAgent(`Failed to fetch current block: ${String(e?.message || e)}`);
       console.warn('AgentChat: /block failed', e);
     }
   };
