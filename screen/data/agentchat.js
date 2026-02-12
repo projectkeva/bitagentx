@@ -96,7 +96,7 @@ const LLM_PROVIDERS = {
 };
 
 const COMMAND_TOKEN_REGEX =
-  /\/(?:r|welcome|m)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:d|h|c|clear|linkstart|block|a)\b/gi;
+  /\/(?:r|welcome|m)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:d|h|linkstart|block|a)\b/gi;
 const COMMAND_DISPLAY_TOKEN_REGEX = /\[\[([^\]|]+)\|([^\]]+)\]\]/gi;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
@@ -124,7 +124,6 @@ const COMMAND_HELP_MESSAGES = {
   en: [
     '/d — Generate a Destiny Seed Card preview and a copy link.',
     '/linkstart — Send the three opening hints.',
-    '/c — Clear screen.',
     '/block — Check the current block height.',
     '/a — Configure and load an LLM (cloud or local).',
     '/r — Create a roleplay prompt with persona <text>.',
@@ -135,7 +134,6 @@ const COMMAND_HELP_MESSAGES = {
   'zh-cn': [
     '/d — 生成 Destiny Seed Card 预览并提供复制链接。',
     '/linkstart — 发送开场三句提示。',
-    '/c — 清空屏幕。',
     '/block — 查询当前区块高度。',
     '/a — 配置并加载大模型提供方（云端或本地）。输入 /a 查看用法，/a list 查看已保存的 provider。',
     '/r — 生成角色扮演提示词，<text>为角色设定。',
@@ -146,7 +144,6 @@ const COMMAND_HELP_MESSAGES = {
   'zh-tw': [
     '/d — 產生 Destiny Seed Card 預覽並提供複製連結。',
     '/linkstart — 發送開場三句提示。',
-    '/c — 清空畫面。',
     '/block — 查詢目前區塊高度。',
     '/a — 設定並載入大模型提供方（雲端或本地）。輸入 /a 查看用法，/a list 查看已儲存的 provider。',
     '/r — 產生角色扮演提示詞，<text>為角色設定。',
@@ -157,7 +154,6 @@ const COMMAND_HELP_MESSAGES = {
   'zar-afr': [
     '/d — Genereer ’n Destiny Seed Card-voorskou en ’n kopieer-skakel.',
     '/linkstart — Stuur die drie openingswenke.',
-    '/c — Vee alle kletsgeskiedenis uit.',
     '/block — Kontroleer die huidige blokhoogte.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Stoor ’n welkomboodskap on-chain.',
@@ -166,7 +162,6 @@ const COMMAND_HELP_MESSAGES = {
   'zar-xho': [
     '/d — Yenza ujongo lweDestiny Seed Card kunye nekhonkco lokukopa.',
     '/linkstart — Thumela iingcebiso ezintathu zokuqalisa.',
-    '/c — Susa yonke imbali yencoko.',
     '/block — Jonga ubude beblokhi yangoku.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Gcina umyalezo wokwamkela kwi-chain.',
@@ -175,7 +170,6 @@ const COMMAND_HELP_MESSAGES = {
   'hr-hr': [
     '/d — Generiraj pregled Destiny Seed Carda i poveznicu za kopiranje.',
     '/linkstart — Pošalji tri uvodne poruke.',
-    '/c — Obriši svu povijest chata.',
     '/block — Provjeri trenutnu visinu bloka.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Spremi poruku dobrodošlice na lanac.',
@@ -184,7 +178,6 @@ const COMMAND_HELP_MESSAGES = {
   'cs-cz': [
     '/d — Vygeneruj náhled Destiny Seed Card a odkaz pro kopírování.',
     '/linkstart — Pošli tři úvodní nápovědy.',
-    '/c — Vymaž celou historii chatu.',
     '/block — Zjisti aktuální výšku bloku.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Ulož uvítací zprávu na chain.',
@@ -193,7 +186,6 @@ const COMMAND_HELP_MESSAGES = {
   'da-dk': [
     '/d — Generer en Destiny Seed Card-forhåndsvisning og et kopieringslink.',
     '/linkstart — Send de tre åbningshint.',
-    '/c — Ryd al chat-historik.',
     '/block — Tjek den aktuelle blokhøjde.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Gem en velkomstbesked on-chain.',
@@ -202,7 +194,6 @@ const COMMAND_HELP_MESSAGES = {
   'de-de': [
     '/d — Erzeuge eine Destiny-Seed-Card-Vorschau und einen Kopier-Link.',
     '/linkstart — Sende die drei Start-Hinweise.',
-    '/c — Gesamten Chatverlauf löschen.',
     '/block — Aktuelle Blockhöhe prüfen.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Begrüßungsnachricht on-chain speichern.',
@@ -211,7 +202,6 @@ const COMMAND_HELP_MESSAGES = {
   es: [
     '/d — Genera una vista previa de Destiny Seed Card y un enlace para copiar.',
     '/linkstart — Envía las tres frases de inicio.',
-    '/c — Borra todo el historial del chat.',
     '/block — Consulta la altura de bloque actual.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Guarda un mensaje de bienvenida en la cadena.',
@@ -220,7 +210,6 @@ const COMMAND_HELP_MESSAGES = {
   el: [
     '/d — Δημιούργησε προεπισκόπηση Destiny Seed Card και σύνδεσμο αντιγραφής.',
     '/linkstart — Στείλε τις τρεις αρχικές οδηγίες.',
-    '/c — Καθάρισε όλο το ιστορικό συνομιλίας.',
     '/block — Έλεγξε το τρέχον ύψος μπλοκ.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Αποθήκευσε μήνυμα καλωσορίσματος on-chain.',
@@ -229,7 +218,6 @@ const COMMAND_HELP_MESSAGES = {
   it: [
     '/d — Genera un’anteprima della Destiny Seed Card e un link di copia.',
     '/linkstart — Invia le tre frasi iniziali.',
-    '/c — Cancella tutta la cronologia della chat.',
     '/block — Controlla l’altezza del blocco corrente.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Salva un messaggio di benvenuto on-chain.',
@@ -238,7 +226,6 @@ const COMMAND_HELP_MESSAGES = {
   'fi-fi': [
     '/d — Luo Destiny Seed Card -esikatselu ja kopiointilinkki.',
     '/linkstart — Lähetä kolme aloitusvihjettä.',
-    '/c — Tyhjennä koko chat-historia.',
     '/block — Tarkista nykyinen lohkokorkeus.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Tallenna tervetuloviesti ketjuun.',
@@ -247,7 +234,6 @@ const COMMAND_HELP_MESSAGES = {
   'fr-fr': [
     '/d — Génère un aperçu de Destiny Seed Card et un lien de copie.',
     '/linkstart — Envoie les trois phrases d’ouverture.',
-    '/c — Efface tout l’historique du chat.',
     '/block — Vérifie la hauteur de bloc actuelle.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Enregistre un message de bienvenue on-chain.',
@@ -256,7 +242,6 @@ const COMMAND_HELP_MESSAGES = {
   'id-id': [
     '/d — Buat pratinjau Destiny Seed Card dan tautan salin.',
     '/linkstart — Kirim tiga petunjuk pembuka.',
-    '/c — Hapus semua riwayat chat.',
     '/block — Periksa tinggi blok saat ini.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Simpan pesan sambutan on-chain.',
@@ -265,7 +250,6 @@ const COMMAND_HELP_MESSAGES = {
   'hu-hu': [
     '/d — Készíts Destiny Seed Card előnézetet és másolási linket.',
     '/linkstart — Küldd el a három nyitó tippet.',
-    '/c — Töröld az összes chatelőzményt.',
     '/block — Ellenőrizd a jelenlegi blokkmagasságot.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Üdvözlő üzenet mentése on-chain.',
@@ -274,7 +258,6 @@ const COMMAND_HELP_MESSAGES = {
   ja: [
     '/d — Destiny Seed Card のプレビューとコピーリンクを生成します。',
     '/linkstart — 開始用の3つのヒントを送信します。',
-    '/c — すべてのチャット履歴を削除します。',
     '/block — 現在のブロック高を確認します。',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — ウェルカムメッセージをオンチェーンで保存します。',
@@ -283,7 +266,6 @@ const COMMAND_HELP_MESSAGES = {
   'nl-nl': [
     '/d — Genereer een Destiny Seed Card-voorvertoning en een kopieerlink.',
     '/linkstart — Stuur de drie openingszinnen.',
-    '/c — Wis alle chatgeschiedenis.',
     '/block — Controleer de huidige blokhoogte.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Sla een welkomstbericht on-chain op.',
@@ -292,7 +274,6 @@ const COMMAND_HELP_MESSAGES = {
   'nb-no': [
     '/d — Lag en Destiny Seed Card-forhåndsvisning og en kopieringslenke.',
     '/linkstart — Send de tre åpningshintene.',
-    '/c — Slett hele chatloggen.',
     '/block — Sjekk gjeldende blokkhøyde.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Lagre en velkomstmelding on-chain.',
@@ -301,7 +282,6 @@ const COMMAND_HELP_MESSAGES = {
   'pt-br': [
     '/d — Gere uma prévia do Destiny Seed Card e um link para copiar.',
     '/linkstart — Envie as três frases iniciais.',
-    '/c — Limpe todo o histórico do chat.',
     '/block — Verifique a altura do bloco atual.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Salve uma mensagem de boas-vindas on-chain.',
@@ -310,7 +290,6 @@ const COMMAND_HELP_MESSAGES = {
   'pt-pt': [
     '/d — Gere uma pré-visualização do Destiny Seed Card e um link para copiar.',
     '/linkstart — Envie as três frases iniciais.',
-    '/c — Limpe todo o histórico do chat.',
     '/block — Verifique a altura do bloco atual.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Guarde uma mensagem de boas-vindas on-chain.',
@@ -319,7 +298,6 @@ const COMMAND_HELP_MESSAGES = {
   ru: [
     '/d — Создай превью Destiny Seed Card и ссылку для копирования.',
     '/linkstart — Отправь три стартовые подсказки.',
-    '/c — Очисти всю историю чата.',
     '/block — Проверь текущую высоту блока.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Сохрани приветственное сообщение в цепочке.',
@@ -328,7 +306,6 @@ const COMMAND_HELP_MESSAGES = {
   'sv-se': [
     '/d — Skapa en förhandsvisning av Destiny Seed Card och en kopieringslänk.',
     '/linkstart — Skicka de tre inledande tipsen.',
-    '/c — Rensa hela chatthistoriken.',
     '/block — Kontrollera aktuell blockhöjd.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Spara ett välkomstmeddelande on-chain.',
@@ -337,7 +314,6 @@ const COMMAND_HELP_MESSAGES = {
   'th-th': [
     '/d — สร้างพรีวิว Destiny Seed Card และลิงก์สำหรับคัดลอก.',
     '/linkstart — ส่งคำแนะนำเปิดเรื่อง 3 ข้อ.',
-    '/c — ล้างประวัติแชททั้งหมด.',
     '/block — ตรวจสอบความสูงบล็อกปัจจุบัน.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — บันทึกข้อความต้อนรับบนเชน.',
@@ -346,7 +322,6 @@ const COMMAND_HELP_MESSAGES = {
   'vi-vn': [
     '/d — Tạo bản xem trước Destiny Seed Card và liên kết sao chép.',
     '/linkstart — Gửi ba gợi ý mở đầu.',
-    '/c — Xóa toàn bộ lịch sử chat.',
     '/block — Kiểm tra chiều cao khối hiện tại.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Lưu lời chào lên chuỗi.',
@@ -355,7 +330,6 @@ const COMMAND_HELP_MESSAGES = {
   ua: [
     '/d — Створи прев’ю Destiny Seed Card і посилання для копіювання.',
     '/linkstart — Надішли три стартові підказки.',
-    '/c — Очисти всю історію чату.',
     '/block — Перевір поточну висоту блоку.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Збережи вітальне повідомлення в ланцюгу.',
@@ -364,7 +338,6 @@ const COMMAND_HELP_MESSAGES = {
   'tr-tr': [
     '/d — Destiny Seed Card önizlemesi ve kopyalama bağlantısı oluştur.',
     '/linkstart — Üç açılış ipucunu gönder.',
-    '/c — Tüm sohbet geçmişini temizle.',
     '/block — Mevcut blok yüksekliğini kontrol et.',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Karşılama mesajını zincire kaydet.',
@@ -1465,11 +1438,6 @@ class AgentChat extends React.Component {
       await this.handleAIConfigCommand(trimmed);
       return;
     }
-    const clearMatch = /^\/(c|clear)\b/i.exec(trimmed);
-    if (clearMatch) {
-      await this.clearChatHistory();
-      return;
-    }
     const helpMatch = /^\/h\b/i.exec(trimmed);
     if (helpMatch) {
       this.replyFromAgent(getCommandHelpMessage());
@@ -1539,29 +1507,6 @@ class AgentChat extends React.Component {
     }
 
     await this.replyFromLLM(trimmed, userMessage);
-  };
-
-  clearChatHistory = async () => {
-    // 仅清空屏幕（view），不删除磁盘历史
-    this.shouldScrollToEnd = true;
-
-    // 重新扫描磁盘上有哪些日期文件（保证之后能上翻加载）
-    const keys = await this.listDateKeys();
-    this.allDateKeys = keys;
-    this.loadedDateKeys = [];
-
-    await new Promise(resolve => {
-      this.setState(
-        {
-          allMessages: [],
-          visibleCount: 0,
-          messages: [],
-        },
-        resolve,
-      );
-    });
-
-    // 重要：不动磁盘文件，不 reset persistQueue，不 mkdir/unlink
   };
 
   runAutoCommand = async () => {
@@ -1872,9 +1817,6 @@ class AgentChat extends React.Component {
     const trimmed = text.trim();
     if (!trimmed.startsWith('/')) {
       return false;
-    }
-    if (/^\/(c|clear)\b/i.test(trimmed)) {
-      return true;
     }
     if (/^\/h\b/i.test(trimmed)) {
       return true;
