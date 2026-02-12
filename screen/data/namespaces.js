@@ -404,7 +404,7 @@ class Namespace extends React.Component {
     if (!this.props.canChat) {
       return;
     }
-    this.onChat({ autoCommand: '/d', suppressAutoLinkStart: true });
+    this.onChat({ autoCommand: '/d', suppressAutoLinkStart: true, chatScope: 'story' });
   }
 
   onMessage = () => {
@@ -431,7 +431,7 @@ class Namespace extends React.Component {
       return;
     }
     const namespaceId = data.id || data.namespaceId;
-    const { autoCommand, suppressAutoLinkStart } = options;
+    const { autoCommand, suppressAutoLinkStart, chatScope } = options;
 
     if (!isOther) {
       navigation.push('AgentChat', {
@@ -447,6 +447,7 @@ class Namespace extends React.Component {
         profile: data.profile,
         autoCommand,
         suppressAutoLinkStart,
+        chatScope,
       });
       return;
     }
