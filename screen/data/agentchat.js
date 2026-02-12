@@ -1086,8 +1086,10 @@ class AgentChat extends React.Component {
     this.lastAutoCommand = null;
     this.hasIntroAutoAOnce = false;
     this.isPlayingIntro = false;
-    this.agentId = getAgentIdFromParams(this.props.navigation?.state?.params);
-    this.agentChatDir = `${CHAT_DIR}/${encodeURIComponent(this.agentId)}`;
+    const params = this.props.navigation?.state?.params || {};
+    this.agentId = getAgentIdFromParams(params);
+    this.chatScope = (params.chatScope || 'chat').toString();
+    this.agentChatDir = `${CHAT_DIR}/${encodeURIComponent(this.agentId)}/${encodeURIComponent(this.chatScope)}`;
     this.getDayFilePath = dateKey => `${this.agentChatDir}/${dateKey}.json`;
     this.loadedDateKeys = [];
     this.allDateKeys = [];
@@ -1112,7 +1114,9 @@ class AgentChat extends React.Component {
     const params = navigation.state?.params || {};
     const displayName = params.displayName || 'Agent';
     const shortCode = params.shortCode ? `@${params.shortCode}` : '';
-    const title = shortCode ? `${displayName}${shortCode}` : displayName;
+    const baseTitle = shortCode ? `${displayName}${shortCode}` : displayName;
+    const chatScope = (params.chatScope || 'chat').toString();
+    const title = chatScope === 'story' ? `${baseTitle} · Story` : baseTitle;
 
     return {
       ...BlueNavigationStyle(),
@@ -1215,6 +1219,7 @@ class AgentChat extends React.Component {
     };
     try {
       await ensure(CHAT_DIR);
+      await ensure(`${CHAT_DIR}/${encodeURIComponent(this.agentId)}`);
       await ensure(this.agentChatDir);
       await ensure(LLM_DIR);
     } catch (error) {
