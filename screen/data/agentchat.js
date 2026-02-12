@@ -124,7 +124,7 @@ const COMMAND_HELP_MESSAGES = {
   en: [
     '/d — Generate a Destiny Seed Card preview and a copy link.',
     '/linkstart — Send the three opening hints.',
-    '/c — Clear all chat history.',
+    '/c — Clear screen.',
     '/block — Check the current block height.',
     '/a — Configure and load an LLM (cloud or local).',
     '/r — Create a roleplay prompt with persona <text>.',
@@ -135,7 +135,7 @@ const COMMAND_HELP_MESSAGES = {
   'zh-cn': [
     '/d — 生成 Destiny Seed Card 预览并提供复制链接。',
     '/linkstart — 发送开场三句提示。',
-    '/c — 清除所有聊天记录。',
+    '/c — 清空屏幕。',
     '/block — 查询当前区块高度。',
     '/a — 配置并加载大模型提供方（云端或本地）。输入 /a 查看用法，/a list 查看已保存的 provider。',
     '/r — 生成角色扮演提示词，<text>为角色设定。',
@@ -146,7 +146,7 @@ const COMMAND_HELP_MESSAGES = {
   'zh-tw': [
     '/d — 產生 Destiny Seed Card 預覽並提供複製連結。',
     '/linkstart — 發送開場三句提示。',
-    '/c — 清除所有聊天記錄。',
+    '/c — 清空畫面。',
     '/block — 查詢目前區塊高度。',
     '/a — 設定並載入大模型提供方（雲端或本地）。輸入 /a 查看用法，/a list 查看已儲存的 provider。',
     '/r — 產生角色扮演提示詞，<text>為角色設定。',
@@ -1542,7 +1542,14 @@ class AgentChat extends React.Component {
   };
 
   clearChatHistory = async () => {
+    // 仅清空屏幕（view），不删除磁盘历史
     this.shouldScrollToEnd = true;
+
+    // 重新扫描磁盘上有哪些日期文件（保证之后能上翻加载）
+    const keys = await this.listDateKeys();
+    this.allDateKeys = keys;
+    this.loadedDateKeys = [];
+
     await new Promise(resolve => {
       this.setState(
         {
@@ -1553,16 +1560,8 @@ class AgentChat extends React.Component {
         resolve,
       );
     });
-    try {
-      const exists = await RNFS.exists(this.agentChatDir);
-      if (exists) {
-        await RNFS.unlink(this.agentChatDir);
-      }
-    } catch (_) {}
-    this.loadedDateKeys = [];
-    this.allDateKeys = [];
-    this.persistQueue = Promise.resolve();
-    await this.ensureDirs();
+
+    // 重要：不动磁盘文件，不 reset persistQueue，不 mkdir/unlink
   };
 
   runAutoCommand = async () => {
@@ -2046,6 +2045,34 @@ class AgentChat extends React.Component {
     if (this.loadingMore) {
       return;
     }
+
+    // 清屏后的第一次上翻：先加载最新日期文件
+    if (this.state.allMessages.length === 0 && this.loadedDateKeys.length === 0) {
+      const keys = this.allDateKeys?.length ? this.allDateKeys : await this.listDateKeys();
+      this.allDateKeys = keys;
+      if (keys.length === 0) {
+        return;
+      }
+
+      this.loadingMore = true;
+      const latestKey = keys[0];
+      const msgs = await this.readDayMessages(latestKey);
+      const initialCount = Math.min(msgs.length, PAGE_SIZE);
+
+      this.setState(
+        {
+          allMessages: msgs,
+          visibleCount: initialCount,
+          messages: msgs.slice(-initialCount),
+        },
+        () => {
+          this.loadedDateKeys = [latestKey];
+          this.loadingMore = false;
+        },
+      );
+      return;
+    }
+
     const { allMessages, visibleCount } = this.state;
     if (visibleCount < allMessages.length) {
       this.loadingMore = true;
