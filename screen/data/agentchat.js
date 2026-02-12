@@ -442,6 +442,7 @@ const getLocalDateKey = (ts = Date.now()) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 const PAGE_SIZE = 10;
+const INITIAL_VISIBLE_COUNT = 1;
 const ATTR_SEED_LABELS = [
   'scene',
   'maps',
@@ -1188,7 +1189,7 @@ class AgentChat extends React.Component {
     if (!this._isMounted) {
       return;
     }
-    const visibleCount = Math.min(history.length || PAGE_SIZE, PAGE_SIZE);
+    const visibleCount = Math.min(history.length || INITIAL_VISIBLE_COUNT, INITIAL_VISIBLE_COUNT);
     this.setState(
       {
         allMessages: history,
@@ -1199,7 +1200,7 @@ class AgentChat extends React.Component {
       () => {
         this.currentLLMConfig = llmConfig;
         this.shouldScrollToEnd = true;
-        this.forceScrollToBottomOnce = true;
+        this.forceScrollToBottomOnce = history.length > 0;
         this.restoreProviderFromDisk()
           .then(() => this.runAutoCommand())
           .then(() => this.runAutoLinkStart());
