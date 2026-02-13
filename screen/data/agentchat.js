@@ -4,6 +4,7 @@ import {
   Text,
   TextInput,
   Image,
+  Alert,
   FlatList,
   SafeAreaView,
   TouchableOpacity,
@@ -26,6 +27,16 @@ const Rolecards = require('./agentchat_rolecards');
 const Roleplay = require('./agentchat_roleplay');
 const Destiny = require('./agentchat_destiny');
 import { attachAgentChatLLM } from './agentchat_llm';
+import {
+  appendDigestEntry,
+  buildDigestFromRaw,
+  ensureStoryDirs,
+  getStoryDigestPath,
+  getStoryRawPath,
+  readStoryEntriesByDay,
+  toDigestFallbackText,
+  updateDigestEntry,
+} from './agentchat_story_storage';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
 import ActionSheet from '../ActionSheet';
@@ -1089,11 +1100,15 @@ class AgentChat extends React.Component {
     const params = this.props.navigation?.state?.params || {};
     this.agentId = getAgentIdFromParams(params);
     this.chatScope = (params.chatScope || 'chat').toString();
+    this.isStoryScope = this.chatScope === 'story';
     this.agentChatDir = `${CHAT_DIR}/${encodeURIComponent(this.agentId)}/${encodeURIComponent(this.chatScope)}`;
     this.getDayFilePath = dateKey => `${this.agentChatDir}/${dateKey}.json`;
+    this.getStoryRawPath = dateKey => getStoryRawPath(this.agentChatDir, dateKey);
+    this.getStoryDigestPath = dateKey => getStoryDigestPath(this.agentChatDir, dateKey);
     this.loadedDateKeys = [];
     this.allDateKeys = [];
     this.persistQueue = Promise.resolve();
+    this.digestPersistQueue = Promise.resolve();
     this.currentLLMConfig = null;
     this.getCommandUsageMessage = getCommandUsageMessage;
     attachAgentChatLLM(this, {
@@ -1189,16 +1204,17 @@ class AgentChat extends React.Component {
     } else if (activeRead.__parseError) {
       this.replyFromAgent(`LLM active state is corrupted. Backup created. Please fix/delete: ${LLM_ACTIVE_PATH}`);
     }
+    const digestHistory = this.isStoryScope ? await this.readDigestHistory() : history;
     const llmConfig = await this.loadLLMConfig();
     if (!this._isMounted) {
       return;
     }
-    const visibleCount = Math.min(history.length || INITIAL_VISIBLE_COUNT, INITIAL_VISIBLE_COUNT);
+    const visibleCount = Math.min(digestHistory.length || INITIAL_VISIBLE_COUNT, INITIAL_VISIBLE_COUNT);
     this.setState(
       {
         allMessages: history,
         visibleCount,
-        messages: history.slice(-visibleCount),
+        messages: digestHistory.slice(-visibleCount),
         llmConfig,
       },
       () => {
@@ -1221,6 +1237,9 @@ class AgentChat extends React.Component {
       await ensure(CHAT_DIR);
       await ensure(`${CHAT_DIR}/${encodeURIComponent(this.agentId)}`);
       await ensure(this.agentChatDir);
+      if (this.isStoryScope) {
+        await ensureStoryDirs(this.agentChatDir);
+      }
       await ensure(LLM_DIR);
     } catch (error) {
       console.warn('Failed to prepare chat storage', error);
@@ -1229,10 +1248,12 @@ class AgentChat extends React.Component {
 
   listDateKeys = async () => {
     try {
-      const exists = await RNFS.exists(this.agentChatDir);
+      const baseDir = this.isStoryScope ? `${this.agentChatDir}/raw` : this.agentChatDir;
+      const exists = await RNFS.exists(baseDir);
       if (!exists) return [];
-      const entries = await RNFS.readDir(this.agentChatDir);
+      const entries = await RNFS.readDir(baseDir);
       return entries
+        .filter(entry => entry.isFile())
         .map(entry => entry.name)
         .filter(name => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
         .map(name => name.replace('.json', ''))
@@ -1245,6 +1266,10 @@ class AgentChat extends React.Component {
 
   readDayMessages = async dateKey => {
     try {
+      if (this.isStoryScope) {
+        const messages = await readStoryEntriesByDay(this.agentChatDir, dateKey, 'raw');
+        return messages.filter(message => !message?.hidden);
+      }
       const path = this.getDayFilePath(dateKey);
       const exists = await RNFS.exists(path);
       if (!exists) return [];
@@ -1252,6 +1277,17 @@ class AgentChat extends React.Component {
       const json = JSON.parse(raw);
       const messages = Array.isArray(json) ? json : json?.messages || [];
       return messages.filter(message => !message?.hidden);
+    } catch {
+      return [];
+    }
+  };
+
+  readDigestDayEntries = async dateKey => {
+    if (!this.isStoryScope) {
+      return this.readDayMessages(dateKey);
+    }
+    try {
+      return await readStoryEntriesByDay(this.agentChatDir, dateKey, 'digest');
     } catch {
       return [];
     }
@@ -1270,8 +1306,37 @@ class AgentChat extends React.Component {
     return latestMessages;
   };
 
+  readDigestHistory = async () => {
+    if (!this.isStoryScope) {
+      return this.readHistory();
+    }
+    try {
+      const digestDir = `${this.agentChatDir}/digest`;
+      const exists = await RNFS.exists(digestDir);
+      if (!exists) return [];
+      const entries = await RNFS.readDir(digestDir);
+      const keys = entries
+        .filter(entry => entry.isFile())
+        .map(entry => entry.name)
+        .filter(name => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
+        .map(name => name.replace('.json', ''))
+        .sort()
+        .reverse();
+      if (keys.length === 0) return [];
+      return await this.readDigestDayEntries(keys[0]);
+    } catch {
+      return [];
+    }
+  };
+
   writeDayMessages = async (dateKey, messages) => {
     try {
+      if (this.isStoryScope) {
+        const dayMessages = messages.filter(message => getLocalDateKey(message.timestamp) === dateKey);
+        const path = this.getStoryRawPath(dateKey);
+        await RNFS.writeFile(path, JSON.stringify(dayMessages), 'utf8');
+        return;
+      }
       const path = this.getDayFilePath(dateKey);
       await RNFS.writeFile(path, JSON.stringify(messages), 'utf8');
     } catch (e) {}
@@ -1294,20 +1359,129 @@ class AgentChat extends React.Component {
     timestamp: Date.now(),
   });
 
+  buildStoryDigestText = async rawMessage => {
+    const rawText = String(rawMessage?.text || '').trim();
+    if (!rawText) return '';
+    const isUser = rawMessage?.sender === 'user';
+    const instruction = isUser
+      ? '你是摘要器。仅根据下方原文生成中文行动短句，最多100字。删除“选项/选择/A/B/1/2/：”等提示词，不要出现“我选择”，不要新增信息。若是提问或闲聊，保留核心意图。仅输出结果。'
+      : '你是摘要器。仅根据下方原文生成中文叙述摘要，最多100字。只能压缩，不得新增事件信息；避免对白原句，优先叙述句。仅输出结果。';
+
+    const cfg = this.state.llmConfig || this.currentLLMConfig;
+    if (!cfg?.provider) {
+      throw new Error('LLM not configured');
+    }
+    const resolved = await this.resolveProviderDef(cfg.provider);
+    if (!resolved) {
+      throw new Error('LLM provider missing');
+    }
+    const providerDef = resolved.def;
+    const recent = [{ sender: 'user', text: `原文：\n${rawText}` }];
+    if (providerDef.kind === 'openai_compat') {
+      return await this.callOpenAICompatible({
+        baseUrl: cfg.baseUrl || providerDef.baseUrl,
+        apiKey: cfg.apiKey,
+        model: cfg.model || providerDef.defaultModel,
+        systemPrompt: instruction,
+        recent,
+        authHeader: providerDef.authHeader || DEFAULT_AUTH_HEADER,
+      });
+    }
+    if (providerDef.kind === 'gemini') {
+      return await this.callGemini({
+        baseUrl: cfg.baseUrl || providerDef.baseUrl,
+        apiKey: cfg.apiKey,
+        model: cfg.model || providerDef.defaultModel,
+        systemPrompt: instruction,
+        recent,
+        authHeader: providerDef.authHeader,
+      });
+    }
+    throw new Error('Unsupported provider kind');
+  };
+
+  appendStoryDigestForRaw = rawMessage => {
+    if (!this.isStoryScope || !rawMessage?.id || rawMessage?.hidden || rawMessage?.pending) {
+      return;
+    }
+    const dayKey = getLocalDateKey(rawMessage.timestamp);
+    this.digestPersistQueue = this.digestPersistQueue
+      .then(async () => {
+        let digestEntry;
+        try {
+          digestEntry = await buildDigestFromRaw(rawMessage, this.buildStoryDigestText);
+          digestEntry.ref.day = dayKey;
+          digestEntry.regen = 0;
+        } catch (error) {
+          digestEntry = {
+            id: `d_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            t: rawMessage.timestamp,
+            role: rawMessage.sender === 'user' ? 'user' : 'assistant',
+            text: toDigestFallbackText(rawMessage.text),
+            ref: { day: dayKey, rawId: rawMessage.id },
+            onchain: 0,
+            regen: 1,
+          };
+        }
+
+        const existing = await readStoryEntriesByDay(this.agentChatDir, dayKey, 'digest');
+        const existingEntry = existing.find(entry => entry?.ref?.rawId === rawMessage.id);
+        if (existingEntry?.id) {
+          await updateDigestEntry(this.agentChatDir, dayKey, existingEntry.id, {
+            text: digestEntry.text,
+            regen: digestEntry.regen,
+            t: digestEntry.t,
+            role: digestEntry.role,
+            onchain: 0,
+          });
+          if (this._isMounted) {
+            this.setState(prevState => {
+              const messages = prevState.messages.map(entry =>
+                entry?.id === existingEntry.id ? { ...entry, ...digestEntry, id: existingEntry.id } : entry,
+              );
+              return { messages };
+            });
+          }
+          return;
+        }
+
+        await appendDigestEntry(this.agentChatDir, dayKey, digestEntry);
+        if (this._isMounted && dayKey === getLocalDateKey()) {
+          this.setState(prevState => {
+            const messages = [...prevState.messages, digestEntry];
+            const visibleCount = Math.min(messages.length, Math.max(prevState.visibleCount, PAGE_SIZE) + 1);
+            return {
+              messages: messages.slice(-visibleCount),
+              visibleCount,
+            };
+          });
+        }
+      })
+      .catch(error => {
+        console.warn('Failed to append story digest', error);
+      });
+  };
+
   appendMessage = message => {
     this.shouldScrollToEnd = true;
     this.setState(
       prevState => {
         const allMessages = [...prevState.allMessages, message];
         const base = Math.max(prevState.visibleCount, PAGE_SIZE);
-        const visibleCount = Math.min(allMessages.length, base + 1);
+        const sourceMessages = this.isStoryScope ? prevState.messages : allMessages;
+        const visibleCount = Math.min(sourceMessages.length + 1, base + 1);
         return {
           allMessages,
           visibleCount,
-          messages: allMessages.slice(-visibleCount),
+          messages: this.isStoryScope ? sourceMessages.slice(-visibleCount) : allMessages.slice(-visibleCount),
         };
       },
-      () => this.persistMessageByDay(getLocalDateKey(message.timestamp), this.state.allMessages),
+      () => {
+        this.persistMessageByDay(getLocalDateKey(message.timestamp), this.state.allMessages);
+        if (this.isStoryScope) {
+          this.appendStoryDigestForRaw(message);
+        }
+      },
     );
   };
 
@@ -1318,11 +1492,12 @@ class AgentChat extends React.Component {
         const allMessages = [...prevState.allMessages, ...messages];
         const added = messages.length;
         const base = Math.max(prevState.visibleCount, PAGE_SIZE);
-        const visibleCount = Math.min(allMessages.length, base + added);
+        const sourceMessages = this.isStoryScope ? prevState.messages : allMessages;
+        const visibleCount = Math.min(sourceMessages.length + (this.isStoryScope ? 0 : added), base + added);
         return {
           allMessages,
           visibleCount,
-          messages: allMessages.slice(-visibleCount),
+          messages: this.isStoryScope ? sourceMessages.slice(-visibleCount) : allMessages.slice(-visibleCount),
         };
       },
       () => {
@@ -1330,6 +1505,9 @@ class AgentChat extends React.Component {
         dateKeys.forEach(dateKey => {
           this.persistMessageByDay(dateKey, this.state.allMessages);
         });
+        if (this.isStoryScope) {
+          messages.forEach(message => this.appendStoryDigestForRaw(message));
+        }
       },
     );
   };
@@ -1355,13 +1533,16 @@ class AgentChat extends React.Component {
         }
         return {
           allMessages,
-          messages: allMessages.slice(-prevState.visibleCount),
+          messages: this.isStoryScope ? prevState.messages : allMessages.slice(-prevState.visibleCount),
         };
       },
       () => {
         const updated = this.state.allMessages.find(message => message?.requestId === requestId);
         const key = updated ? getLocalDateKey(updated.timestamp) : getLocalDateKey();
         this.persistMessageByDay(key, this.state.allMessages);
+        if (this.isStoryScope && updated) {
+          this.appendStoryDigestForRaw(updated);
+        }
       },
     );
   };
@@ -1802,6 +1983,52 @@ class AgentChat extends React.Component {
     }
   };
 
+  handleDigestPress = async digestItem => {
+    if (!digestItem?.ref?.day || !digestItem?.ref?.rawId) {
+      return;
+    }
+    try {
+      const rawEntries = await readStoryEntriesByDay(this.agentChatDir, digestItem.ref.day, 'raw');
+      const rawMessage = rawEntries.find(entry => entry?.id === digestItem.ref.rawId);
+      if (!rawMessage?.text) {
+        showStatus('未找到原文', 2000);
+        return;
+      }
+      Alert.alert('原文', rawMessage.text);
+    } catch (error) {
+      console.warn('Failed to open raw message', error);
+      showStatus('读取原文失败', 2000);
+    }
+  };
+
+  handleRegenerateDigest = async digestItem => {
+    if (!digestItem?.ref?.day || !digestItem?.ref?.rawId) {
+      return;
+    }
+    try {
+      const rawEntries = await readStoryEntriesByDay(this.agentChatDir, digestItem.ref.day, 'raw');
+      const rawMessage = rawEntries.find(entry => entry?.id === digestItem.ref.rawId);
+      if (!rawMessage) {
+        showStatus('未找到原文', 2000);
+        return;
+      }
+      const text = toDigestFallbackText(await this.buildStoryDigestText(rawMessage));
+      const updated = await updateDigestEntry(this.agentChatDir, digestItem.ref.day, digestItem.id, {
+        text,
+        regen: 0,
+      });
+      if (!updated) {
+        throw new Error('digest entry missing');
+      }
+      this.setState(prevState => ({
+        messages: prevState.messages.map(message => (message?.id === digestItem.id ? { ...message, text, regen: 0 } : message)),
+      }));
+    } catch (error) {
+      console.warn('Failed to regenerate digest', error);
+      showStatus('重生成失败', 2000);
+    }
+  };
+
   isInteractiveCommand = commandText => {
     if (!commandText) {
       return false;
@@ -1990,7 +2217,7 @@ class AgentChat extends React.Component {
   };
 
   loadMoreHistory = async () => {
-    if (this.loadingMore) {
+    if (this.isStoryScope || this.loadingMore) {
       return;
     }
 
@@ -2106,7 +2333,9 @@ class AgentChat extends React.Component {
       return true;
     }
     const prev = messages[index - 1];
-    return current.timestamp - prev.timestamp > 30 * 60 * 1000;
+    const currentTs = current.timestamp || current.t || 0;
+    const prevTs = prev.timestamp || prev.t || 0;
+    return currentTs - prevTs > 30 * 60 * 1000;
   };
 
   formatTimestamp = timestamp => {
@@ -2197,12 +2426,14 @@ class AgentChat extends React.Component {
   };
 
   renderMessage = ({ item, index }) => {
-    const isUser = item.sender === 'user';
-    const hasCopyLink = Boolean(item.copyText && item.linkLabel);
+    const isStoryDigest = this.isStoryScope && item?.ref;
+    const isUser = isStoryDigest ? item.role === 'user' : item.sender === 'user';
+    const text = item?.text || '';
+    const hasCopyLink = Boolean(item.copyText && item.linkLabel) && !isStoryDigest;
     const commandSegments =
-      isUser && this.isValidCommandText(item.text)
+      isUser && !isStoryDigest && this.isValidCommandText(text)
         ? [{ text: item.text, isCommand: true }]
-        : this.getCommandSegments(item.text);
+        : this.getCommandSegments(text);
     const hasCommandTokens = commandSegments.some(segment => segment.isCommand);
     const messageTextStyle = [styles.messageText, isUser ? styles.userText : styles.agentText];
     const commandTextStyle = isUser ? styles.commandTextUser : styles.commandText;
@@ -2210,7 +2441,7 @@ class AgentChat extends React.Component {
       <>
         {this.shouldShowTimestamp(index) && (
           <View style={styles.timestampContainer}>
-            <Text style={styles.timestampText}>{this.formatTimestamp(item.timestamp)}</Text>
+            <Text style={styles.timestampText}>{this.formatTimestamp(item.timestamp || item.t)}</Text>
           </View>
         )}
         <View style={[styles.messageRow, isUser ? styles.userRow : styles.agentRow]}>
@@ -2218,7 +2449,7 @@ class AgentChat extends React.Component {
             <TouchableOpacity
               accessibilityLabel="Open submit form"
               activeOpacity={0.7}
-              onPress={() => this.handleAvatarPress(item.text)}
+              onPress={() => this.handleAvatarPress(text)}
               style={styles.avatarPressable}
             >
               {this.renderAvatar('agent')}
@@ -2228,13 +2459,13 @@ class AgentChat extends React.Component {
             <TouchableOpacity
               accessibilityLabel="Chat message"
               activeOpacity={0.7}
-              onPress={hasCopyLink || hasCommandTokens ? undefined : () => this.handleMessagePress(item.text)}
-              onLongPress={hasCopyLink || hasCommandTokens ? undefined : () => this.handleMessageLongPress(item.text)}
+              onPress={hasCopyLink || hasCommandTokens ? undefined : () => (isStoryDigest ? this.handleDigestPress(item) : this.handleMessagePress(text))}
+              onLongPress={hasCopyLink || hasCommandTokens || isStoryDigest ? undefined : () => this.handleMessageLongPress(text)}
               style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}
             >
               <Text style={messageTextStyle}>
                 {commandSegments.length === 0
-                  ? item.text
+                  ? text
                   : commandSegments.map((segment, segmentIndex) =>
                       segment.isCommand ? (
                         <Text
@@ -2261,12 +2492,22 @@ class AgentChat extends React.Component {
                 </TouchableOpacity>
               )}
             </TouchableOpacity>
+            {isStoryDigest && item.regen === 1 && (
+              <TouchableOpacity
+                accessibilityLabel="Regenerate digest"
+                activeOpacity={0.7}
+                style={styles.regenButton}
+                onPress={() => this.handleRegenerateDigest(item)}
+              >
+                <Text style={styles.regenButtonText}>重生成摘要</Text>
+              </TouchableOpacity>
+            )}
           </View>
           {isUser && (
             <TouchableOpacity
               accessibilityLabel="Open submit form"
               activeOpacity={0.7}
-              onPress={() => this.handleAvatarPress(item.text)}
+              onPress={() => this.handleAvatarPress(text)}
               style={styles.avatarPressable}
             >
               {this.renderAvatar('user')}
@@ -2487,6 +2728,20 @@ const styles = StyleSheet.create({
   emptyText: {
     color: '#6f7587',
     fontSize: 14,
+  },
+  regenButton: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#4f78ff',
+  },
+  regenButtonText: {
+    color: '#4f78ff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   inputContainer: {
     flexDirection: 'row',
