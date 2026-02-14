@@ -139,6 +139,8 @@ const COMMAND_HELP_MESSAGES = {
     '/a — Configure and load an LLM (cloud or local).',
     '/r — Create a roleplay prompt with persona <text>.',
     '/welcome — Save a welcome message on-chain.',
+    '/short on — History messages show digests (Story only).',
+    '/short off — History messages show full text (Story only).',
     'Tap avatar — one-tap commit on-chain.',
     '/h — Show all command descriptions.',
   ].join('\n'),
@@ -147,6 +149,8 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — 发送开场三句提示。',
     '/block — 查询当前区块高度。',
     '/a — 配置并加载大模型提供方（云端或本地）。输入 /a 查看用法，/a list 查看已保存的 provider。',
+    '/short on — 历史消息显示摘要（仅 Story）。',
+    '/short off — 历史消息显示全文（仅 Story）。',
     '/r — 生成角色扮演提示词，<text>为角色设定。',
     '/welcome — 将欢迎语上链保存。',
     '点头像 — 一键提交上链。',
@@ -157,6 +161,8 @@ const COMMAND_HELP_MESSAGES = {
     '/linkstart — 發送開場三句提示。',
     '/block — 查詢目前區塊高度。',
     '/a — 設定並載入大模型提供方（雲端或本地）。輸入 /a 查看用法，/a list 查看已儲存的 provider。',
+    '/short on — 歷史訊息顯示摘要（僅 Story）。',
+    '/short off — 歷史訊息顯示全文（僅 Story）。',
     '/r — 產生角色扮演提示詞，<text>為角色設定。',
     '/welcome — 將歡迎語上鏈保存。',
     '點頭像 — 一鍵提交上鏈。',
@@ -1111,6 +1117,7 @@ class AgentChat extends React.Component {
       visibleCount: PAGE_SIZE,
       inputValue: '',
       llmConfig: null,
+      storyShortMode: true,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1230,17 +1237,18 @@ class AgentChat extends React.Component {
     } else if (activeRead.__parseError) {
       this.replyFromAgent(`LLM active state is corrupted. Backup created. Please fix/delete: ${LLM_ACTIVE_PATH}`);
     }
-    const digestHistory = this.isStoryScope ? await this.readDigestHistory() : history;
+    const digestHistory = this.isStoryScope ? await this.readDigestHistory() : [];
+    const historyForRender = this.isStoryScope ? this.buildStoryHistoryMessages(history, digestHistory) : history;
     const llmConfig = await this.loadLLMConfig();
     if (!this._isMounted) {
       return;
     }
-    const visibleCount = Math.min(digestHistory.length || INITIAL_VISIBLE_COUNT, INITIAL_VISIBLE_COUNT);
+    const visibleCount = Math.min(historyForRender.length || INITIAL_VISIBLE_COUNT, INITIAL_VISIBLE_COUNT);
     this.setState(
       {
-        allMessages: history,
+        allMessages: historyForRender,
         visibleCount,
-        messages: digestHistory.slice(-visibleCount),
+        messages: historyForRender.slice(-visibleCount),
         llmConfig,
       },
       () => {
@@ -1355,6 +1363,27 @@ class AgentChat extends React.Component {
     }
   };
 
+  buildStoryHistoryMessages = (history = [], digestHistory = []) => {
+    const digestByRawId = new Map();
+    digestHistory.forEach(entry => {
+      const rawId = entry?.ref?.rawId;
+      if (rawId) {
+        digestByRawId.set(rawId, entry);
+      }
+    });
+    return history.map(message => {
+      const digestEntry = digestByRawId.get(message?.id);
+      return {
+        ...message,
+        _isHistory: true,
+        digest: digestEntry?.text,
+        summary: digestEntry?.summary,
+        ref: digestEntry?.ref,
+        regen: digestEntry?.regen,
+      };
+    });
+  };
+
   writeDayMessages = async (dateKey, messages) => {
     try {
       if (this.isStoryScope) {
@@ -1383,6 +1412,7 @@ class AgentChat extends React.Component {
     text,
     sender,
     timestamp: Date.now(),
+    _isHistory: false,
   });
 
   buildStoryDigestText = async rawMessage => {
@@ -1466,25 +1496,19 @@ class AgentChat extends React.Component {
             role: digestEntry.role,
             onchain: 0,
           });
-          if (this._isMounted) {
-            this.setState(prevState => {
-              const messages = prevState.messages.map(entry =>
-                entry?.id === existingEntry.id ? { ...entry, ...digestEntry, id: existingEntry.id } : entry,
-              );
-              return { messages };
-            });
-          }
-          return;
+        } else {
+          await appendDigestEntry(this.agentChatDir, dayKey, digestEntry);
         }
 
-        await appendDigestEntry(this.agentChatDir, dayKey, digestEntry);
-        if (this._isMounted && dayKey === getLocalDateKey()) {
+        if (this._isMounted) {
           this.setState(prevState => {
-            const messages = [...prevState.messages, digestEntry];
-            const visibleCount = Math.min(messages.length, Math.max(prevState.visibleCount, PAGE_SIZE) + 1);
+            const applyDigest = message =>
+              message?.id === rawMessage.id
+                ? { ...message, digest: digestEntry.text, summary: digestEntry.summary, ref: digestEntry.ref, regen: digestEntry.regen }
+                : message;
             return {
-              messages: messages.slice(-visibleCount),
-              visibleCount,
+              allMessages: prevState.allMessages.map(applyDigest),
+              messages: prevState.messages.map(applyDigest),
             };
           });
         }
@@ -1500,12 +1524,12 @@ class AgentChat extends React.Component {
       prevState => {
         const allMessages = [...prevState.allMessages, message];
         const base = Math.max(prevState.visibleCount, PAGE_SIZE);
-        const sourceMessages = this.isStoryScope ? prevState.messages : allMessages;
-        const visibleCount = Math.min(sourceMessages.length + 1, base + 1);
+        const sourceMessages = allMessages;
+        const visibleCount = Math.min(sourceMessages.length, base + 1);
         return {
           allMessages,
           visibleCount,
-          messages: this.isStoryScope ? sourceMessages.slice(-visibleCount) : allMessages.slice(-visibleCount),
+          messages: sourceMessages.slice(-visibleCount),
         };
       },
       () => {
@@ -1524,12 +1548,12 @@ class AgentChat extends React.Component {
         const allMessages = [...prevState.allMessages, ...messages];
         const added = messages.length;
         const base = Math.max(prevState.visibleCount, PAGE_SIZE);
-        const sourceMessages = this.isStoryScope ? prevState.messages : allMessages;
-        const visibleCount = Math.min(sourceMessages.length + (this.isStoryScope ? 0 : added), base + added);
+        const sourceMessages = allMessages;
+        const visibleCount = Math.min(sourceMessages.length, base + added);
         return {
           allMessages,
           visibleCount,
-          messages: this.isStoryScope ? sourceMessages.slice(-visibleCount) : allMessages.slice(-visibleCount),
+          messages: sourceMessages.slice(-visibleCount),
         };
       },
       () => {
@@ -1565,7 +1589,7 @@ class AgentChat extends React.Component {
         }
         return {
           allMessages,
-          messages: this.isStoryScope ? prevState.messages : allMessages.slice(-prevState.visibleCount),
+          messages: allMessages.slice(-prevState.visibleCount),
         };
       },
       () => {
@@ -1660,6 +1684,22 @@ class AgentChat extends React.Component {
     const helpMatch = /^\/h\b/i.exec(trimmed);
     if (helpMatch) {
       this.replyFromAgent(getCommandHelpMessage());
+      return;
+    }
+    const shortMatch = /^\/short(?:\s+(on|off))?\s*$/i.exec(trimmed);
+    if (shortMatch) {
+      if (!this.isStoryScope) {
+        showStatus('"/short" is only available in Story mode', 2000);
+        return;
+      }
+      const nextMode = (shortMatch[1] || '').toLowerCase();
+      if (!nextMode) {
+        showStatus('Usage: /short on | /short off', 2000);
+        return;
+      }
+      const enabled = nextMode === 'on';
+      this.setState({ storyShortMode: enabled });
+      showStatus(enabled ? 'Story history: short ON' : 'Story history: short OFF', 2000);
       return;
     }
     const linkStartMatch = /^\/linkstart\b/i.exec(trimmed);
@@ -2458,13 +2498,14 @@ class AgentChat extends React.Component {
   };
 
   renderMessage = ({ item, index }) => {
-    const isStoryDigest = this.isStoryScope && item?.ref;
-    const isUser = isStoryDigest ? item.role === 'user' : item.sender === 'user';
-    const text = item?.text || '';
+    const showDigest = this.isStoryScope && this.state.storyShortMode && item?._isHistory === true;
+    const isStoryDigest = this.isStoryScope && Boolean(item?.ref) && showDigest;
+    const isUser = item?.sender === 'user' || item?.role === 'user';
+    const text = showDigest ? item?.digest || item?.summary || item?.text || '' : item?.text || '';
     const hasCopyLink = Boolean(item.copyText && item.linkLabel) && !isStoryDigest;
     const commandSegments =
       isUser && !isStoryDigest && this.isValidCommandText(text)
-        ? [{ text: item.text, isCommand: true }]
+        ? [{ text, isCommand: true }]
         : this.getCommandSegments(text);
     const hasCommandTokens = commandSegments.some(segment => segment.isCommand);
     const messageTextStyle = [styles.messageText, isUser ? styles.userText : styles.agentText];
@@ -2491,8 +2532,16 @@ class AgentChat extends React.Component {
             <TouchableOpacity
               accessibilityLabel="Chat message"
               activeOpacity={0.7}
-              onPress={hasCopyLink || hasCommandTokens ? undefined : () => (isStoryDigest ? this.handleDigestPress(item) : this.handleMessagePress(text))}
-              onLongPress={hasCopyLink || hasCommandTokens || isStoryDigest ? undefined : () => this.handleMessageLongPress(text)}
+              onPress={
+                hasCopyLink || hasCommandTokens
+                  ? undefined
+                  : () => (isStoryDigest ? this.handleDigestPress(item) : this.handleMessagePress(showDigest ? item?.text || '' : text))
+              }
+              onLongPress={
+                hasCopyLink || hasCommandTokens || isStoryDigest
+                  ? undefined
+                  : () => this.handleMessageLongPress(showDigest ? item?.text || '' : text)
+              }
               style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}
             >
               <Text style={messageTextStyle}>
