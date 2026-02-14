@@ -366,6 +366,29 @@ const ROLE_HISTORY_TITLES = {
   'zh-cn': '最近的 /r 命令：',
   'zh-tw': '最近的 /r 命令：',
 };
+const STORY_UI_MESSAGES = {
+  en: {
+    rawTitle: 'Original',
+    rawMissing: 'Original text not found',
+    rawReadFail: 'Failed to read original text',
+    regenDigest: 'Regenerate digest',
+    regenFail: 'Regenerate failed',
+  },
+  'zh-cn': {
+    rawTitle: '原文',
+    rawMissing: '未找到原文',
+    rawReadFail: '读取原文失败',
+    regenDigest: '重生成摘要',
+    regenFail: '重生成失败',
+  },
+  'zh-tw': {
+    rawTitle: '原文',
+    rawMissing: '未找到原文',
+    rawReadFail: '讀取原文失敗',
+    regenDigest: '重新生成摘要',
+    regenFail: '重新生成失敗',
+  },
+};
 const COMMAND_HELP_ALIASES = {
   'zh-hans': 'zh-cn',
   'zh-hant': 'zh-tw',
@@ -401,7 +424,12 @@ const COMMAND_HELP_ALIASES = {
   uk: 'ua',
 };
 
-const normalizeLocale = locale => (locale || '').toString().trim().toLowerCase().replace('_', '-');
+const normalizeLocale = locale => (locale || '').toString().trim().toLowerCase().replace(/_/g, '-');
+
+const getCurrentInterfaceLanguage = () =>
+  (loc && typeof loc.getInterfaceLanguage === 'function' && loc.getInterfaceLanguage()) ||
+  (loc && typeof loc.getLanguage === 'function' && loc.getLanguage()) ||
+  'en';
 
 const resolveLocalizedEntry = (messagesByLocale, locale, key) => {
   const entry = messagesByLocale[locale];
@@ -412,10 +440,7 @@ const resolveLocalizedEntry = (messagesByLocale, locale, key) => {
 };
 
 const getLocalizedMessage = (messagesByLocale, key) => {
-  const interfaceLanguage =
-    (loc && typeof loc.getInterfaceLanguage === 'function' && loc.getInterfaceLanguage()) ||
-    (loc && typeof loc.getLanguage === 'function' && loc.getLanguage()) ||
-    'en';
+  const interfaceLanguage = getCurrentInterfaceLanguage();
   const normalized = normalizeLocale(interfaceLanguage);
   const directMatch = resolveLocalizedEntry(messagesByLocale, normalized, key);
   if (directMatch) {
@@ -446,6 +471,7 @@ const getRoleHistoryTitle = () => {
   const title = getLocalizedMessage(ROLE_HISTORY_TITLES);
   return title.replace('/r', '/\u200Br');
 };
+const getStoryUiText = key => getLocalizedMessage(STORY_UI_MESSAGES, key);
 // 用手机系统本地时间（local day），不是 UTC
 const getLocalDateKey = (ts = Date.now()) => {
   const d = new Date(ts);
@@ -1363,9 +1389,15 @@ class AgentChat extends React.Component {
     const rawText = String(rawMessage?.text || '').trim();
     if (!rawText) return '';
     const isUser = rawMessage?.sender === 'user';
-    const instruction = isUser
-      ? '你是摘要器。仅根据下方原文生成中文行动短句，最多100字。删除“选项/选择/A/B/1/2/：”等提示词，不要出现“我选择”，不要新增信息。若是提问或闲聊，保留核心意图。仅输出结果。'
-      : '你是摘要器。仅根据下方原文生成中文叙述摘要，最多100字。只能压缩，不得新增事件信息；避免对白原句，优先叙述句。仅输出结果。';
+    const interfaceLanguage = normalizeLocale(getCurrentInterfaceLanguage());
+    const isZh = interfaceLanguage.startsWith('zh');
+    const instruction = isZh
+      ? isUser
+        ? '你是摘要器。仅根据下方原文生成中文行动短句，最多100字。删除“选项/选择/A/B/1/2/：”等提示词，不要出现“我选择”，不要新增信息。若是提问或闲聊，保留核心意图。仅输出结果。'
+        : '你是摘要器。仅根据下方原文生成中文叙述摘要，最多100字。只能压缩，不得新增事件信息；避免对白原句，优先叙述句。仅输出结果。'
+      : isUser
+        ? 'You are a summarizer. Generate an action-style digest in English based only on the original text below (<=100 words). Remove prompt markers like "Option/Choice/A/B/1/2/:". Do not use "I choose." Do not add new information. If the source is a question or small talk, preserve its core intent. Output digest only.'
+        : 'You are a summarizer. Generate a narrative digest in English based only on the original text below (<=100 words). Compress only; do not add events or facts. Avoid quoted dialogue and prefer declarative narration. Output digest only.';
 
     const cfg = this.state.llmConfig || this.currentLLMConfig;
     if (!cfg?.provider) {
@@ -1991,13 +2023,13 @@ class AgentChat extends React.Component {
       const rawEntries = await readStoryEntriesByDay(this.agentChatDir, digestItem.ref.day, 'raw');
       const rawMessage = rawEntries.find(entry => entry?.id === digestItem.ref.rawId);
       if (!rawMessage?.text) {
-        showStatus('未找到原文', 2000);
+        showStatus(getStoryUiText('rawMissing'), 2000);
         return;
       }
-      Alert.alert('原文', rawMessage.text);
+      Alert.alert(getStoryUiText('rawTitle'), rawMessage.text);
     } catch (error) {
       console.warn('Failed to open raw message', error);
-      showStatus('读取原文失败', 2000);
+      showStatus(getStoryUiText('rawReadFail'), 2000);
     }
   };
 
@@ -2009,7 +2041,7 @@ class AgentChat extends React.Component {
       const rawEntries = await readStoryEntriesByDay(this.agentChatDir, digestItem.ref.day, 'raw');
       const rawMessage = rawEntries.find(entry => entry?.id === digestItem.ref.rawId);
       if (!rawMessage) {
-        showStatus('未找到原文', 2000);
+        showStatus(getStoryUiText('rawMissing'), 2000);
         return;
       }
       const text = toDigestFallbackText(await this.buildStoryDigestText(rawMessage));
@@ -2025,7 +2057,7 @@ class AgentChat extends React.Component {
       }));
     } catch (error) {
       console.warn('Failed to regenerate digest', error);
-      showStatus('重生成失败', 2000);
+      showStatus(getStoryUiText('regenFail'), 2000);
     }
   };
 
@@ -2499,7 +2531,7 @@ class AgentChat extends React.Component {
                 style={styles.regenButton}
                 onPress={() => this.handleRegenerateDigest(item)}
               >
-                <Text style={styles.regenButtonText}>重生成摘要</Text>
+                <Text style={styles.regenButtonText}>{getStoryUiText('regenDigest')}</Text>
               </TouchableOpacity>
             )}
           </View>
