@@ -1157,7 +1157,8 @@ class AgentChat extends React.Component {
       inputValue: '',
       llmConfig: null,
       storyShortMode: true,
-      storyLangCode: getDefaultStoryLangCode(),
+      storyLangCode: null,
+      pendingDestinyRun: false,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1326,7 +1327,8 @@ class AgentChat extends React.Component {
       return;
     }
     try {
-      await AsyncStorage.setItem(STORY_LANG_CODE_STORAGE_KEY, normalizeStoryLangCode(code));
+      const normalized = normalizeStoryLangCode(code);
+      await AsyncStorage.setItem(STORY_LANG_CODE_STORAGE_KEY, normalized);
     } catch (error) {
       console.warn('Failed to persist story language', error);
     }
@@ -1839,7 +1841,7 @@ class AgentChat extends React.Component {
     }
     const normalized = trimmed.toUpperCase();
     if (normalized === '/D') {
-      await Destiny.handleDestinyCommand(this, { buildDestinySeedPrompt, loc });
+      await this.handleDestinyCommand();
       return;
     }
 
@@ -2198,16 +2200,16 @@ class AgentChat extends React.Component {
 
 
   getStoryLangMenuMessage = () => {
-    const currentCode = normalizeStoryLangCode(this.state.storyLangCode || 'en');
+    const currentCode = this.getStoryLangCode() || 'not set';
     return [
-      `当前语言 / Current language: ${getStoryLangLabel(currentCode)} (${currentCode})`,
+      `Current language: ${currentCode}`,
       '',
       '[[/lang en|English]]   [[/lang zh-cn|中文]]   [[/lang other|Other languages]]',
     ].join('\n');
   };
 
   getSupportedStoryLangListMessage = () => {
-    const lines = ['系统支持语言 / Supported languages:', ''];
+    const lines = ['Supported languages:', ''];
     for (let i = 0; i < STORY_SUPPORTED_LANGS.length; i += 3) {
       const row = STORY_SUPPORTED_LANGS.slice(i, i + 3)
         .map(item => `[[/lang ${item.code}|${item.label}]]`)
@@ -2250,21 +2252,61 @@ class AgentChat extends React.Component {
 
     await this.setStoryLangCode(normalizedArg);
     this.appendStoryCommandMessage(this.getStoryLangMenuMessage());
+
+    if (this.state.pendingDestinyRun) {
+      await new Promise(resolve => this.setState({ pendingDestinyRun: false }, resolve));
+      await this.startDestinyRun();
+    }
+
     return true;
+  };
+
+  getStoryLangCode = () => {
+    if (!this.isStoryScope) {
+      return null;
+    }
+    const code = this.state.storyLangCode;
+    if (!code) {
+      return null;
+    }
+    return normalizeStoryLangCode(code);
+  };
+
+  handleDestinyCommand = async () => {
+    const lang = this.getStoryLangCode();
+    if (!lang) {
+      this.setState({ pendingDestinyRun: true });
+      await this.handleLangCommand('');
+      return;
+    }
+    await this.startDestinyRun();
+  };
+
+  startDestinyRun = async () => {
+    await Destiny.handleDestinyCommand(this, {
+      buildDestinySeedPrompt,
+      loc,
+      storyLangCode: this.getStoryLangCode(),
+    });
   };
 
   getStoryLanguageInstruction = () => {
     if (!this.isStoryScope) {
       return '';
     }
-    const code = normalizeStoryLangCode(this.state.storyLangCode || 'en');
+    const code = this.getStoryLangCode();
+    if (!code) {
+      return '';
+    }
     switch (code) {
       case 'zh-cn':
-        return '请使用简体中文回复。';
+        return 'Language: Simplified Chinese. Reply only in Simplified Chinese.';
       case 'zh-tw':
-        return '請使用繁體中文回覆。';
+        return 'Language: Traditional Chinese. Reply only in Traditional Chinese.';
+      case 'ja':
+        return 'Language: Japanese. Reply only in Japanese.';
       default:
-        return `Respond in ${getStoryLangLabel(code)} (code: ${code}).`;
+        return `Language: ${getStoryLangLabel(code)}. Reply only in ${getStoryLangLabel(code)}.`;
     }
   };
 
