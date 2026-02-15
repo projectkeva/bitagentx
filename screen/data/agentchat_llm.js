@@ -376,6 +376,17 @@ export function attachAgentChatLLM(agent, deps) {
     });
 
   // ---- LLM runtime ----
+
+
+  const getLLMMessageText = message => {
+    if (!message) {
+      return '';
+    }
+    if (message.sender === 'user' && message._modelText) {
+      return String(message._modelText);
+    }
+    return String(message.text || '');
+  };
   agent.buildLLMSystemPrompt =
     agent.buildLLMSystemPrompt ||
     (() => {
@@ -408,7 +419,7 @@ export function attachAgentChatLLM(agent, deps) {
         { role: 'system', content: systemPrompt },
         ...recent.map(message => ({
           role: message.sender === 'user' ? 'user' : 'assistant',
-          content: String(message.text),
+          content: getLLMMessageText(message),
         })),
       ];
 
@@ -436,7 +447,7 @@ export function attachAgentChatLLM(agent, deps) {
 
       const contents = recent.map(message => ({
         role: message.sender === 'user' ? 'user' : 'model',
-        parts: [{ text: String(message.text) }],
+        parts: [{ text: getLLMMessageText(message) }],
       }));
 
       if (contents.length > 0) {
