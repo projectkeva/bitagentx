@@ -2217,8 +2217,79 @@ class AgentChat extends React.Component {
     return segments;
   };
 
+  extractStoryChoices = text => {
+    if (!text) {
+      return [];
+    }
+
+    const lines = String(text)
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean);
+    const choices = [];
+    const seenSends = new Set();
+
+    const addChoice = (key, send, label) => {
+      const normalizedSend = String(send || '').trim();
+      if (!normalizedSend || seenSends.has(normalizedSend)) {
+        return;
+      }
+      seenSends.add(normalizedSend);
+      choices.push({ key: String(key || normalizedSend), send: normalizedSend, label: String(label || normalizedSend) });
+    };
+
+    lines.forEach(line => {
+      const prefixMatch = line.match(/^\s*(?:\[\s*([A-Za-z]|\d{1,2})\s*\]|([A-Za-z]|\d{1,2})\s*[).:])\s*(.+)$/);
+      if (prefixMatch) {
+        const marker = (prefixMatch[1] || prefixMatch[2] || '').trim();
+        const content = (prefixMatch[3] || '').trim();
+        if (marker && content.length >= 2) {
+          const send = /^\d+$/.test(marker) ? marker : marker.toUpperCase();
+          addChoice(send, send, line);
+        }
+        return;
+      }
+
+      const ynMatch = line.match(/^\s*(yes|no|y|n)\s*(?:[\/|]\s*(yes|no|y|n))?\s*$/i);
+      if (!ynMatch) {
+        return;
+      }
+
+      const first = ynMatch[1];
+      const second = ynMatch[2];
+      const normalizeBinary = value => {
+        if (!value) {
+          return null;
+        }
+        const lower = value.toLowerCase();
+        if (lower === 'yes' || lower === 'y') {
+          return { key: 'Y', send: 'Y', label: 'Y' };
+        }
+        if (lower === 'no' || lower === 'n') {
+          return { key: 'N', send: 'N', label: 'N' };
+        }
+        return null;
+      };
+
+      const normalizedFirst = normalizeBinary(first);
+      const normalizedSecond = normalizeBinary(second);
+      if (normalizedFirst) {
+        addChoice(normalizedFirst.key, normalizedFirst.send, normalizedFirst.label);
+      }
+      if (normalizedSecond) {
+        addChoice(normalizedSecond.key, normalizedSecond.send, normalizedSecond.label);
+      }
+    });
+
+    return choices;
+  };
+
   handleCommandPress = commandText => {
     this.sendCommand(commandText);
+  };
+
+  handleStoryChoicePress = text => {
+    this.setState({ inputValue: String(text || '') }, () => this.handleSend());
   };
 
   handleMessageLongPress = messageText => {
@@ -2503,6 +2574,7 @@ class AgentChat extends React.Component {
     const isUser = item?.sender === 'user' || item?.role === 'user';
     const text = showDigest ? item?.digest || item?.summary || item?.text || '' : item?.text || '';
     const hasCopyLink = Boolean(item.copyText && item.linkLabel) && !isStoryDigest;
+    const storyChoices = !isUser && this.isStoryScope ? this.extractStoryChoices(text) : [];
     const commandSegments =
       isUser && !isStoryDigest && this.isValidCommandText(text)
         ? [{ text, isCommand: true }]
@@ -2571,6 +2643,20 @@ class AgentChat extends React.Component {
                 >
                   <Text style={[styles.messageText, styles.linkText]}>{item.linkLabel}</Text>
                 </TouchableOpacity>
+              )}
+              {this.isStoryScope && storyChoices.length > 0 && (
+                <View style={styles.storyChoiceWrap}>
+                  {storyChoices.map(choice => (
+                    <TouchableOpacity
+                      key={`${item.id}-choice-${choice.key}`}
+                      style={styles.storyChoiceBtn}
+                      activeOpacity={0.7}
+                      onPress={() => this.handleStoryChoicePress(choice.send)}
+                    >
+                      <Text style={styles.storyChoiceText}>{choice.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               )}
             </TouchableOpacity>
             {isStoryDigest && item.regen === 1 && (
@@ -2822,6 +2908,26 @@ const styles = StyleSheet.create({
   regenButtonText: {
     color: '#4f78ff',
     fontSize: 12,
+    fontWeight: '600',
+  },
+  storyChoiceWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 8,
+  },
+  storyChoiceBtn: {
+    marginRight: 8,
+    marginBottom: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#2f4d8f',
+    backgroundColor: '#162441',
+  },
+  storyChoiceText: {
+    color: '#d6e8ff',
+    fontSize: 13,
     fontWeight: '600',
   },
   inputContainer: {
