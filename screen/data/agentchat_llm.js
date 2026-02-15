@@ -514,7 +514,10 @@ export function attachAgentChatLLM(agent, deps) {
       }
 
       try {
-        const systemPrompt = agent.buildLLMSystemPrompt();
+        const baseSystemPrompt = agent.buildLLMSystemPrompt();
+        const storyLanguageInstruction =
+          typeof agent.getStoryLanguageInstruction === 'function' ? agent.getStoryLanguageInstruction() : '';
+        const systemPrompt = [storyLanguageInstruction, baseSystemPrompt].filter(Boolean).join('\n\n');
         let recent = agent.getRecentChatMessagesForLLM();
 
         if (silentUser) {
