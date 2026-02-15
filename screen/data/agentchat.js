@@ -2284,6 +2284,41 @@ class AgentChat extends React.Component {
     return choices;
   };
 
+  buildStoryInlineLines = text => {
+    const raw = String(text || '');
+    if (!raw) {
+      return [];
+    }
+
+    return raw.split(/\r?\n/).map(lineRaw => {
+      const line = lineRaw;
+      const trimmed = lineRaw.trim();
+
+      if (!trimmed) {
+        return { type: 'text', text: line };
+      }
+
+      const prefixMatch = trimmed.match(/^\s*(?:\[\s*([A-Za-z]|\d{1,2})\s*\]|([A-Za-z]|\d{1,2})\s*[).:])\s*(.+)$/);
+      if (prefixMatch) {
+        const marker = (prefixMatch[1] || prefixMatch[2] || '').trim();
+        const content = (prefixMatch[3] || '').trim();
+        if (marker && content.length >= 2) {
+          const send = /^\d+$/.test(marker) ? marker : marker.toUpperCase();
+          return { type: 'choice', text: line, send };
+        }
+      }
+
+      const ynMatch = trimmed.match(/^(yes|no|y|n)\s*(?:[\/|]\s*(yes|no|y|n))?\s*$/i);
+      if (ynMatch) {
+        const value = ynMatch[1].toLowerCase();
+        const send = value === 'yes' || value === 'y' ? 'Y' : 'N';
+        return { type: 'choice', text: line, send };
+      }
+
+      return { type: 'text', text: line };
+    });
+  };
+
   handleCommandPress = commandText => {
     this.sendCommand(commandText);
   };
@@ -2574,7 +2609,7 @@ class AgentChat extends React.Component {
     const isUser = item?.sender === 'user' || item?.role === 'user';
     const text = showDigest ? item?.digest || item?.summary || item?.text || '' : item?.text || '';
     const hasCopyLink = Boolean(item.copyText && item.linkLabel) && !isStoryDigest;
-    const storyChoices = !isUser && this.isStoryScope ? this.extractStoryChoices(text) : [];
+    const inlineLines = this.isStoryScope && !isUser ? this.buildStoryInlineLines(text) : null;
     const commandSegments =
       isUser && !isStoryDigest && this.isValidCommandText(text)
         ? [{ text, isCommand: true }]
@@ -2617,23 +2652,35 @@ class AgentChat extends React.Component {
               style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}
             >
               <Text style={messageTextStyle}>
-                {commandSegments.length === 0
-                  ? text
-                  : commandSegments.map((segment, segmentIndex) =>
-                      segment.isCommand ? (
-                        <Text
-                          key={`${item.id}-command-${segmentIndex}`}
-                          style={[messageTextStyle, commandTextStyle]}
-                          onPress={() => this.handleCommandPress(segment.commandText || segment.text)}
-                        >
-                          {segment.displayText || segment.text}
-                        </Text>
-                      ) : (
-                        <Text key={`${item.id}-text-${segmentIndex}`} style={messageTextStyle}>
-                          {segment.text}
-                        </Text>
-                      ),
-                    )}
+                {inlineLines
+                  ? inlineLines.map((lineItem, lineIndex) => (
+                      <Text
+                        key={`${item.id}-ln-${lineIndex}`}
+                        style={lineItem.type === 'choice' ? [messageTextStyle, styles.storyChoiceInline] : messageTextStyle}
+                        onPress={lineItem.type === 'choice' ? () => this.handleStoryChoicePress(lineItem.send) : undefined}
+                        suppressHighlighting
+                      >
+                        {lineItem.text}
+                        {lineIndex === inlineLines.length - 1 ? '' : '\n'}
+                      </Text>
+                    ))
+                  : commandSegments.length === 0
+                    ? text
+                    : commandSegments.map((segment, segmentIndex) =>
+                        segment.isCommand ? (
+                          <Text
+                            key={`${item.id}-command-${segmentIndex}`}
+                            style={[messageTextStyle, commandTextStyle]}
+                            onPress={() => this.handleCommandPress(segment.commandText || segment.text)}
+                          >
+                            {segment.displayText || segment.text}
+                          </Text>
+                        ) : (
+                          <Text key={`${item.id}-text-${segmentIndex}`} style={messageTextStyle}>
+                            {segment.text}
+                          </Text>
+                        ),
+                      )}
               </Text>
               {hasCopyLink && (
                 <TouchableOpacity
@@ -2643,20 +2690,6 @@ class AgentChat extends React.Component {
                 >
                   <Text style={[styles.messageText, styles.linkText]}>{item.linkLabel}</Text>
                 </TouchableOpacity>
-              )}
-              {this.isStoryScope && storyChoices.length > 0 && (
-                <View style={styles.storyChoiceWrap}>
-                  {storyChoices.map(choice => (
-                    <TouchableOpacity
-                      key={`${item.id}-choice-${choice.key}`}
-                      style={styles.storyChoiceBtn}
-                      activeOpacity={0.7}
-                      onPress={() => this.handleStoryChoicePress(choice.send)}
-                    >
-                      <Text style={styles.storyChoiceText}>{choice.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
               )}
             </TouchableOpacity>
             {isStoryDigest && item.regen === 1 && (
@@ -2929,6 +2962,12 @@ const styles = StyleSheet.create({
     color: '#d6e8ff',
     fontSize: 13,
     fontWeight: '600',
+  },
+  storyChoiceInline: {
+    color: '#d6e8ff',
+    backgroundColor: '#162441',
+    borderRadius: 4,
+    overflow: 'hidden',
   },
   inputContainer: {
     flexDirection: 'row',
