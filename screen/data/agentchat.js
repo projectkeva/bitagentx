@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { Icon } from 'react-native-elements';
 import RNFS from 'react-native-fs';
+import AsyncStorage from '@react-native-community/async-storage';
 import { connect } from 'react-redux';
 import CryptoJS from 'crypto-js';
 import { decode as b64decode } from 'base-64';
@@ -50,6 +51,19 @@ const LLM_BUILTIN_PATH = `${LLM_DIR}/builtin.json`;
 const LLM_CUSTOM_PATH = `${LLM_DIR}/custom.json`;
 const LLM_ACTIVE_PATH = `${LLM_DIR}/active.json`;
 const LLM_LAST_USED_PATH = `${LLM_DIR}/last_used.json`;
+const STORY_LANG_CODE_STORAGE_KEY = 'story_lang_code';
+const STORY_SUPPORTED_LANGS = [
+  { code: 'en', label: 'English' },
+  { code: 'zh-cn', label: '中文（简体）' },
+  { code: 'zh-tw', label: '中文（繁體）' },
+  { code: 'ja', label: '日本語' },
+  { code: 'ko', label: '한국어' },
+  { code: 'es', label: 'Español' },
+  { code: 'fr', label: 'Français' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'pt-br', label: 'Português (Brasil)' },
+  { code: 'ru', label: 'Русский' },
+];
 
 // 可选：如果你未来要“每个 agent 绑定不同模型”，再用它
 const getLLMOverridePath = agentId => `${LLM_DIR}/overrides_${encodeURIComponent(agentId)}.json`;
@@ -141,6 +155,7 @@ const COMMAND_HELP_MESSAGES = {
     '/welcome — Save a welcome message on-chain.',
     '/short on — History messages show digests (Story only).',
     '/short off — History messages show full text (Story only).',
+    '/lang — Set Story output language.',
     'Tap avatar — one-tap commit on-chain.',
     '/h — Show all command descriptions.',
   ].join('\n'),
@@ -151,6 +166,7 @@ const COMMAND_HELP_MESSAGES = {
     '/a — 配置并加载大模型提供方（云端或本地）。输入 /a 查看用法，/a list 查看已保存的 provider。',
     '/short on — 历史消息显示摘要（仅 Story）。',
     '/short off — 历史消息显示全文（仅 Story）。',
+    '/lang — 设置 Story 输出语言。',
     '/r — 生成角色扮演提示词，<text>为角色设定。',
     '/welcome — 将欢迎语上链保存。',
     '点头像 — 一键提交上链。',
@@ -163,6 +179,7 @@ const COMMAND_HELP_MESSAGES = {
     '/a — 設定並載入大模型提供方（雲端或本地）。輸入 /a 查看用法，/a list 查看已儲存的 provider。',
     '/short on — 歷史訊息顯示摘要（僅 Story）。',
     '/short off — 歷史訊息顯示全文（僅 Story）。',
+    '/lang — 設定 Story 輸出語言。',
     '/r — 產生角色扮演提示詞，<text>為角色設定。',
     '/welcome — 將歡迎語上鏈保存。',
     '點頭像 — 一鍵提交上鏈。',
@@ -431,6 +448,28 @@ const COMMAND_HELP_ALIASES = {
 };
 
 const normalizeLocale = locale => (locale || '').toString().trim().toLowerCase().replace(/_/g, '-');
+
+const normalizeStoryLangCode = code => {
+  const normalized = normalizeLocale(code);
+  if (!normalized) {
+    return 'en';
+  }
+  if (normalized === 'zh' || normalized === 'zh-hans' || normalized === 'zh-sg' || normalized === 'zh-cn') {
+    return 'zh-cn';
+  }
+  if (normalized === 'zh-hant' || normalized === 'zh-hk' || normalized === 'zh-mo' || normalized === 'zh-tw') {
+    return 'zh-tw';
+  }
+  return normalized;
+};
+
+const getStoryLangLabel = code => {
+  const normalized = normalizeStoryLangCode(code);
+  const hit = STORY_SUPPORTED_LANGS.find(item => item.code === normalized);
+  return hit?.label || normalized || 'English';
+};
+
+const getDefaultStoryLangCode = () => normalizeStoryLangCode(getCurrentInterfaceLanguage() || 'en');
 
 const getCurrentInterfaceLanguage = () =>
   (loc && typeof loc.getInterfaceLanguage === 'function' && loc.getInterfaceLanguage()) ||
@@ -1118,6 +1157,7 @@ class AgentChat extends React.Component {
       inputValue: '',
       llmConfig: null,
       storyShortMode: true,
+      storyLangCode: getDefaultStoryLangCode(),
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1216,6 +1256,7 @@ class AgentChat extends React.Component {
 
   initializeChat = async () => {
     await this.ensureDirs();
+    await this.restoreStoryLangCode();
     const history = await this.readHistory();
     const builtinRead = await this.readJsonFile(LLM_BUILTIN_PATH);
     if (builtinRead.__missing) {
@@ -1260,6 +1301,42 @@ class AgentChat extends React.Component {
           .then(() => this.runAutoLinkStart());
       },
     );
+  };
+
+  restoreStoryLangCode = async () => {
+    if (!this.isStoryScope) {
+      return;
+    }
+    try {
+      const savedCode = await AsyncStorage.getItem(STORY_LANG_CODE_STORAGE_KEY);
+      if (!savedCode) {
+        return;
+      }
+      const normalized = normalizeStoryLangCode(savedCode);
+      if (normalized) {
+        this.setState({ storyLangCode: normalized });
+      }
+    } catch (error) {
+      console.warn('Failed to restore story language', error);
+    }
+  };
+
+  persistStoryLangCode = async code => {
+    if (!this.isStoryScope) {
+      return;
+    }
+    try {
+      await AsyncStorage.setItem(STORY_LANG_CODE_STORAGE_KEY, normalizeStoryLangCode(code));
+    } catch (error) {
+      console.warn('Failed to persist story language', error);
+    }
+  };
+
+  setStoryLangCode = async code => {
+    const normalized = normalizeStoryLangCode(code);
+    this.setState({ storyLangCode: normalized });
+    await this.persistStoryLangCode(normalized);
+    return normalized;
   };
 
   ensureDirs = async () => {
@@ -1463,7 +1540,7 @@ class AgentChat extends React.Component {
   };
 
   appendStoryDigestForRaw = rawMessage => {
-    if (!this.isStoryScope || !rawMessage?.id || rawMessage?.hidden || rawMessage?.pending) {
+    if (!this.isStoryScope || !rawMessage?.id || rawMessage?.hidden || rawMessage?.pending || rawMessage?._localOnly) {
       return;
     }
     const dayKey = getLocalDateKey(rawMessage.timestamp);
@@ -1713,6 +1790,11 @@ class AgentChat extends React.Component {
       const enabled = nextMode === 'on';
       this.setState({ storyShortMode: enabled });
       showStatus(enabled ? 'Story history: short ON' : 'Story history: short OFF', 2000);
+      return;
+    }
+    const langMatch = /^\/lang(?:\s+(.+))?\s*$/i.exec(trimmed);
+    if (langMatch) {
+      await this.handleLangCommand(langMatch[1] || '');
       return;
     }
     const linkStartMatch = /^\/linkstart\b/i.exec(trimmed);
@@ -2114,6 +2196,78 @@ class AgentChat extends React.Component {
     }
   };
 
+
+  getStoryLangMenuMessage = () => {
+    const currentCode = normalizeStoryLangCode(this.state.storyLangCode || 'en');
+    return [
+      `当前语言 / Current language: ${getStoryLangLabel(currentCode)} (${currentCode})`,
+      '',
+      '[[/lang en|English]]   [[/lang zh-cn|中文]]   [[/lang other|Other languages]]',
+    ].join('\n');
+  };
+
+  getSupportedStoryLangListMessage = () => {
+    const lines = ['系统支持语言 / Supported languages:', ''];
+    for (let i = 0; i < STORY_SUPPORTED_LANGS.length; i += 3) {
+      const row = STORY_SUPPORTED_LANGS.slice(i, i + 3)
+        .map(item => `[[/lang ${item.code}|${item.label}]]`)
+        .join('   ');
+      lines.push(row);
+    }
+    return lines.join('\n');
+  };
+
+  appendStoryCommandMessage = text => {
+    this.appendMessage(this.buildMessage(text, 'agent'), 'user', {
+      _renderMode: 'commands',
+      _localOnly: true,
+    });
+  };
+
+  handleLangCommand = async argsString => {
+    if (!this.isStoryScope) {
+      showStatus('"/lang" is only available in Story mode', 2000);
+      return true;
+    }
+    const args = String(argsString || '').trim();
+    if (!args) {
+      this.appendStoryCommandMessage(this.getStoryLangMenuMessage());
+      return true;
+    }
+
+    const normalizedArg = normalizeStoryLangCode(args);
+    if (normalizedArg === 'other') {
+      this.appendStoryCommandMessage(this.getSupportedStoryLangListMessage());
+      return true;
+    }
+
+    const isSupported = STORY_SUPPORTED_LANGS.some(item => item.code === normalizedArg);
+    if (!isSupported) {
+      showStatus(`Unsupported language code: ${args}`, 2000);
+      this.appendStoryCommandMessage(this.getStoryLangMenuMessage());
+      return true;
+    }
+
+    await this.setStoryLangCode(normalizedArg);
+    this.appendStoryCommandMessage(this.getStoryLangMenuMessage());
+    return true;
+  };
+
+  getStoryLanguageInstruction = () => {
+    if (!this.isStoryScope) {
+      return '';
+    }
+    const code = normalizeStoryLangCode(this.state.storyLangCode || 'en');
+    switch (code) {
+      case 'zh-cn':
+        return '请使用简体中文回复。';
+      case 'zh-tw':
+        return '請使用繁體中文回覆。';
+      default:
+        return `Respond in ${getStoryLangLabel(code)} (code: ${code}).`;
+    }
+  };
+
   isInteractiveCommand = commandText => {
     if (!commandText) {
       return false;
@@ -2164,6 +2318,9 @@ class AgentChat extends React.Component {
       return true;
     }
     if (/^\/block$/i.test(trimmed)) {
+      return true;
+    }
+    if (/^\/lang(?:\s+.+)?$/i.test(trimmed)) {
       return true;
     }
     return false;
@@ -2652,7 +2809,8 @@ class AgentChat extends React.Component {
     const isUser = item?.sender === 'user' || item?.role === 'user';
     const text = showDigest ? item?.digest || item?.summary || item?.text || '' : item?.text || '';
     const hasCopyLink = Boolean(item.copyText && item.linkLabel) && !isStoryDigest;
-    const inlineLines = this.isStoryScope && !isUser && !isStoryDigest ? this.buildStoryInlineLines(text) : null;
+    const forceCommandRender = item?._renderMode === 'commands';
+    const inlineLines = this.isStoryScope && !forceCommandRender && !isUser && !isStoryDigest ? this.buildStoryInlineLines(text) : null;
     const commandSegments =
       isUser && !isStoryDigest && this.isValidCommandText(text)
         ? [{ text, isCommand: true }]
