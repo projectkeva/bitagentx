@@ -1518,7 +1518,12 @@ class AgentChat extends React.Component {
       });
   };
 
-  appendMessage = message => {
+  appendMessage = (messageOrText, sender = 'user', extra = null) => {
+    const message =
+      typeof messageOrText === 'string'
+        ? { ...this.buildMessage(messageOrText, sender), ...(extra || {}) }
+        : { ...(messageOrText || {}), ...(extra || {}) };
+
     this.shouldScrollToEnd = true;
     this.setState(
       prevState => {
@@ -1651,15 +1656,23 @@ class AgentChat extends React.Component {
     }
   };
 
-  handleSend = async () => {
-    const text = this.state.inputValue.trim();
-    if (!text) {
+  handleSend = async payload => {
+    const rawInput = String(payload?.displayText ?? this.state.inputValue ?? '').trim();
+    if (!rawInput) {
       return;
     }
-    const userMessage = this.buildMessage(text, 'user');
-    this.appendMessage(userMessage);
+    const modelText = String(payload?.modelText ?? rawInput).trim();
+    const userMessage = this.buildMessage(rawInput, 'user');
+    userMessage._modelText = modelText;
+    userMessage._choiceMeta = payload?.choiceMeta || null;
+    this.appendMessage(rawInput, 'user', {
+      id: userMessage.id,
+      timestamp: userMessage.timestamp,
+      _modelText: userMessage._modelText,
+      _choiceMeta: userMessage._choiceMeta,
+    });
     this.setState({ inputValue: '' });
-    await this.handleTriggers(text, userMessage);
+    await this.handleTriggers(modelText, userMessage);
   };
 
   sendCommand = async commandText => {
@@ -2284,6 +2297,51 @@ class AgentChat extends React.Component {
     return choices;
   };
 
+  parseStoryLineSegments = line => {
+    const text = String(line || '');
+    if (!text) {
+      return [];
+    }
+
+    const chunks = text.split(/(\s*[\/|]\s*)/);
+    const segments = [];
+
+    chunks.forEach(chunk => {
+      if (!chunk) {
+        return;
+      }
+      const trimmed = chunk.trim();
+      const isDivider = /^\s*[\/|]\s*$/.test(chunk);
+      if (!trimmed || isDivider) {
+        segments.push({ type: 'text', text: chunk });
+        return;
+      }
+
+      const prefixMatch = trimmed.match(/^\s*(?:\[\s*([A-Za-z]|\d{1,2})\s*\]|([A-Za-z]|\d{1,2})\s*[).:])\s*(.+)$/);
+      if (prefixMatch) {
+        const marker = (prefixMatch[1] || prefixMatch[2] || '').trim();
+        const content = (prefixMatch[3] || '').trim();
+        if (marker && content.length >= 1) {
+          const send = /^\d+$/.test(marker) ? marker : marker.toUpperCase();
+          segments.push({ type: 'choice', raw: chunk, send, display: content });
+          return;
+        }
+      }
+
+      const ynMatch = trimmed.match(/^(yes|no|y|n)\s*$/i);
+      if (ynMatch) {
+        const value = ynMatch[1].toLowerCase();
+        const send = value === 'yes' || value === 'y' ? 'Y' : 'N';
+        segments.push({ type: 'choice', raw: chunk, send, display: trimmed });
+        return;
+      }
+
+      segments.push({ type: 'text', text: chunk });
+    });
+
+    return segments;
+  };
+
   buildStoryInlineLines = text => {
     const raw = String(text || '');
     if (!raw) {
@@ -2291,31 +2349,12 @@ class AgentChat extends React.Component {
     }
 
     return raw.split(/\r?\n/).map(lineRaw => {
-      const line = lineRaw;
-      const trimmed = lineRaw.trim();
-
-      if (!trimmed) {
-        return { type: 'text', text: line };
-      }
-
-      const prefixMatch = trimmed.match(/^\s*(?:\[\s*([A-Za-z]|\d{1,2})\s*\]|([A-Za-z]|\d{1,2})\s*[).:])\s*(.+)$/);
-      if (prefixMatch) {
-        const marker = (prefixMatch[1] || prefixMatch[2] || '').trim();
-        const content = (prefixMatch[3] || '').trim();
-        if (marker && content.length >= 2) {
-          const send = /^\d+$/.test(marker) ? marker : marker.toUpperCase();
-          return { type: 'choice', text: line, send };
-        }
-      }
-
-      const ynMatch = trimmed.match(/^(yes|no|y|n)\s*(?:[\/|]\s*(yes|no|y|n))?\s*$/i);
-      if (ynMatch) {
-        const value = ynMatch[1].toLowerCase();
-        const send = value === 'yes' || value === 'y' ? 'Y' : 'N';
-        return { type: 'choice', text: line, send };
-      }
-
-      return { type: 'text', text: line };
+      const segments = this.parseStoryLineSegments(lineRaw);
+      return {
+        type: 'line',
+        segments: segments.length > 0 ? segments : [{ type: 'text', text: lineRaw }],
+        rawLine: lineRaw,
+      };
     });
   };
 
@@ -2323,8 +2362,12 @@ class AgentChat extends React.Component {
     this.sendCommand(commandText);
   };
 
-  handleStoryChoicePress = text => {
-    this.setState({ inputValue: String(text || '') }, () => this.handleSend());
+  handleStoryChoicePress = (modelText, displayText, choiceMeta = null) => {
+    this.handleSend({
+      modelText: String(modelText || ''),
+      displayText: String(displayText || modelText || ''),
+      choiceMeta,
+    });
   };
 
   handleMessageLongPress = messageText => {
@@ -2609,7 +2652,7 @@ class AgentChat extends React.Component {
     const isUser = item?.sender === 'user' || item?.role === 'user';
     const text = showDigest ? item?.digest || item?.summary || item?.text || '' : item?.text || '';
     const hasCopyLink = Boolean(item.copyText && item.linkLabel) && !isStoryDigest;
-    const inlineLines = this.isStoryScope && !isUser ? this.buildStoryInlineLines(text) : null;
+    const inlineLines = this.isStoryScope && !isUser && !isStoryDigest ? this.buildStoryInlineLines(text) : null;
     const commandSegments =
       isUser && !isStoryDigest && this.isValidCommandText(text)
         ? [{ text, isCommand: true }]
@@ -2654,13 +2697,23 @@ class AgentChat extends React.Component {
               <Text style={messageTextStyle}>
                 {inlineLines
                   ? inlineLines.map((lineItem, lineIndex) => (
-                      <Text
-                        key={`${item.id}-ln-${lineIndex}`}
-                        style={lineItem.type === 'choice' ? [messageTextStyle, styles.storyChoiceInline] : messageTextStyle}
-                        onPress={lineItem.type === 'choice' ? () => this.handleStoryChoicePress(lineItem.send) : undefined}
-                        suppressHighlighting
-                      >
-                        {lineItem.text}
+                      <Text key={`${item.id}-ln-${lineIndex}`}>
+                        {lineItem.segments.map((segment, segmentIndex) =>
+                          segment.type === 'choice' ? (
+                            <Text
+                              key={`${item.id}-ln-${lineIndex}-seg-${segmentIndex}`}
+                              style={[messageTextStyle, styles.storyChoiceInline]}
+                              onPress={() => this.handleStoryChoicePress(segment.send, segment.display, { raw: segment.raw })}
+                              suppressHighlighting
+                            >
+                              {segment.raw}
+                            </Text>
+                          ) : (
+                            <Text key={`${item.id}-ln-${lineIndex}-seg-${segmentIndex}`} style={messageTextStyle}>
+                              {segment.text}
+                            </Text>
+                          ),
+                        )}
                         {lineIndex === inlineLines.length - 1 ? '' : '\n'}
                       </Text>
                     ))
