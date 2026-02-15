@@ -515,8 +515,10 @@ export function attachAgentChatLLM(agent, deps) {
 
       try {
         const baseSystemPrompt = agent.buildLLMSystemPrompt();
+        const storyLangCode =
+          (typeof agent.getStoryLangCode === 'function' && agent.getStoryLangCode()) || agent.state?.storyLangCode || null;
         const storyLanguageInstruction =
-          typeof agent.getStoryLanguageInstruction === 'function' ? agent.getStoryLanguageInstruction() : '';
+          storyLangCode && typeof agent.getStoryLanguageInstruction === 'function' ? agent.getStoryLanguageInstruction() : '';
         const systemPrompt = [storyLanguageInstruction, baseSystemPrompt].filter(Boolean).join('\n\n');
         let recent = agent.getRecentChatMessagesForLLM();
 

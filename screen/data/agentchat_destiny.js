@@ -8,9 +8,43 @@ function pickGameLanguage(loc) {
     'en';
 
   const normalized = String(lang).toLowerCase().replace('_', '-');
-  if (normalized.startsWith('zh-hant') || normalized.startsWith('zh-tw') || normalized.startsWith('zh-hk')) return '繁體中文';
-  if (normalized.startsWith('zh')) return '简体中文';
+  if (normalized.startsWith('zh-hant') || normalized.startsWith('zh-tw') || normalized.startsWith('zh-hk')) return 'Traditional Chinese';
+  if (normalized.startsWith('zh')) return 'Simplified Chinese';
+  if (normalized.startsWith('ja')) return 'Japanese';
   return 'English';
+}
+
+function languageNameFromCode(code) {
+  const normalized = String(code || '').toLowerCase();
+  switch (normalized) {
+    case 'zh-cn':
+      return 'Simplified Chinese';
+    case 'zh-tw':
+      return 'Traditional Chinese';
+    case 'ja':
+      return 'Japanese';
+    case 'ko':
+      return 'Korean';
+    case 'es':
+      return 'Spanish';
+    case 'fr':
+      return 'French';
+    case 'de':
+      return 'German';
+    case 'pt-br':
+      return 'Portuguese (Brazil)';
+    case 'ru':
+      return 'Russian';
+    case 'en':
+    default:
+      return 'English';
+  }
+}
+
+function removeLanguageHandshake(seedPrompt) {
+  return String(seedPrompt || '')
+    .replace(/LANGUAGE HANDSHAKE \(BEFORE THE GAME STARTS\):[\s\S]*?\n\nGAME LOOP OUTLINE:/, 'GAME LOOP OUTLINE:')
+    .trim();
 }
 
 function isLLMActive(chat) {
@@ -20,7 +54,7 @@ function isLLMActive(chat) {
 }
 
 async function handleDestinyCommand(chat, deps) {
-  const { buildDestinySeedPrompt, loc } = deps || {};
+  const { buildDestinySeedPrompt, loc, storyLangCode } = deps || {};
   if (typeof buildDestinySeedPrompt !== 'function') {
     chat.replyFromAgent('Destiny module deps missing.');
     return;
@@ -33,15 +67,15 @@ async function handleDestinyCommand(chat, deps) {
   const seedPrompt = buildDestinySeedPrompt(agentId);
 
   if (isLLMActive(chat)) {
-    const uiLang = pickGameLanguage(loc);
+    const lockedLanguage = storyLangCode ? languageNameFromCode(storyLangCode) : pickGameLanguage(loc);
     const autostartHeader =
       'IMPORTANT:\n' +
-      `- Use ${uiLang} for the entire run (follow the app/system language).\n` +
+      `- Language: ${lockedLanguage}. Reply only in ${lockedLanguage}.\n` +
       '- Do NOT ask the player to choose a language.\n' +
       '- Start the interactive game immediately.\n\n';
 
     chat.replyFromAgent('Starting Destiny run…');
-    await chat.replyFromLLM(autostartHeader + seedPrompt, null, { silentUser: true });
+    await chat.replyFromLLM(autostartHeader + removeLanguageHandshake(seedPrompt), null, { silentUser: true });
     return;
   }
 
