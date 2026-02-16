@@ -2201,9 +2201,10 @@ class AgentChat extends React.Component {
 
 
   getStoryLangMenuMessage = () => {
-    const currentCode = this.getStoryLangCode() || 'not set';
+    const currentCode = this.getStoryLangCode();
+    const currentLabel = currentCode ? getStoryLangLabel(currentCode) : 'Not set';
     return [
-      `Current language: ${currentCode}`,
+      `Current language: ${currentCode ? `${currentLabel} (${currentCode})` : 'Not set'}`,
       '',
       '[[/lang en|English]]   [[/lang zh-cn|中文]]   [[/lang other|Other languages]]',
     ].join('\n');
@@ -2287,9 +2288,31 @@ class AgentChat extends React.Component {
 
   buildDestinyModeMenuMessage = () => {
     return [
-      'Continue your story or start a new run?',
-      '[[/d continue|Continue story]] [[/d new|Start new]]',
+      'What would you like to do?',
+      '',
+      '[[/d continue|Continue story]]',
+      '',
+      '[[/d new|Start new]]',
+      '',
+      'Memory review (coming soon)',
+      '',
+      '[[/lang|Change language]]',
     ].join('\n');
+  };
+
+  buildDestinyCurrentLanguageNotice = () => {
+    const code = this.getStoryLangCode();
+    const label = code ? getStoryLangLabel(code) : '';
+    if (!code) {
+      return 'Current language: Not set';
+    }
+    if (code === 'zh-cn') {
+      return `当前使用语言：${label}（${code}）`;
+    }
+    if (code === 'zh-tw') {
+      return `目前語言：${label}（${code}）`;
+    }
+    return `Current language: ${label} (${code})`;
   };
 
   buildStoryCondensedMemory = async (limit = 50) => {
@@ -2360,6 +2383,8 @@ class AgentChat extends React.Component {
       await this.handleLangCommand('');
       return;
     }
+
+    this.appendStoryCommandMessage(this.buildDestinyCurrentLanguageNotice());
 
     if (mode === 'menu') {
       this.appendStoryCommandMessage(this.buildDestinyModeMenuMessage());
