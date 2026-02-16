@@ -1160,6 +1160,7 @@ class AgentChat extends React.Component {
       storyLangCode: null,
       pendingDestinyRun: false,
       pendingDestinyMode: null,
+      pendingReturnToDestinyMenu: false,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1772,6 +1773,13 @@ class AgentChat extends React.Component {
     const aMatch = /^\/a(?:\s+(.+))?$/i.exec(trimmed);
     if (aMatch) {
       await this.handleAIConfigCommand(trimmed);
+
+      if (this.isStoryScope && this.state.pendingReturnToDestinyMenu) {
+        if (!/^\/a\s+list\b/i.test(trimmed)) {
+          await new Promise(resolve => this.setState({ pendingReturnToDestinyMenu: false }, resolve));
+          await this.handleDestinyCommand('menu');
+        }
+      }
       return;
     }
     const helpMatch = /^\/h\b/i.exec(trimmed);
@@ -2297,6 +2305,10 @@ class AgentChat extends React.Component {
       'Memory review (coming soon)',
       '',
       '[[/lang|Change language]]',
+      '',
+      '[[/a list|Change model]]',
+      '',
+      'Generate agent memory (coming soon)',
     ].join('\n');
   };
 
@@ -2387,6 +2399,7 @@ class AgentChat extends React.Component {
     this.appendStoryCommandMessage(this.buildDestinyCurrentLanguageNotice());
 
     if (mode === 'menu') {
+      this.setState({ pendingReturnToDestinyMenu: true });
       this.appendStoryCommandMessage(this.buildDestinyModeMenuMessage());
       return;
     }
@@ -2394,10 +2407,12 @@ class AgentChat extends React.Component {
     if (mode === 'continue') {
       const condensedMemory = await this.buildStoryCondensedMemory();
       await this.startDestinyRun({ memoryMode: 'continue', condensedMemory });
+      await this.handleDestinyCommand('menu');
       return;
     }
 
     await this.startDestinyRun({ memoryMode: 'new', condensedMemory: '' });
+    await this.handleDestinyCommand('menu');
   };
 
   startDestinyRun = async options => {
