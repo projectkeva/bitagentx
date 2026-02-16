@@ -2991,11 +2991,13 @@ class AgentChat extends React.Component {
     const text = showDigest ? item?.digest || item?.summary || item?.text || '' : item?.text || '';
     const hasCopyLink = Boolean(item.copyText && item.linkLabel) && !isStoryDigest;
     const forceCommandRender = item?._renderMode === 'commands';
-    const inlineLines = this.isStoryScope && !forceCommandRender && !isUser && !isStoryDigest ? this.buildStoryInlineLines(text) : null;
     const commandSegments =
       isUser && !isStoryDigest && this.isValidCommandText(text)
         ? [{ text, isCommand: true }]
         : this.getCommandSegments(text);
+    const hasCommand = Array.isArray(commandSegments) && commandSegments.some(segment => segment.isCommand || segment.commandText);
+    const inlineLines =
+      this.isStoryScope && !forceCommandRender && !isUser && !isStoryDigest && !hasCommand ? this.buildStoryInlineLines(text) : null;
     const hasCommandTokens = commandSegments.some(segment => segment.isCommand);
     const messageTextStyle = [styles.messageText, isUser ? styles.userText : styles.agentText];
     const commandTextStyle = isUser ? styles.commandTextUser : styles.commandText;
