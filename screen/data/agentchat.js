@@ -2267,6 +2267,8 @@ class AgentChat extends React.Component {
       const pendingMode = this.state.pendingDestinyMode || 'menu';
       await new Promise(resolve => this.setState({ pendingDestinyRun: false, pendingDestinyMode: null }, resolve));
       await this.handleDestinyCommand(pendingMode);
+    } else {
+      await this.handleDestinyCommand('menu');
     }
 
     return true;
