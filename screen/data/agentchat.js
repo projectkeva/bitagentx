@@ -1772,13 +1772,17 @@ class AgentChat extends React.Component {
     const trimmed = text.trim();
     const aMatch = /^\/a(?:\s+(.+))?$/i.exec(trimmed);
     if (aMatch) {
+      const beforeModel = String(this.state.llmConfig?.model || '');
       await this.handleAIConfigCommand(trimmed);
+      const afterModel = String(this.state.llmConfig?.model || '');
 
-      if (this.isStoryScope && this.state.pendingReturnToDestinyMenu) {
-        if (!/^\/a\s+list\b/i.test(trimmed)) {
-          await new Promise(resolve => this.setState({ pendingReturnToDestinyMenu: false }, resolve));
-          await this.handleDestinyCommand('menu');
-        }
+      if (
+        this.isStoryScope &&
+        this.state.pendingReturnToDestinyMenu &&
+        beforeModel !== afterModel
+      ) {
+        await new Promise(resolve => this.setState({ pendingReturnToDestinyMenu: false }, resolve));
+        await this.handleDestinyCommand('menu');
       }
       return;
     }
@@ -2320,12 +2324,6 @@ class AgentChat extends React.Component {
     if (!code) {
       return 'Current language: Not set';
     }
-    if (code === 'zh-cn') {
-      return `当前使用语言：${label}（${code}）`;
-    }
-    if (code === 'zh-tw') {
-      return `目前語言：${label}（${code}）`;
-    }
     return `Current language: ${label} (${code})`;
   };
 
@@ -2411,12 +2409,11 @@ class AgentChat extends React.Component {
     if (mode === 'continue') {
       const condensedMemory = await this.buildStoryCondensedMemory();
       await this.startDestinyRun({ memoryMode: 'continue', condensedMemory });
-      await this.handleDestinyCommand('menu');
       return;
     }
 
     await this.startDestinyRun({ memoryMode: 'new', condensedMemory: '' });
-    await this.handleDestinyCommand('menu');
+    return;
   };
 
   startDestinyRun = async options => {
