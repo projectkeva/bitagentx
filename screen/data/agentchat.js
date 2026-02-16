@@ -2391,7 +2391,9 @@ class AgentChat extends React.Component {
 
     const lang = this.getStoryLangCode();
     if (!lang) {
-      this.setState({ pendingDestinyRun: true, pendingDestinyMode: mode });
+      await new Promise(resolve =>
+        this.setState({ pendingDestinyRun: true, pendingDestinyMode: mode }, resolve)
+      );
       await this.handleLangCommand('');
       return;
     }
