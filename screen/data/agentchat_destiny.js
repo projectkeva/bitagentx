@@ -54,7 +54,7 @@ function isLLMActive(chat) {
 }
 
 async function handleDestinyCommand(chat, deps) {
-  const { buildDestinySeedPrompt, loc, storyLangCode } = deps || {};
+  const { buildDestinySeedPrompt, loc, storyLangCode, memoryMode = 'new', condensedMemory = '' } = deps || {};
   if (typeof buildDestinySeedPrompt !== 'function') {
     chat.replyFromAgent('Destiny module deps missing.');
     return;
@@ -75,7 +75,12 @@ async function handleDestinyCommand(chat, deps) {
       '- Start the interactive game immediately.\n\n';
 
     chat.replyFromAgent('Starting Destiny run…');
-    await chat.replyFromLLM(autostartHeader + removeLanguageHandshake(seedPrompt), null, { silentUser: true });
+    await chat.replyFromLLM(autostartHeader + removeLanguageHandshake(seedPrompt), null, {
+      silentUser: true,
+      useRecentHistory: false,
+      memoryMode,
+      condensedMemory,
+    });
     return;
   }
 

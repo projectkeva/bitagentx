@@ -482,7 +482,7 @@ export function attachAgentChatLLM(agent, deps) {
   agent.replyFromLLM =
     agent.replyFromLLM ||
     (async (userText, userMessage = null, options = {}) => {
-      const { silentUser = false } = options || {};
+      const { silentUser = false, useRecentHistory = true, memoryMode = 'new', condensedMemory = '' } = options || {};
       const requestId = `${Date.now()}-${Math.random()}`;
       const placeholder = {
         id: `agent-${requestId}`,
@@ -519,8 +519,12 @@ export function attachAgentChatLLM(agent, deps) {
           (typeof agent.getStoryLangCode === 'function' && agent.getStoryLangCode()) || agent.state?.storyLangCode || null;
         const storyLanguageInstruction =
           storyLangCode && typeof agent.getStoryLanguageInstruction === 'function' ? agent.getStoryLanguageInstruction() : '';
-        const systemPrompt = [storyLanguageInstruction, baseSystemPrompt].filter(Boolean).join('\n\n');
-        let recent = agent.getRecentChatMessagesForLLM();
+        const memoryInstruction =
+          memoryMode === 'continue' && String(condensedMemory || '').trim()
+            ? `MEMORY (condensed story so far):\n${String(condensedMemory || '').trim()}`
+            : '';
+        const systemPrompt = [storyLanguageInstruction, baseSystemPrompt, memoryInstruction].filter(Boolean).join('\n\n');
+        let recent = useRecentHistory ? agent.getRecentChatMessagesForLLM() : [];
 
         if (silentUser) {
           recent.push({

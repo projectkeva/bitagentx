@@ -1159,6 +1159,7 @@ class AgentChat extends React.Component {
       storyShortMode: true,
       storyLangCode: null,
       pendingDestinyRun: false,
+      pendingDestinyMode: null,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1839,9 +1840,9 @@ class AgentChat extends React.Component {
       );
       return;
     }
-    const normalized = trimmed.toUpperCase();
-    if (normalized === '/D') {
-      await this.handleDestinyCommand();
+    const destinyMatch = /^\/d(?:\s+(.+))?$/i.exec(trimmed);
+    if (destinyMatch) {
+      await this.handleDestinyCommand(destinyMatch[1] || '');
       return;
     }
 
@@ -2254,8 +2255,9 @@ class AgentChat extends React.Component {
     this.appendStoryCommandMessage(this.getStoryLangMenuMessage());
 
     if (this.state.pendingDestinyRun) {
-      await new Promise(resolve => this.setState({ pendingDestinyRun: false }, resolve));
-      await this.startDestinyRun();
+      const pendingMode = this.state.pendingDestinyMode || 'menu';
+      await new Promise(resolve => this.setState({ pendingDestinyRun: false, pendingDestinyMode: null }, resolve));
+      await this.handleDestinyCommand(pendingMode);
     }
 
     return true;
@@ -2272,21 +2274,114 @@ class AgentChat extends React.Component {
     return normalizeStoryLangCode(code);
   };
 
-  handleDestinyCommand = async () => {
+  getDestinyModeFromArg = value => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'continue') {
+      return 'continue';
+    }
+    if (normalized === 'new') {
+      return 'new';
+    }
+    return 'menu';
+  };
+
+  buildDestinyModeMenuMessage = () => {
+    return [
+      'Continue your story or start a new run?',
+      '[[/d continue|Continue story]] [[/d new|Start new]]',
+    ].join('\n');
+  };
+
+  buildStoryCondensedMemory = async (limit = 50) => {
+    if (!this.isStoryScope) {
+      return '';
+    }
+    try {
+      const digestDir = `${this.agentChatDir}/digest`;
+      const exists = await RNFS.exists(digestDir);
+      if (!exists) {
+        return '';
+      }
+      const entries = await RNFS.readDir(digestDir);
+      const keys = entries
+        .filter(entry => entry.isFile())
+        .map(entry => entry.name)
+        .filter(name => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
+        .map(name => name.replace('.json', ''))
+        .sort()
+        .reverse();
+
+      const picked = [];
+      for (const dayKey of keys) {
+        if (picked.length >= limit) {
+          break;
+        }
+        const dayEntries = await this.readDigestDayEntries(dayKey);
+        if (!Array.isArray(dayEntries) || dayEntries.length === 0) {
+          continue;
+        }
+        for (let i = dayEntries.length - 1; i >= 0; i -= 1) {
+          const item = dayEntries[i];
+          const digestText = String(item?.summary || item?.text || '').trim();
+          if (!digestText) {
+            continue;
+          }
+          picked.push({ role: item?.role === 'user' ? 'U' : 'A', text: digestText });
+          if (picked.length >= limit) {
+            break;
+          }
+        }
+      }
+
+      if (picked.length === 0) {
+        return '';
+      }
+
+      return picked
+        .reverse()
+        .map(item => `${item.role}: ${item.text}`)
+        .join('\n');
+    } catch (error) {
+      console.warn('Failed to build condensed story memory', error);
+      return '';
+    }
+  };
+
+  handleDestinyCommand = async modeArg => {
+    const mode = this.getDestinyModeFromArg(modeArg);
+    if (!this.isStoryScope) {
+      await this.startDestinyRun({ memoryMode: mode === 'continue' ? 'continue' : 'new', condensedMemory: '' });
+      return;
+    }
+
     const lang = this.getStoryLangCode();
     if (!lang) {
-      this.setState({ pendingDestinyRun: true });
+      this.setState({ pendingDestinyRun: true, pendingDestinyMode: mode });
       await this.handleLangCommand('');
       return;
     }
-    await this.startDestinyRun();
+
+    if (mode === 'menu') {
+      this.appendStoryCommandMessage(this.buildDestinyModeMenuMessage());
+      return;
+    }
+
+    if (mode === 'continue') {
+      const condensedMemory = await this.buildStoryCondensedMemory();
+      await this.startDestinyRun({ memoryMode: 'continue', condensedMemory });
+      return;
+    }
+
+    await this.startDestinyRun({ memoryMode: 'new', condensedMemory: '' });
   };
 
-  startDestinyRun = async () => {
+  startDestinyRun = async options => {
     await Destiny.handleDestinyCommand(this, {
       buildDestinySeedPrompt,
       loc,
       storyLangCode: this.getStoryLangCode(),
+      memoryMode: options?.memoryMode || 'new',
+      condensedMemory: String(options?.condensedMemory || ''),
     });
   };
 
@@ -2356,7 +2451,7 @@ class AgentChat extends React.Component {
     if (/^\/m\b/i.test(trimmed)) {
       return true;
     }
-    if (/^\/d$/i.test(trimmed)) {
+    if (/^\/d(?:\s+(?:continue|new))?$/i.test(trimmed)) {
       return true;
     }
     if (/^\/block$/i.test(trimmed)) {
@@ -2914,7 +3009,14 @@ class AgentChat extends React.Component {
                             </Text>
                           ),
                         )}
-                        {lineIndex === inlineLines.length - 1 ? '' : '\n'}
+                        {(() => {
+                          if (lineIndex === inlineLines.length - 1) {
+                            return '';
+                          }
+                          const lineHasChoice =
+                            lineItem?.type === 'choice' || lineItem?.segments?.some(segment => segment?.type === 'choice');
+                          return lineHasChoice ? '\n\n' : '\n';
+                        })()}
                       </Text>
                     ))
                   : commandSegments.length === 0
