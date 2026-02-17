@@ -1161,6 +1161,7 @@ class AgentChat extends React.Component {
       pendingDestinyRun: false,
       pendingDestinyMode: null,
       pendingReturnToDestinyMenu: false,
+      pendingModelFinalConfirm: false,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1775,13 +1776,18 @@ class AgentChat extends React.Component {
       const beforeModel = String(this.state.llmConfig?.model || '');
       await this.handleAIConfigCommand(trimmed);
       const afterModel = String(this.state.llmConfig?.model || '');
+      const isFinalModelCommand = /^\/a\s+model\b/i.test(trimmed);
 
       if (
         this.isStoryScope &&
         this.state.pendingReturnToDestinyMenu &&
+        this.state.pendingModelFinalConfirm &&
+        isFinalModelCommand &&
         beforeModel !== afterModel
       ) {
-        await new Promise(resolve => this.setState({ pendingReturnToDestinyMenu: false }, resolve));
+        await new Promise(resolve =>
+          this.setState({ pendingReturnToDestinyMenu: false, pendingModelFinalConfirm: false }, resolve)
+        );
         await this.handleDestinyCommand('menu');
       }
       return;
@@ -2401,7 +2407,7 @@ class AgentChat extends React.Component {
     this.appendStoryCommandMessage(this.buildDestinyCurrentLanguageNotice());
 
     if (mode === 'menu') {
-      this.setState({ pendingReturnToDestinyMenu: false });
+      this.setState({ pendingReturnToDestinyMenu: false, pendingModelFinalConfirm: false });
       this.appendStoryCommandMessage(this.buildDestinyModeMenuMessage());
       return;
     }
@@ -2696,7 +2702,10 @@ class AgentChat extends React.Component {
   handleCommandPress = commandText => {
     const cmd = String(commandText || '').trim();
     if (this.isStoryScope && /^\/a\s+list\b/i.test(cmd)) {
-      this.setState({ pendingReturnToDestinyMenu: true }, () => this.sendCommand(cmd));
+      this.setState(
+        { pendingReturnToDestinyMenu: true, pendingModelFinalConfirm: true },
+        () => this.sendCommand(cmd)
+      );
       return;
     }
     this.sendCommand(cmd);
