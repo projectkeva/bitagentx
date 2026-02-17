@@ -26,18 +26,7 @@ import { BlueNavigationStyle } from '../../BlueComponents';
 let loc = require('../../loc');
 const Rolecards = require('./agentchat_rolecards');
 const Roleplay = require('./agentchat_roleplay');
-const Destiny = require('./agentchat_destiny');
 import { attachAgentChatLLM } from './agentchat_llm';
-import {
-  appendDigestEntry,
-  buildDigestFromRaw,
-  ensureStoryDirs,
-  getStoryDigestPath,
-  getStoryRawPath,
-  readStoryEntriesByDay,
-  toDigestFallbackText,
-  updateDigestEntry,
-} from './agentchat_story_storage';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
 import ActionSheet from '../ActionSheet';
@@ -121,7 +110,7 @@ const LLM_PROVIDERS = {
 };
 
 const COMMAND_TOKEN_REGEX =
-  /\/(?:r|welcome|m)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:d|h|linkstart|block|a)\b/gi;
+  /\/(?:r|welcome|m)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:h|linkstart|block|a)\b/gi;
 const COMMAND_DISPLAY_TOKEN_REGEX = /\[\[([^\]|]+)\|([^\]]+)\]\]/gi;
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
@@ -509,7 +498,11 @@ const getLocalizedMessage = (messagesByLocale, key) => {
   return resolveLocalizedEntry(messagesByLocale, 'en', key) || '';
 };
 
-const getCommandHelpMessage = () => getLocalizedMessage(COMMAND_HELP_MESSAGES);
+const getCommandHelpMessage = () =>
+  getLocalizedMessage(COMMAND_HELP_MESSAGES)
+    .split('\n')
+    .filter(line => !/^\/d\b/i.test(line.trim()) && !/^\/lang\b/i.test(line.trim()) && !/^\/short\b/i.test(line.trim()))
+    .join('\n');
 
 const getCommandUsageMessage = commandKey => getLocalizedMessage(COMMAND_USAGE_MESSAGES, commandKey);
 const getRoleHistoryTitle = () => {
@@ -1156,12 +1149,6 @@ class AgentChat extends React.Component {
       visibleCount: PAGE_SIZE,
       inputValue: '',
       llmConfig: null,
-      storyShortMode: true,
-      storyLangCode: null,
-      pendingDestinyRun: false,
-      pendingDestinyMode: null,
-      pendingReturnToDestinyMenu: false,
-      pendingModelFinalConfirm: false,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1176,12 +1163,10 @@ class AgentChat extends React.Component {
     this.isPlayingIntro = false;
     const params = this.props.navigation?.state?.params || {};
     this.agentId = getAgentIdFromParams(params);
-    this.chatScope = (params.chatScope || 'chat').toString();
-    this.isStoryScope = this.chatScope === 'story';
+    this.chatScope = 'chat';
+    this.isStoryScope = false;
     this.agentChatDir = `${CHAT_DIR}/${encodeURIComponent(this.agentId)}/${encodeURIComponent(this.chatScope)}`;
     this.getDayFilePath = dateKey => `${this.agentChatDir}/${dateKey}.json`;
-    this.getStoryRawPath = dateKey => getStoryRawPath(this.agentChatDir, dateKey);
-    this.getStoryDigestPath = dateKey => getStoryDigestPath(this.agentChatDir, dateKey);
     this.loadedDateKeys = [];
     this.allDateKeys = [];
     this.persistQueue = Promise.resolve();
@@ -1207,8 +1192,7 @@ class AgentChat extends React.Component {
     const displayName = params.displayName || 'Agent';
     const shortCode = params.shortCode ? `@${params.shortCode}` : '';
     const baseTitle = shortCode ? `${displayName}${shortCode}` : displayName;
-    const chatScope = (params.chatScope || 'chat').toString();
-    const title = chatScope === 'story' ? `${baseTitle} · Story` : baseTitle;
+    const title = baseTitle;
 
     return {
       ...BlueNavigationStyle(),
@@ -1260,7 +1244,6 @@ class AgentChat extends React.Component {
 
   initializeChat = async () => {
     await this.ensureDirs();
-    await this.restoreStoryLangCode();
     const history = await this.readHistory();
     const builtinRead = await this.readJsonFile(LLM_BUILTIN_PATH);
     if (builtinRead.__missing) {
@@ -1282,8 +1265,7 @@ class AgentChat extends React.Component {
     } else if (activeRead.__parseError) {
       this.replyFromAgent(`LLM active state is corrupted. Backup created. Please fix/delete: ${LLM_ACTIVE_PATH}`);
     }
-    const digestHistory = this.isStoryScope ? await this.readDigestHistory() : [];
-    const historyForRender = this.isStoryScope ? this.buildStoryHistoryMessages(history, digestHistory) : history;
+    const historyForRender = history;
     const llmConfig = await this.loadLLMConfig();
     if (!this._isMounted) {
       return;
@@ -1778,44 +1760,14 @@ class AgentChat extends React.Component {
       const afterModel = String(this.state.llmConfig?.model || '');
       const isFinalModelCommand = /^\/a\s+model\b/i.test(trimmed);
 
-      if (
-        this.isStoryScope &&
-        this.state.pendingReturnToDestinyMenu &&
-        this.state.pendingModelFinalConfirm &&
-        isFinalModelCommand &&
-        beforeModel !== afterModel
-      ) {
-        await new Promise(resolve =>
-          this.setState({ pendingReturnToDestinyMenu: false, pendingModelFinalConfirm: false }, resolve)
-        );
-        await this.handleDestinyCommand('menu');
+      if (isFinalModelCommand && beforeModel !== afterModel) {
+        // no-op for chat mode
       }
       return;
     }
     const helpMatch = /^\/h\b/i.exec(trimmed);
     if (helpMatch) {
       this.replyFromAgent(getCommandHelpMessage());
-      return;
-    }
-    const shortMatch = /^\/short(?:\s+(on|off))?\s*$/i.exec(trimmed);
-    if (shortMatch) {
-      if (!this.isStoryScope) {
-        showStatus('"/short" is only available in Story mode', 2000);
-        return;
-      }
-      const nextMode = (shortMatch[1] || '').toLowerCase();
-      if (!nextMode) {
-        showStatus('Usage: /short on | /short off', 2000);
-        return;
-      }
-      const enabled = nextMode === 'on';
-      this.setState({ storyShortMode: enabled });
-      showStatus(enabled ? 'Story history: short ON' : 'Story history: short OFF', 2000);
-      return;
-    }
-    const langMatch = /^\/lang(?:\s+(.+))?\s*$/i.exec(trimmed);
-    if (langMatch) {
-      await this.handleLangCommand(langMatch[1] || '');
       return;
     }
     const linkStartMatch = /^\/linkstart\b/i.exec(trimmed);
@@ -1856,11 +1808,6 @@ class AgentChat extends React.Component {
           getCommandUsageMessage,
         }),
       );
-      return;
-    }
-    const destinyMatch = /^\/d(?:\s+(.+))?$/i.exec(trimmed);
-    if (destinyMatch) {
-      await this.handleDestinyCommand(destinyMatch[1] || '');
       return;
     }
 
@@ -2498,13 +2445,7 @@ class AgentChat extends React.Component {
     if (/^\/m\b/i.test(trimmed)) {
       return true;
     }
-    if (/^\/d(?:\s+(?:continue|new))?$/i.test(trimmed)) {
-      return true;
-    }
     if (/^\/block$/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/lang(?:\s+.+)?$/i.test(trimmed)) {
       return true;
     }
     return false;

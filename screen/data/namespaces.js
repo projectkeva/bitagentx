@@ -397,14 +397,31 @@ class Namespace extends React.Component {
   }
 
   onStory = () => {
-    const { isOther } = this.props;
+    const { data, navigation, isOther } = this.props;
     if (isOther) {
+      return;
+    }
+    if (!navigation || typeof navigation.push !== 'function') {
       return;
     }
     if (!this.props.canChat) {
       return;
     }
-    this.onChat({ autoCommand: '/d', suppressAutoLinkStart: true, chatScope: 'story' });
+    const namespaceId = data.id || data.namespaceId;
+    navigation.push('AgentStory', {
+      namespaceId,
+      shortCode: data.shortCode,
+      displayName: data.displayName,
+      walletId: data.walletId,
+      txid: data.txId,
+      rootAddress: data.rootAddress,
+      price: data.price,
+      desc: data.desc,
+      addr: data.addr,
+      profile: data.profile,
+      autoCommand: '/d',
+      suppressAutoLinkStart: true,
+    });
   }
 
   onMessage = () => {
@@ -431,7 +448,7 @@ class Namespace extends React.Component {
       return;
     }
     const namespaceId = data.id || data.namespaceId;
-    const { autoCommand, suppressAutoLinkStart, chatScope } = options;
+    const { autoCommand, suppressAutoLinkStart } = options;
 
     if (!isOther) {
       navigation.push('AgentChat', {
@@ -447,7 +464,6 @@ class Namespace extends React.Component {
         profile: data.profile,
         autoCommand,
         suppressAutoLinkStart,
-        chatScope,
       });
       return;
     }
