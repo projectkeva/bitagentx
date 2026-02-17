@@ -2401,7 +2401,7 @@ class AgentChat extends React.Component {
     this.appendStoryCommandMessage(this.buildDestinyCurrentLanguageNotice());
 
     if (mode === 'menu') {
-      this.setState({ pendingReturnToDestinyMenu: true });
+      this.setState({ pendingReturnToDestinyMenu: false });
       this.appendStoryCommandMessage(this.buildDestinyModeMenuMessage());
       return;
     }
@@ -2694,7 +2694,12 @@ class AgentChat extends React.Component {
   };
 
   handleCommandPress = commandText => {
-    this.sendCommand(commandText);
+    const cmd = String(commandText || '').trim();
+    if (this.isStoryScope && /^\/a\s+list\b/i.test(cmd)) {
+      this.setState({ pendingReturnToDestinyMenu: true }, () => this.sendCommand(cmd));
+      return;
+    }
+    this.sendCommand(cmd);
   };
 
   handleStoryChoicePress = (modelText, displayText, choiceMeta = null) => {
