@@ -1176,8 +1176,8 @@ class AgentChat extends React.Component {
     this.isPlayingIntro = false;
     const params = this.props.navigation?.state?.params || {};
     this.agentId = getAgentIdFromParams(params);
-    this.chatScope = (params.chatScope || 'chat').toString();
-    this.isStoryScope = this.chatScope === 'story';
+    this.chatScope = 'story';
+    this.isStoryScope = true;
     this.agentChatDir = `${CHAT_DIR}/${encodeURIComponent(this.agentId)}/${encodeURIComponent(this.chatScope)}`;
     this.getDayFilePath = dateKey => `${this.agentChatDir}/${dateKey}.json`;
     this.getStoryRawPath = dateKey => getStoryRawPath(this.agentChatDir, dateKey);
@@ -1207,8 +1207,7 @@ class AgentChat extends React.Component {
     const displayName = params.displayName || 'Agent';
     const shortCode = params.shortCode ? `@${params.shortCode}` : '';
     const baseTitle = shortCode ? `${displayName}${shortCode}` : displayName;
-    const chatScope = (params.chatScope || 'chat').toString();
-    const title = chatScope === 'story' ? `${baseTitle} · Story` : baseTitle;
+    const title = `${baseTitle} · Story`;
 
     return {
       ...BlueNavigationStyle(),
