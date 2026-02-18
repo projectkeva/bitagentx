@@ -1777,17 +1777,17 @@ class AgentChat extends React.Component {
       const afterModel = String(this.state.llmConfig?.model || '');
       const isFinalModelCommand = /^\/a\s+model\b/i.test(trimmed);
 
-      if (
-        this.isStoryScope &&
-        this.state.pendingReturnToDestinyMenu &&
-        this.state.pendingModelFinalConfirm &&
-        isFinalModelCommand &&
-        beforeModel !== afterModel
-      ) {
-        await new Promise(resolve =>
-          this.setState({ pendingReturnToDestinyMenu: false, pendingModelFinalConfirm: false }, resolve)
-        );
-        await this.handleDestinyCommand('menu');
+      if (this.isStoryScope && isFinalModelCommand && beforeModel !== afterModel) {
+        // case 1: coming from /a list -> after final confirm, go back to /d menu
+        if (this.state.pendingReturnToDestinyMenu && this.state.pendingModelFinalConfirm) {
+          await new Promise(resolve =>
+            this.setState({ pendingReturnToDestinyMenu: false, pendingModelFinalConfirm: false }, resolve)
+          );
+          await this.handleDestinyCommand('menu');
+        } else {
+          // case 2: any /a model change in Story -> always jump to /d menu
+          await this.handleDestinyCommand('menu');
+        }
       }
       return;
     }
