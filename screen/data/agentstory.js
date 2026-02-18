@@ -70,6 +70,20 @@ const getLLMOverridePath = agentId => `${LLM_DIR}/overrides_${encodeURIComponent
 const LLM_HISTORY_LIMIT = 16;
 const DEFAULT_AUTH_HEADER = apiKey => (apiKey ? { Authorization: `Bearer ${apiKey}` } : {});
 
+const buildLlmSelectionKey = cfg => {
+  const safe = v => (v === undefined || v === null ? '' : String(v));
+  const version =
+    safe(cfg?.modelVersion) ||
+    safe(cfg?.version) ||
+    safe(cfg?.variant) ||
+    safe(cfg?.revision) ||
+    safe(cfg?.release) ||
+    safe(cfg?.tag) ||
+    safe(cfg?.engine) ||
+    '';
+  return [safe(cfg?.provider), safe(cfg?.model), version].join('|');
+};
+
 function getAgentIdFromParams(params = {}) {
   // 聊天只绑定 agent 身份，不要跟 walletId / 页面路径耦合
   return (params.shortCode || params.namespaceId || params.agentId || 'default').toString();
@@ -1772,34 +1786,34 @@ class AgentChat extends React.Component {
     const trimmed = text.trim();
     const aMatch = /^\/a(?:\s+(.+))?$/i.exec(trimmed);
     if (aMatch) {
-      const buildLlmSelectionKey = cfg => {
-        const safe = v => (v === undefined || v === null ? '' : String(v));
-        const version =
-          safe(cfg?.modelVersion) ||
-          safe(cfg?.version) ||
-          safe(cfg?.variant) ||
-          safe(cfg?.revision) ||
-          safe(cfg?.release) ||
-          '';
-        return [safe(cfg?.provider), safe(cfg?.model), version].join('|');
-      };
-
-      const beforeKey = buildLlmSelectionKey(this.state.llmConfig);
-      await this.handleAIConfigCommand(trimmed);
-      const afterKey = buildLlmSelectionKey(this.state.llmConfig);
       const isFinalModelCommand = /^\/a\s+model\b/i.test(trimmed);
+      const beforeKey = buildLlmSelectionKey(this.state.llmConfig);
+
+      await this.handleAIConfigCommand(trimmed);
+
+      let reloadedConfig = null;
+      if (isFinalModelCommand) {
+        try {
+          reloadedConfig = await this.loadLLMConfig();
+        } catch (e) {
+          reloadedConfig = null;
+        }
+
+        if (reloadedConfig && this._isMounted) {
+          this.currentLLMConfig = reloadedConfig;
+          this.setState({ llmConfig: reloadedConfig });
+        }
+      }
+
+      const afterKey = buildLlmSelectionKey(reloadedConfig || this.state.llmConfig);
 
       if (this.isStoryScope && isFinalModelCommand && beforeKey !== afterKey) {
-        // case 1: coming from /a list -> after final confirm, go back to /d menu
         if (this.state.pendingReturnToDestinyMenu && this.state.pendingModelFinalConfirm) {
           await new Promise(resolve =>
             this.setState({ pendingReturnToDestinyMenu: false, pendingModelFinalConfirm: false }, resolve)
           );
-          await this.handleDestinyCommand('menu');
-        } else {
-          // case 2: any finalized /a model selection in Story -> jump to /d menu
-          await this.handleDestinyCommand('menu');
         }
+        await this.handleDestinyCommand('menu');
       }
       return;
     }
