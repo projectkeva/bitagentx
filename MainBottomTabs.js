@@ -55,6 +55,7 @@ import KeyValues from './screen/data/keyvalues';
 import AddKeyValue from './screen/data/addkeyvalue';
 import EditProfile from './screen/data/editprofile';
 import AgentChat from './screen/data/agentchat';
+import AgentStory from './screen/data/agentstory';
 import FollowChat from './screen/data/followchat';
 import GuestChat from './screen/data/guestchat';
 import SellNFT from './screen/data/sellnft';
@@ -420,6 +421,9 @@ const HomeStackNavigator = createStackNavigator({
   },
   AgentChat: {
     screen: AgentChat,
+  },
+  AgentStory: {
+    screen: AgentStory,
   },
   FollowChat: {
     screen: FollowChat,
