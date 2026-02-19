@@ -1814,7 +1814,7 @@ class AgentChat extends React.Component {
             this.setState({ pendingReturnToDestinyMenu: false, pendingModelFinalConfirm: false }, resolve)
           );
         }
-        await this.handleDestinyCommand('menu');
+        // do NOT call /d here; replyFromAgent("model selected") will trigger /d once
       }
       return;
     }
