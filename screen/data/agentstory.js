@@ -1188,6 +1188,7 @@ class AgentChat extends React.Component {
     this.lastAutoCommand = null;
     this.hasIntroAutoAOnce = false;
     this.isPlayingIntro = false;
+    this._lastAutoDAt = 0;
     const params = this.props.navigation?.state?.params || {};
     this.agentId = getAgentIdFromParams(params);
     this.chatScope = 'story';
@@ -2175,6 +2176,26 @@ class AgentChat extends React.Component {
   replyFromAgent = text => {
     const reply = this.buildMessage(text, 'agent');
     this.appendMessage(reply);
+
+    // Story: after "model selected" -> auto /d menu
+    if (this.isStoryScope) {
+      const t = String(text || '')
+        .trim()
+        .toLowerCase();
+
+      // 只要包含 "model selected" 就触发（兼容 custom/builtin）
+      const isModelSelectedMsg = t.includes('model selected');
+
+      if (isModelSelectedMsg) {
+        // 1s 防抖，避免重复提示导致连环触发
+        const now = Date.now();
+        if (this._lastAutoDAt && now - this._lastAutoDAt < 1000) return;
+        this._lastAutoDAt = now;
+
+        // 不写入一条用户消息 "/d"，直接回到 /d 菜单
+        requestAnimationFrame(() => this.handleDestinyCommand('menu'));
+      }
+    }
   };
 
   replyFromAgentSeedCard = (text, copyText, linkLabel = 'Copy full Destiny Seed Card') => {
