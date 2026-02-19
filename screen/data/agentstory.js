@@ -426,6 +426,50 @@ const STORY_UI_MESSAGES = {
     regenFail: '重新生成失敗',
   },
 };
+const STORY_MENU_MESSAGES = {
+  en: {
+    destinyTitle: 'What would you like to do?',
+    continueStory: 'Continue story',
+    startNew: 'Start new',
+    changeLanguage: 'Change language',
+    changeModel: 'Change model',
+    currentLanguageNotSet: 'Current language: Not set',
+    currentLanguage: 'Current language: {label} ({code})',
+    langMenuTitle: 'Current language: {current}',
+    langQuick: 'Other languages',
+    supportedLangs: 'Supported languages:',
+    langOnlyStory: '"/lang" is only available in Story mode',
+    unsupportedLang: 'Unsupported language code: {code}',
+  },
+  'zh-cn': {
+    destinyTitle: '你想做什么？',
+    continueStory: '继续故事',
+    startNew: '开始新的故事',
+    changeLanguage: '更换语言',
+    changeModel: '更换模型',
+    currentLanguageNotSet: '当前语言：未设置',
+    currentLanguage: '当前语言：{label}（{code}）',
+    langMenuTitle: '当前语言：{current}',
+    langQuick: '其它语言',
+    supportedLangs: '支持的语言：',
+    langOnlyStory: '"/lang" 仅在 Story 模式可用',
+    unsupportedLang: '不支持的语言代码：{code}',
+  },
+  'zh-tw': {
+    destinyTitle: '你想做什麼？',
+    continueStory: '繼續故事',
+    startNew: '開始新的故事',
+    changeLanguage: '更換語言',
+    changeModel: '更換模型',
+    currentLanguageNotSet: '目前語言：未設定',
+    currentLanguage: '目前語言：{label}（{code}）',
+    langMenuTitle: '目前語言：{current}',
+    langQuick: '其它語言',
+    supportedLangs: '支援的語言：',
+    langOnlyStory: '"/lang" 僅在 Story 模式可用',
+    unsupportedLang: '不支援的語言代碼：{code}',
+  },
+};
 const COMMAND_HELP_ALIASES = {
   'zh-hans': 'zh-cn',
   'zh-hant': 'zh-tw',
@@ -2266,16 +2310,20 @@ class AgentChat extends React.Component {
 
   getStoryLangMenuMessage = () => {
     const currentCode = this.getStoryLangCode();
-    const currentLabel = currentCode ? getStoryLangLabel(currentCode) : 'Not set';
+    const currentLabel = currentCode ? getStoryLangLabel(currentCode) : '';
+    const current = currentCode
+      ? this.getStoryMenuText('currentLanguage', { label: currentLabel, code: currentCode })
+      : this.getStoryMenuText('currentLanguageNotSet');
+
     return [
-      `Current language: ${currentCode ? `${currentLabel} (${currentCode})` : 'Not set'}`,
+      this.getStoryMenuText('langMenuTitle', { current }),
       '',
-      '[[/lang en|English]]   [[/lang zh-cn|中文]]   [[/lang other|Other languages]]',
+      `[[/lang en|English]]   [[/lang zh-cn|中文]]   [[/lang other|${this.getStoryMenuText('langQuick')}]]`,
     ].join('\n');
   };
 
   getSupportedStoryLangListMessage = () => {
-    const lines = ['Supported languages:', ''];
+    const lines = [this.getStoryMenuText('supportedLangs'), ''];
     for (let i = 0; i < STORY_SUPPORTED_LANGS.length; i += 3) {
       const row = STORY_SUPPORTED_LANGS.slice(i, i + 3)
         .map(item => `[[/lang ${item.code}|${item.label}]]`)
@@ -2294,7 +2342,7 @@ class AgentChat extends React.Component {
 
   handleLangCommand = async argsString => {
     if (!this.isStoryScope) {
-      showStatus('"/lang" is only available in Story mode', 2000);
+      showStatus(this.getStoryMenuText('langOnlyStory'), 2000);
       return true;
     }
     const args = String(argsString || '').trim();
@@ -2311,7 +2359,7 @@ class AgentChat extends React.Component {
 
     const isSupported = STORY_SUPPORTED_LANGS.some(item => item.code === normalizedArg);
     if (!isSupported) {
-      showStatus(`Unsupported language code: ${args}`, 2000);
+      showStatus(this.getStoryMenuText('unsupportedLang', { code: args }), 2000);
       this.appendStoryCommandMessage(this.getStoryLangMenuMessage());
       return true;
     }
@@ -2341,6 +2389,19 @@ class AgentChat extends React.Component {
     return normalizeStoryLangCode(code);
   };
 
+  getStoryLocale = () => normalizeStoryLangCode(this.getStoryLangCode() || getDefaultStoryLangCode());
+
+  getStoryMenuText = (key, vars = {}) => {
+    const locale = this.getStoryLocale();
+    const table = STORY_MENU_MESSAGES[locale] || STORY_MENU_MESSAGES[locale?.split('-')?.[0]] || STORY_MENU_MESSAGES.en;
+
+    let text = (table && table[key]) || (STORY_MENU_MESSAGES.en && STORY_MENU_MESSAGES.en[key]) || '';
+    Object.keys(vars).forEach(k => {
+      text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(vars[k]));
+    });
+    return text;
+  };
+
   getDestinyModeFromArg = value => {
     const normalized = String(value || '').trim().toLowerCase();
     if (normalized === 'continue') {
@@ -2354,29 +2415,25 @@ class AgentChat extends React.Component {
 
   buildDestinyModeMenuMessage = () => {
     return [
-      'What would you like to do?',
+      this.getStoryMenuText('destinyTitle'),
       '',
-      '[[/d continue|Continue story]]',
+      `[[/d continue|${this.getStoryMenuText('continueStory')}]]`,
       '',
-      '[[/d new|Start new]]',
+      `[[/d new|${this.getStoryMenuText('startNew')}]]`,
       '',
-      'Memory review (coming soon)',
+      `[[/lang|${this.getStoryMenuText('changeLanguage')}]]`,
       '',
-      '[[/lang|Change language]]',
-      '',
-      '[[/a list|Change model]]',
-      '',
-      'Generate agent memory (coming soon)',
+      `[[/a list|${this.getStoryMenuText('changeModel')}]]`,
     ].join('\n');
   };
 
   buildDestinyCurrentLanguageNotice = () => {
     const code = this.getStoryLangCode();
-    const label = code ? getStoryLangLabel(code) : '';
     if (!code) {
-      return 'Current language: Not set';
+      return this.getStoryMenuText('currentLanguageNotSet');
     }
-    return `Current language: ${label} (${code})`;
+    const label = getStoryLangLabel(code);
+    return this.getStoryMenuText('currentLanguage', { label, code });
   };
 
   buildStoryCondensedMemory = async (limit = 50) => {
