@@ -137,6 +137,15 @@ const LLM_PROVIDERS = {
 const COMMAND_TOKEN_REGEX =
   /\/(?:r|welcome|m)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:d|h|linkstart|block|a)\b/gi;
 const COMMAND_DISPLAY_TOKEN_REGEX = /\[\[([^\]|]+)\|([^\]]+)\]\]/gi;
+const STORY_CHOICE_PREFIX_RE =
+  /^\s*(?:\[\s*([A-Za-z]|\d{1,2})\s*\]|【\s*([A-Za-z]|\d{1,2})\s*】|\(\s*([A-Za-z]|\d{1,2})\s*\)|（\s*([A-Za-z]|\d{1,2})\s*）|([A-Za-z]|\d{1,2})\s*[).:：、．])\s*(.+)$/;
+const stripMarkdownWrap = s => {
+  let t = String(s || '').trim();
+  if ((t.startsWith('**') && t.endsWith('**')) || (t.startsWith('__') && t.endsWith('__'))) {
+    t = t.slice(2, -2).trim();
+  }
+  return t;
+};
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
   'Loading the on-device LLM…',
@@ -2695,11 +2704,12 @@ class AgentChat extends React.Component {
       choices.push({ key: String(key || normalizedSend), send: normalizedSend, label: String(label || normalizedSend) });
     };
 
-    lines.forEach(line => {
-      const prefixMatch = line.match(/^\s*(?:\[\s*([A-Za-z]|\d{1,2})\s*\]|([A-Za-z]|\d{1,2})\s*[).:])\s*(.+)$/);
+    lines.forEach(rawLine => {
+      const line = stripMarkdownWrap(rawLine);
+      const prefixMatch = line.match(STORY_CHOICE_PREFIX_RE);
       if (prefixMatch) {
-        const marker = (prefixMatch[1] || prefixMatch[2] || '').trim();
-        const content = (prefixMatch[3] || '').trim();
+        const marker = (prefixMatch[1] || prefixMatch[2] || prefixMatch[3] || prefixMatch[4] || prefixMatch[5] || '').trim();
+        const content = (prefixMatch[6] || '').trim();
         if (marker && content.length >= 2) {
           const send = /^\d+$/.test(marker) ? marker : marker.toUpperCase();
           addChoice(send, send, line);
@@ -2754,17 +2764,17 @@ class AgentChat extends React.Component {
       if (!chunk) {
         return;
       }
-      const trimmed = chunk.trim();
+      const trimmed = stripMarkdownWrap(chunk);
       const isDivider = /^\s*[\/|]\s*$/.test(chunk);
       if (!trimmed || isDivider) {
         segments.push({ type: 'text', text: chunk });
         return;
       }
 
-      const prefixMatch = trimmed.match(/^\s*(?:\[\s*([A-Za-z]|\d{1,2})\s*\]|([A-Za-z]|\d{1,2})\s*[).:])\s*(.+)$/);
+      const prefixMatch = trimmed.match(STORY_CHOICE_PREFIX_RE);
       if (prefixMatch) {
-        const marker = (prefixMatch[1] || prefixMatch[2] || '').trim();
-        const content = (prefixMatch[3] || '').trim();
+        const marker = (prefixMatch[1] || prefixMatch[2] || prefixMatch[3] || prefixMatch[4] || prefixMatch[5] || '').trim();
+        const content = (prefixMatch[6] || '').trim();
         if (marker && content.length >= 1) {
           const send = /^\d+$/.test(marker) ? marker : marker.toUpperCase();
           segments.push({ type: 'choice', raw: chunk, send, display: content });
