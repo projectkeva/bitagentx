@@ -2448,7 +2448,7 @@ class AgentChat extends React.Component {
     if (normalized === 'new') {
       return 'new';
     }
-    return 'menu';
+    return 'continue';
   };
 
   buildDestinyModeMenuMessage = () => {

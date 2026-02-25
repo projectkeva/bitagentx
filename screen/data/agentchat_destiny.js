@@ -1,4 +1,4 @@
-// \app\screen\data\agentchat_destiny.js
+﻿// \app\screen\data\agentchat_destiny.js
 // Destiny (/d) module extracted from agentchat.js
 
 function pickGameLanguage(loc) {
@@ -74,10 +74,10 @@ async function handleDestinyCommand(chat, deps) {
       '- Do NOT ask the player to choose a language.\n' +
       '- Start the interactive game immediately.\n\n';
 
-    chat.replyFromAgent('Starting Destiny run…');
+    chat.replyFromAgent(memoryMode === 'continue' ? 'Continuing story from latest records...' : 'Starting a new story run...');
     await chat.replyFromLLM(autostartHeader + removeLanguageHandshake(seedPrompt), null, {
       silentUser: true,
-      useRecentHistory: false,
+      useRecentHistory: memoryMode === 'continue',
       memoryMode,
       condensedMemory,
     });
@@ -95,3 +95,4 @@ async function handleDestinyCommand(chat, deps) {
 module.exports = {
   handleDestinyCommand,
 };
+
