@@ -51,6 +51,7 @@ const LLM_BUILTIN_PATH = `${LLM_DIR}/builtin.json`;
 const LLM_CUSTOM_PATH = `${LLM_DIR}/custom.json`;
 const LLM_ACTIVE_PATH = `${LLM_DIR}/active.json`;
 const LLM_LAST_USED_PATH = `${LLM_DIR}/last_used.json`;
+const STORY_BLOCK_CACHE_PATH = `${CHAT_DIR}/_story_block_cache.json`;
 const STORY_LANG_CODE_STORAGE_KEY = 'story_lang_code';
 const STORY_SUPPORTED_LANGS = [
   { code: 'en', label: 'English' },
@@ -1141,11 +1142,13 @@ const attrValueFromSeed0 = (seed0WordArray, attrName) => {
 
 const formatSigned = value => (value >= 0 ? `+${value}` : `${value}`);
 
-const buildSeedData = agentId => {
+const buildSeedData = (agentId, overrideCurrentBlock = null) => {
   const idStr = (agentId || '').toString().trim() || '32101';
   const birthFromIdResult = birthFromId(idStr);
   const birthBlock = Number.isFinite(birthFromIdResult) ? birthFromIdResult : 210;
-  const currentBlock = estimateCurrentBlock();
+  const currentBlock = Number.isFinite(Number(overrideCurrentBlock))
+    ? Number(overrideCurrentBlock)
+    : estimateCurrentBlock();
   const ageBlocks = Math.max(currentBlock - birthBlock, 0);
   const levelStart = Math.max(Math.floor(ageBlocks / BLOCKS_PER_LEVEL), 1);
 
@@ -1168,8 +1171,11 @@ const buildSeedData = agentId => {
   };
 };
 
-const buildSeedBlock = agentId => {
-  const { idStr, birthBlock, currentBlock, levelStart, seed0Hex, alpha, attrs } = buildSeedData(agentId);
+const buildSeedBlock = (agentId, overrideCurrentBlock = null) => {
+  const { idStr, birthBlock, currentBlock, levelStart, seed0Hex, alpha, attrs } = buildSeedData(
+    agentId,
+    overrideCurrentBlock,
+  );
   const lines = [
     `AGENT_ID = ${idStr}`,
     `BIRTH_BLOCK = ${birthBlock}`,
@@ -1218,8 +1224,8 @@ const buildSeedBlock = agentId => {
   return `${lines.join('\n')}\n`;
 };
 
-const buildDestinySeedPrompt = agentId => {
-  const seedBlock = buildSeedBlock(agentId);
+const buildDestinySeedPrompt = (agentId, overrideCurrentBlock = null) => {
+  const seedBlock = buildSeedBlock(agentId, overrideCurrentBlock);
   if (SEED_BLOCK_REGEX.test(DESTINY_SEED_PROMPT)) {
     return DESTINY_SEED_PROMPT.replace(SEED_BLOCK_REGEX, seedBlock);
   }
@@ -1271,6 +1277,7 @@ class AgentChat extends React.Component {
     this.hasIntroAutoAOnce = false;
     this.isPlayingIntro = false;
     this._lastAutoDAt = 0;
+    this._latestStoryBlockHeight = null;
     const params = this.props.navigation?.state?.params || {};
     this.agentId = getAgentIdFromParams(params);
     this.chatScope = 'story';
@@ -2227,17 +2234,62 @@ class AgentChat extends React.Component {
     return result;
   };
 
-  replyWithCurrentBlock = async () => {
+  readStoryBlockCache = async () => {
     try {
-      await BlueElectrum.ping();
-      if (typeof BlueElectrum.waitTillConnected === 'function') {
-        await BlueElectrum.waitTillConnected();
-      }
-      const height = await BlueElectrum.blockchainBlock_count();
-      this.replyFromAgent(`Current block: ${height}`);
+      const exists = await RNFS.exists(STORY_BLOCK_CACHE_PATH);
+      if (!exists) return null;
+      const raw = await RNFS.readFile(STORY_BLOCK_CACHE_PATH, 'utf8');
+      const json = JSON.parse(raw);
+      if (!json || !Number.isFinite(Number(json.height))) return null;
+      return { height: Number(json.height), ts: Number(json.ts) || 0 };
+    } catch {
+      return null;
+    }
+  };
+
+  writeStoryBlockCache = async height => {
+    try {
+      const payload = { height: Number(height), ts: Date.now() };
+      await RNFS.writeFile(STORY_BLOCK_CACHE_PATH, JSON.stringify(payload), 'utf8');
     } catch (e) {
-      this.replyFromAgent(`Failed to fetch current block: ${String(e?.message || e)}`);
+      console.warn('Failed to write story block cache', e);
+    }
+  };
+
+  getCachedOrFetchBlockHeight = async () => {
+    const TTL_MS = 120000;
+    const cached = await this.readStoryBlockCache();
+    if (cached && Date.now() - cached.ts < TTL_MS && cached.height > 0) {
+      return cached.height;
+    }
+    await BlueElectrum.ping();
+    if (typeof BlueElectrum.waitTillConnected === 'function') {
+      await BlueElectrum.waitTillConnected();
+    }
+    const height = await BlueElectrum.blockchainBlock_count();
+    await this.writeStoryBlockCache(height);
+    return height;
+  };
+
+  replyWithCurrentBlock = async (opts = {}) => {
+    try {
+      const height = await this.getCachedOrFetchBlockHeight();
+      const resultText = `Current block: ${height}`;
+      if (!opts?.silent) {
+        this.replyFromAgent(resultText);
+      } else {
+        this.appendStoryCommandMessage(resultText);
+      }
+      return height;
+    } catch (e) {
+      const errText = `Failed to fetch current block: ${String(e?.message || e)}`;
+      if (!opts?.silent) {
+        this.replyFromAgent(errText);
+      } else {
+        this.appendStoryCommandMessage(errText);
+      }
       console.warn('AgentChat: /block failed', e);
+      return null;
     }
   };
 
@@ -2532,6 +2584,8 @@ class AgentChat extends React.Component {
   handleDestinyCommand = async modeArg => {
     const mode = this.getDestinyModeFromArg(modeArg);
     if (!this.isStoryScope) {
+      const height = await this.replyWithCurrentBlock({ silent: true });
+      this._latestStoryBlockHeight = height;
       await this.startDestinyRun({ memoryMode: mode === 'continue' ? 'continue' : 'new', condensedMemory: '' });
       return;
     }
@@ -2554,18 +2608,25 @@ class AgentChat extends React.Component {
     }
 
     if (mode === 'continue') {
+      const height = await this.replyWithCurrentBlock({ silent: true });
+      this._latestStoryBlockHeight = height;
       const condensedMemory = await this.buildStoryCondensedMemory();
       await this.startDestinyRun({ memoryMode: 'continue', condensedMemory });
       return;
     }
 
+    const height = await this.replyWithCurrentBlock({ silent: true });
+    this._latestStoryBlockHeight = height;
     await this.startDestinyRun({ memoryMode: 'new', condensedMemory: '' });
     return;
   };
 
   startDestinyRun = async options => {
+    const cached = await this.readStoryBlockCache();
+    const latestHeight = this._latestStoryBlockHeight || cached?.height || null;
+
     await Destiny.handleDestinyCommand(this, {
-      buildDestinySeedPrompt,
+      buildDestinySeedPrompt: agentId => buildDestinySeedPrompt(agentId, latestHeight),
       loc,
       storyLangCode: this.getStoryLangCode(),
       memoryMode: options?.memoryMode || 'new',
