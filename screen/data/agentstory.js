@@ -62,8 +62,15 @@ const STORY_SUPPORTED_LANGS = [
   { code: 'es', label: 'Español' },
   { code: 'fr', label: 'Français' },
   { code: 'de', label: 'Deutsch' },
+  { code: 'it', label: 'Italiano' },
   { code: 'pt-br', label: 'Português (Brasil)' },
   { code: 'ru', label: 'Русский' },
+  { code: 'tr', label: 'Türkçe' },
+  { code: 'vi', label: 'Tiếng Việt' },
+  { code: 'th', label: 'ไทย' },
+  { code: 'id', label: 'Bahasa Indonesia' },
+  { code: 'ar', label: 'العربية' },
+  { code: 'hi', label: 'हिन्दी' },
 ];
 
 // 可选：如果你未来要“每个 agent 绑定不同模型”，再用它
@@ -446,7 +453,6 @@ const STORY_MENU_MESSAGES = {
     currentLanguageNotSet: 'Current language: Not set',
     currentLanguage: 'Current language: {label} ({code})',
     langMenuTitle: 'Current language: {current}',
-    langQuick: 'Other languages',
     supportedLangs: 'Supported languages:',
     langOnlyStory: '"/lang" is only available in Story mode',
     unsupportedLang: 'Unsupported language code: {code}',
@@ -460,7 +466,6 @@ const STORY_MENU_MESSAGES = {
     currentLanguageNotSet: '当前语言：未设置',
     currentLanguage: '当前语言：{label}（{code}）',
     langMenuTitle: '当前语言：{current}',
-    langQuick: '其它语言',
     supportedLangs: '支持的语言：',
     langOnlyStory: '"/lang" 仅在 Story 模式可用',
     unsupportedLang: '不支持的语言代码：{code}',
@@ -474,10 +479,191 @@ const STORY_MENU_MESSAGES = {
     currentLanguageNotSet: '目前語言：未設定',
     currentLanguage: '目前語言：{label}（{code}）',
     langMenuTitle: '目前語言：{current}',
-    langQuick: '其它語言',
     supportedLangs: '支援的語言：',
     langOnlyStory: '"/lang" 僅在 Story 模式可用',
     unsupportedLang: '不支援的語言代碼：{code}',
+  },
+  ja: {
+    destinyTitle: '何をしますか？',
+    continueStory: '物語を続ける',
+    startNew: '新しく始める',
+    changeLanguage: '言語を変更',
+    changeModel: 'モデルを変更',
+    currentLanguageNotSet: '現在の言語：未設定',
+    currentLanguage: '現在の言語：{label}（{code}）',
+    langMenuTitle: '現在の言語：{current}',
+    supportedLangs: '対応言語：',
+    langOnlyStory: '"/lang" は Story モードでのみ利用できます',
+    unsupportedLang: '未対応の言語コード：{code}',
+  },
+  ko: {
+    destinyTitle: '무엇을 할까요?',
+    continueStory: '이야기 계속하기',
+    startNew: '새로 시작',
+    changeLanguage: '언어 변경',
+    changeModel: '모델 변경',
+    currentLanguageNotSet: '현재 언어: 미설정',
+    currentLanguage: '현재 언어: {label} ({code})',
+    langMenuTitle: '현재 언어: {current}',
+    supportedLangs: '지원 언어:',
+    langOnlyStory: '"/lang"는 Story 모드에서만 사용 가능합니다',
+    unsupportedLang: '지원하지 않는 언어 코드: {code}',
+  },
+  es: {
+    destinyTitle: '¿Qué te gustaría hacer?',
+    continueStory: 'Continuar historia',
+    startNew: 'Empezar nueva',
+    changeLanguage: 'Cambiar idioma',
+    changeModel: 'Cambiar modelo',
+    currentLanguageNotSet: 'Idioma actual: no configurado',
+    currentLanguage: 'Idioma actual: {label} ({code})',
+    langMenuTitle: 'Idioma actual: {current}',
+    supportedLangs: 'Idiomas compatibles:',
+    langOnlyStory: '"/lang" solo está disponible en modo Story',
+    unsupportedLang: 'Código de idioma no compatible: {code}',
+  },
+  fr: {
+    destinyTitle: 'Que voulez-vous faire ?',
+    continueStory: 'Continuer l’histoire',
+    startNew: 'Commencer une nouvelle',
+    changeLanguage: 'Changer de langue',
+    changeModel: 'Changer de modèle',
+    currentLanguageNotSet: 'Langue actuelle : non définie',
+    currentLanguage: 'Langue actuelle : {label} ({code})',
+    langMenuTitle: 'Langue actuelle : {current}',
+    supportedLangs: 'Langues prises en charge :',
+    langOnlyStory: '"/lang" est disponible uniquement en mode Story',
+    unsupportedLang: 'Code de langue non pris en charge : {code}',
+  },
+  de: {
+    destinyTitle: 'Was möchtest du tun?',
+    continueStory: 'Geschichte fortsetzen',
+    startNew: 'Neu starten',
+    changeLanguage: 'Sprache ändern',
+    changeModel: 'Modell ändern',
+    currentLanguageNotSet: 'Aktuelle Sprache: nicht festgelegt',
+    currentLanguage: 'Aktuelle Sprache: {label} ({code})',
+    langMenuTitle: 'Aktuelle Sprache: {current}',
+    supportedLangs: 'Unterstützte Sprachen:',
+    langOnlyStory: '"/lang" ist nur im Story-Modus verfügbar',
+    unsupportedLang: 'Nicht unterstützter Sprachcode: {code}',
+  },
+  it: {
+    destinyTitle: 'Cosa vuoi fare?',
+    continueStory: 'Continua storia',
+    startNew: 'Inizia nuova',
+    changeLanguage: 'Cambia lingua',
+    changeModel: 'Cambia modello',
+    currentLanguageNotSet: 'Lingua attuale: non impostata',
+    currentLanguage: 'Lingua attuale: {label} ({code})',
+    langMenuTitle: 'Lingua attuale: {current}',
+    supportedLangs: 'Lingue supportate:',
+    langOnlyStory: '"/lang" è disponibile solo in modalità Story',
+    unsupportedLang: 'Codice lingua non supportato: {code}',
+  },
+  'pt-br': {
+    destinyTitle: 'O que você quer fazer?',
+    continueStory: 'Continuar história',
+    startNew: 'Começar nova',
+    changeLanguage: 'Mudar idioma',
+    changeModel: 'Mudar modelo',
+    currentLanguageNotSet: 'Idioma atual: não definido',
+    currentLanguage: 'Idioma atual: {label} ({code})',
+    langMenuTitle: 'Idioma atual: {current}',
+    supportedLangs: 'Idiomas suportados:',
+    langOnlyStory: '"/lang" só está disponível no modo Story',
+    unsupportedLang: 'Código de idioma não suportado: {code}',
+  },
+  ru: {
+    destinyTitle: 'Что вы хотите сделать?',
+    continueStory: 'Продолжить историю',
+    startNew: 'Начать заново',
+    changeLanguage: 'Сменить язык',
+    changeModel: 'Сменить модель',
+    currentLanguageNotSet: 'Текущий язык: не задан',
+    currentLanguage: 'Текущий язык: {label} ({code})',
+    langMenuTitle: 'Текущий язык: {current}',
+    supportedLangs: 'Поддерживаемые языки:',
+    langOnlyStory: '"/lang" доступна только в режиме Story',
+    unsupportedLang: 'Неподдерживаемый код языка: {code}',
+  },
+  tr: {
+    destinyTitle: 'Ne yapmak istersin?',
+    continueStory: 'Hikâyeyi sürdür',
+    startNew: 'Yeni başlat',
+    changeLanguage: 'Dili değiştir',
+    changeModel: 'Modeli değiştir',
+    currentLanguageNotSet: 'Geçerli dil: ayarlanmadı',
+    currentLanguage: 'Geçerli dil: {label} ({code})',
+    langMenuTitle: 'Geçerli dil: {current}',
+    supportedLangs: 'Desteklenen diller:',
+    langOnlyStory: '"/lang" yalnızca Story modunda kullanılabilir',
+    unsupportedLang: 'Desteklenmeyen dil kodu: {code}',
+  },
+  vi: {
+    destinyTitle: 'Bạn muốn làm gì?',
+    continueStory: 'Tiếp tục câu chuyện',
+    startNew: 'Bắt đầu mới',
+    changeLanguage: 'Đổi ngôn ngữ',
+    changeModel: 'Đổi mô hình',
+    currentLanguageNotSet: 'Ngôn ngữ hiện tại: chưa đặt',
+    currentLanguage: 'Ngôn ngữ hiện tại: {label} ({code})',
+    langMenuTitle: 'Ngôn ngữ hiện tại: {current}',
+    supportedLangs: 'Ngôn ngữ hỗ trợ:',
+    langOnlyStory: '"/lang" chỉ dùng trong chế độ Story',
+    unsupportedLang: 'Mã ngôn ngữ không hỗ trợ: {code}',
+  },
+  th: {
+    destinyTitle: 'คุณต้องการทำอะไร?',
+    continueStory: 'เล่นต่อ',
+    startNew: 'เริ่มใหม่',
+    changeLanguage: 'เปลี่ยนภาษา',
+    changeModel: 'เปลี่ยนโมเดล',
+    currentLanguageNotSet: 'ภาษาปัจจุบัน: ยังไม่ตั้งค่า',
+    currentLanguage: 'ภาษาปัจจุบัน: {label} ({code})',
+    langMenuTitle: 'ภาษาปัจจุบัน: {current}',
+    supportedLangs: 'ภาษาที่รองรับ:',
+    langOnlyStory: '"/lang" ใช้ได้เฉพาะโหมด Story',
+    unsupportedLang: 'โค้ดภาษาไม่รองรับ: {code}',
+  },
+  id: {
+    destinyTitle: 'Kamu ingin melakukan apa?',
+    continueStory: 'Lanjutkan cerita',
+    startNew: 'Mulai baru',
+    changeLanguage: 'Ganti bahasa',
+    changeModel: 'Ganti model',
+    currentLanguageNotSet: 'Bahasa saat ini: belum diatur',
+    currentLanguage: 'Bahasa saat ini: {label} ({code})',
+    langMenuTitle: 'Bahasa saat ini: {current}',
+    supportedLangs: 'Bahasa yang didukung:',
+    langOnlyStory: '"/lang" hanya tersedia di mode Story',
+    unsupportedLang: 'Kode bahasa tidak didukung: {code}',
+  },
+  ar: {
+    destinyTitle: 'ماذا تريد أن تفعل؟',
+    continueStory: 'متابعة القصة',
+    startNew: 'بدء جديد',
+    changeLanguage: 'تغيير اللغة',
+    changeModel: 'تغيير النموذج',
+    currentLanguageNotSet: 'اللغة الحالية: غير محددة',
+    currentLanguage: 'اللغة الحالية: {label} ({code})',
+    langMenuTitle: 'اللغة الحالية: {current}',
+    supportedLangs: 'اللغات المدعومة:',
+    langOnlyStory: '"/lang" متاحة فقط في وضع Story',
+    unsupportedLang: 'رمز لغة غير مدعوم: {code}',
+  },
+  hi: {
+    destinyTitle: 'आप क्या करना चाहते हैं?',
+    continueStory: 'कहानी जारी रखें',
+    startNew: 'नई शुरुआत',
+    changeLanguage: 'भाषा बदलें',
+    changeModel: 'मॉडल बदलें',
+    currentLanguageNotSet: 'वर्तमान भाषा: सेट नहीं है',
+    currentLanguage: 'वर्तमान भाषा: {label} ({code})',
+    langMenuTitle: 'वर्तमान भाषा: {current}',
+    supportedLangs: 'समर्थित भाषाएँ:',
+    langOnlyStory: '"/lang" केवल Story मोड में उपलब्ध है',
+    unsupportedLang: 'असमर्थित भाषा कोड: {code}',
   },
 };
 const COMMAND_HELP_ALIASES = {
@@ -2408,18 +2594,25 @@ class AgentChat extends React.Component {
     return [
       this.getStoryMenuText('langMenuTitle', { current }),
       '',
-      `[[/lang en|English]]   [[/lang zh-cn|中文]]   [[/lang other|${this.getStoryMenuText('langQuick')}]]`,
+      this.getSupportedStoryLangListMessage(),
     ].join('\n');
   };
 
   getSupportedStoryLangListMessage = () => {
+    const items = (STORY_SUPPORTED_LANGS || []).map(item => (item && item.code ? item : null)).filter(Boolean);
+
     const lines = [this.getStoryMenuText('supportedLangs'), ''];
-    for (let i = 0; i < STORY_SUPPORTED_LANGS.length; i += 3) {
-      const row = STORY_SUPPORTED_LANGS.slice(i, i + 3)
-        .map(item => `[[/lang ${item.code}|${item.label}]]`)
-        .join('   ');
-      lines.push(row);
+    const row = [];
+    for (let i = 0; i < items.length; i++) {
+      const { code, label } = items[i];
+      row.push(`[[/lang ${code}|${label}]]`);
+      if (row.length === 3) {
+        lines.push(row.join('   '));
+        row.length = 0;
+      }
     }
+    if (row.length) lines.push(row.join('   '));
+
     return lines.join('\n');
   };
 
@@ -2442,11 +2635,6 @@ class AgentChat extends React.Component {
     }
 
     const normalizedArg = normalizeStoryLangCode(args);
-    if (normalizedArg === 'other') {
-      this.appendStoryCommandMessage(this.getSupportedStoryLangListMessage());
-      return true;
-    }
-
     const isSupported = STORY_SUPPORTED_LANGS.some(item => item.code === normalizedArg);
     if (!isSupported) {
       showStatus(this.getStoryMenuText('unsupportedLang', { code: args }), 2000);
@@ -2483,7 +2671,9 @@ class AgentChat extends React.Component {
 
   getStoryMenuText = (key, vars = {}) => {
     const locale = this.getStoryLocale();
-    const table = STORY_MENU_MESSAGES[locale] || STORY_MENU_MESSAGES[locale?.split('-')?.[0]] || STORY_MENU_MESSAGES.en;
+    const base = String(locale || '').split('-')[0];
+
+    const table = STORY_MENU_MESSAGES[locale] || STORY_MENU_MESSAGES[base] || STORY_MENU_MESSAGES.en;
 
     let text = (table && table[key]) || (STORY_MENU_MESSAGES.en && STORY_MENU_MESSAGES.en[key]) || '';
     Object.keys(vars).forEach(k => {
