@@ -53,6 +53,7 @@ const LLM_ACTIVE_PATH = `${LLM_DIR}/active.json`;
 const LLM_LAST_USED_PATH = `${LLM_DIR}/last_used.json`;
 const STORY_BLOCK_CACHE_PATH = `${CHAT_DIR}/_story_block_cache.json`;
 const STORY_LANG_CODE_STORAGE_KEY = 'story_lang_code';
+const ROLE_LANG_CODE_STORAGE_KEY = 'role_lang_code';
 const STORY_SUPPORTED_LANGS = [
   { code: 'en', label: 'English' },
   { code: 'zh-cn', label: '中文（简体）' },
@@ -1446,6 +1447,7 @@ class AgentChat extends React.Component {
       llmConfig: null,
       storyShortMode: true,
       storyLangCode: null,
+      roleLangCode: null,
       pendingDestinyRun: false,
       pendingDestinyMode: null,
       pendingReturnToDestinyMenu: false,
@@ -1462,6 +1464,7 @@ class AgentChat extends React.Component {
     this.lastAutoCommand = null;
     this.hasIntroAutoAOnce = false;
     this.isPlayingIntro = false;
+    this.hasRoleStartupRun = false;
     this._lastAutoDAt = 0;
     this._latestStoryBlockHeight = null;
     const params = this.props.navigation?.state?.params || {};
@@ -1591,9 +1594,29 @@ class AgentChat extends React.Component {
         this.forceScrollToBottomOnce = history.length > 0;
         this.restoreProviderFromDisk()
           .then(() => this.runAutoCommand())
-          .then(() => this.runAutoLinkStart());
+          .then(() => this.runAutoLinkStart())
+          .then(() => this.runRoleStartupFlow());
       },
     );
+  };
+
+  runRoleStartupFlow = async () => {
+    if (this.hasRoleStartupRun) {
+      return;
+    }
+    this.hasRoleStartupRun = true;
+    try {
+      const stored = await AsyncStorage.getItem(ROLE_LANG_CODE_STORAGE_KEY);
+      if (!stored) {
+        this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+        return;
+      }
+      await new Promise(resolve => this.setState({ roleLangCode: normalizeStoryLangCode(stored) }, resolve));
+      await this.handleTriggers('/r new', null);
+    } catch (error) {
+      console.warn('Failed to restore role language', error);
+      this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+    }
   };
 
   restoreStoryLangCode = async () => {
@@ -2060,6 +2083,26 @@ class AgentChat extends React.Component {
 
   handleTriggers = async (text, userMessage = null) => {
     const trimmed = text.trim();
+    if (/^\/rolelang\b/i.test(trimmed)) {
+      const args = trimmed.replace(/^\/rolelang\b/i, '').trim();
+      if (!args) {
+        this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+        return true;
+      }
+
+      const normalizedArg = normalizeStoryLangCode(args);
+      const isSupported = STORY_SUPPORTED_LANGS.some(item => item.code === normalizedArg);
+      if (!isSupported) {
+        showStatus(this.getRoleMenuText('unsupportedLang', { code: args }), 2000);
+        this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+        return true;
+      }
+
+      await this.setRoleLangCode(normalizedArg);
+      this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+      await this.handleTriggers('/r new', null);
+      return true;
+    }
     const aMatch = /^\/a(?:\s+(.+))?$/i.exec(trimmed);
     if (aMatch) {
       const isFinalModelCommand = /^\/a\s+model\b/i.test(trimmed);
@@ -2137,6 +2180,10 @@ class AgentChat extends React.Component {
         trimmed,
       );
       return;
+    }
+    if (/^\/r\s+new\b/i.test(trimmed)) {
+      await this.handleRoleNewMenu();
+      return true;
     }
     const roleMatch = /^\/r\s+(.+)/i.exec(trimmed);
     if (roleMatch) {
@@ -2621,6 +2668,84 @@ class AgentChat extends React.Component {
       _renderMode: 'commands',
       _localOnly: true,
     });
+  };
+
+  getRoleLangCode = () => {
+    const code = this.state.roleLangCode;
+    if (!code) return null;
+    return normalizeStoryLangCode(code);
+  };
+
+  getRoleLocale = () => normalizeStoryLangCode(this.getRoleLangCode() || 'en');
+
+  getRoleMenuText = (key, vars = {}) => {
+    const locale = this.getRoleLocale();
+    const base = String(locale || '').split('-')[0];
+
+    const table = STORY_MENU_MESSAGES[locale] || STORY_MENU_MESSAGES[base] || STORY_MENU_MESSAGES.en;
+
+    let text = (table && table[key]) || (STORY_MENU_MESSAGES.en && STORY_MENU_MESSAGES.en[key]) || '';
+    Object.keys(vars).forEach(k => {
+      text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(vars[k]));
+    });
+    return text;
+  };
+
+  setRoleLangCode = async code => {
+    const normalized = normalizeStoryLangCode(code);
+    await AsyncStorage.setItem(ROLE_LANG_CODE_STORAGE_KEY, normalized);
+    await new Promise(resolve => this.setState({ roleLangCode: normalized }, resolve));
+  };
+
+  getRoleLangMenuMessage = () => {
+    const current = getStoryLangLabel(this.getRoleLangCode() || 'en');
+    const lines = [this.getRoleMenuText('langMenuTitle', { current }), '', this.getRoleMenuText('supportedLangs'), ''];
+    STORY_SUPPORTED_LANGS.forEach(item => {
+      lines.push(`[[/rolelang ${item.code}|${item.label}]]`);
+    });
+    return lines.join('\n');
+  };
+
+  appendRoleCommandMessage = text => {
+    if (typeof this.appendStoryCommandMessage === 'function') {
+      this.appendStoryCommandMessage(text);
+    } else {
+      this.replyFromAgent(text);
+    }
+  };
+
+  handleRoleNewMenu = async () => {
+    if (!this.getRoleLangCode()) {
+      this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+      return;
+    }
+
+    try {
+      await Rolecards.handleRoleMemoryCommand(
+        this,
+        {
+          BlueApp,
+          BlueElectrum,
+          updateKeyValue,
+          deleteKeyValue,
+          FALLBACK_DATA_PER_BYTE_FEE,
+        },
+        '/m',
+      );
+    } catch (error) {
+      console.warn('Role new: list rolecards failed', error);
+    }
+
+    const lines = [
+      'Role setup:',
+      '',
+      `[[/r|New role]]`,
+      '',
+      `[[/rolelang|${this.getRoleMenuText('changeLanguage')}]]`,
+      '',
+      `[[/a list|${this.getRoleMenuText('changeModel')}]]`,
+    ];
+    this.replyFromAgent(lines.join('\n'));
   };
 
   handleLangCommand = async argsString => {
