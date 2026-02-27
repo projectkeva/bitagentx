@@ -1452,6 +1452,8 @@ class AgentChat extends React.Component {
       pendingDestinyMode: null,
       pendingReturnToDestinyMenu: false,
       pendingModelFinalConfirm: false,
+      pendingRoleCall: false,
+      activeRoleSlug: null,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1472,6 +1474,7 @@ class AgentChat extends React.Component {
     this.chatScope = 'story';
     this.isStoryScope = true;
     this.agentChatDir = `${CHAT_DIR}/${encodeURIComponent(this.agentId)}/${encodeURIComponent(this.chatScope)}`;
+    this.roleFilesDir = `${this.agentChatDir}/roles`;
     this.getDayFilePath = dateKey => `${this.agentChatDir}/${dateKey}.json`;
     this.getStoryRawPath = dateKey => getStoryRawPath(this.agentChatDir, dateKey);
     this.getStoryDigestPath = dateKey => getStoryDigestPath(this.agentChatDir, dateKey);
@@ -1480,6 +1483,7 @@ class AgentChat extends React.Component {
     this.persistQueue = Promise.resolve();
     this.digestPersistQueue = Promise.resolve();
     this.currentLLMConfig = null;
+    this.activeRoleSlug = null;
     this.getCommandUsageMessage = getCommandUsageMessage;
     attachAgentChatLLM(this, {
       loc,
@@ -1669,9 +1673,103 @@ class AgentChat extends React.Component {
         await ensureStoryDirs(this.agentChatDir);
       }
       await ensure(LLM_DIR);
+      await ensure(this.roleFilesDir);
     } catch (error) {
       console.warn('Failed to prepare chat storage', error);
     }
+  };
+
+  getRoleFilePath = roleSlug => {
+    const safeSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
+    return `${this.roleFilesDir}/${safeSlug}.json`;
+  };
+
+  readRoleFile = async roleSlug => {
+    try {
+      const path = this.getRoleFilePath(roleSlug);
+      const exists = await RNFS.exists(path);
+      if (!exists) {
+        return null;
+      }
+      const raw = await RNFS.readFile(path, 'utf8');
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (error) {
+      console.warn('Failed to read role file', error);
+      return null;
+    }
+  };
+
+  writeRoleFile = async (roleSlug, data) => {
+    try {
+      const path = this.getRoleFilePath(roleSlug);
+      await RNFS.writeFile(path, JSON.stringify(data || {}, null, 2), 'utf8');
+      return true;
+    } catch (error) {
+      console.warn('Failed to write role file', error);
+      return false;
+    }
+  };
+
+  handleRoleCallWithName = async (name, userMessage = null) => {
+    const normalizedName = String(name || '').trim();
+    const roleSlug = Rolecards.normalizeRoleSlug(normalizedName) || 'unknown';
+    const now = Date.now();
+    const existingRoleData = await this.readRoleFile(roleSlug);
+    const roleData =
+      existingRoleData || {
+        roleName: normalizedName || roleSlug,
+        roleSlug,
+        memory: '',
+        createdAt: now,
+      };
+    roleData.roleName = roleData.roleName || normalizedName || roleSlug;
+    roleData.roleSlug = roleSlug;
+    roleData.updatedAt = now;
+    await this.writeRoleFile(roleSlug, roleData);
+
+    this.activeRoleSlug = roleSlug;
+    await new Promise(resolve => this.setState({ activeRoleSlug: roleSlug }, resolve));
+
+    const ctx = typeof this.resolveNamespaceContext === 'function' ? this.resolveNamespaceContext() : null;
+    const agentId = ctx?.agentId || this.agentId || 'unknown';
+    const rolePrompt = buildRoleplayPrompt(roleData.roleName, agentId, roleData.memory || '');
+
+    await this.replyFromLLM(rolePrompt, userMessage, { silentUser: true });
+  };
+
+  runRoleMemoryUpdate = async (roleSlug, assistantReplyText) => {
+    if (!roleSlug || !assistantReplyText || typeof this.callLLMSilent !== 'function') {
+      return;
+    }
+
+    const roleData = (await this.readRoleFile(roleSlug)) || {};
+    const currentMemory = roleData.memory || roleData.memories || roleData.memoryText || '';
+    const prompt = `
+You are a memory updater for a role-playing agent.
+
+INPUTS:
+(1) CURRENT_MEMORY:
+${JSON.stringify(currentMemory).slice(0, 8000)}
+
+(2) NEW_ASSISTANT_REPLY:
+${JSON.stringify(String(assistantReplyText || '')).slice(0, 8000)}
+
+TASK:
+- Decide whether CURRENT_MEMORY should be updated based on NEW_ASSISTANT_REPLY.
+- Output ONLY the updated memory, in the same format as CURRENT_MEMORY.
+- If no update is needed, output CURRENT_MEMORY unchanged.
+- Do NOT include explanations. Output memory only.
+`.trim();
+
+    const updatedMemoryText = await this.callLLMSilent(prompt);
+    if (!updatedMemoryText) {
+      return;
+    }
+
+    roleData.memory = updatedMemoryText;
+    roleData.updatedAt = Date.now();
+    await this.writeRoleFile(roleSlug, roleData);
   };
 
   listDateKeys = async () => {
@@ -2083,6 +2181,25 @@ class AgentChat extends React.Component {
 
   handleTriggers = async (text, userMessage = null) => {
     const trimmed = text.trim();
+    if (this.state.pendingRoleCall && !trimmed.startsWith('/')) {
+      await new Promise(resolve => this.setState({ pendingRoleCall: false }, resolve));
+      await this.handleTriggers(`/r call ${trimmed}`, userMessage);
+      return true;
+    }
+
+    if (/^\/r\s+call\b/i.test(trimmed)) {
+      const args = trimmed.replace(/^\/r\s+call\b/i, '').trim();
+
+      if (!args) {
+        await new Promise(resolve => this.setState({ pendingRoleCall: true }, resolve));
+        this.replyFromAgent('Who do you want to summon? Reply with the role name.');
+        return true;
+      }
+
+      await this.handleRoleCallWithName(args, userMessage);
+      return true;
+    }
+
     if (/^\/rolelang\b/i.test(trimmed)) {
       const args = trimmed.replace(/^\/rolelang\b/i, '').trim();
       if (!args) {
