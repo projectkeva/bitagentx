@@ -287,7 +287,7 @@ class Namespace extends React.Component {
       case 'Story':
         return this.onStory?.();
       case 'Role':
-        return this.onChat?.({ autoCommand: '/r', suppressAutoLinkStart: true });
+        return this.onRole?.();
       default:
         return;
     }
@@ -420,6 +420,31 @@ class Namespace extends React.Component {
       addr: data.addr,
       profile: data.profile,
       autoCommand: '/d',
+      suppressAutoLinkStart: true,
+    });
+  }
+
+
+  onRole = () => {
+    const { data, navigation, isOther } = this.props;
+    if (isOther) return;
+    if (!navigation || typeof navigation.push !== 'function') return;
+    if (!this.props.canChat) return;
+
+    const namespaceId = data.id || data.namespaceId;
+
+    navigation.push('AgentRole', {
+      namespaceId,
+      shortCode: data.shortCode,
+      displayName: data.displayName,
+      walletId: data.walletId,
+      txid: data.txId,
+      rootAddress: data.rootAddress,
+      price: data.price,
+      desc: data.desc,
+      addr: data.addr,
+      profile: data.profile,
+      autoCommand: '/r new',
       suppressAutoLinkStart: true,
     });
   }
@@ -659,6 +684,7 @@ const GuestInbox = ({ navigation }) => {
   const handleOpenGuestChat = () => {
     navigation.push('GuestChat', { mode: 'guest' });
   };
+
 
   const guestSeed = 'guest_messages_card';
   const avatarColor = stringToColor(guestSeed);
