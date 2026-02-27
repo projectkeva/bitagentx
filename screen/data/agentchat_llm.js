@@ -482,7 +482,6 @@ export function attachAgentChatLLM(agent, deps) {
   agent.replyFromLLM =
     agent.replyFromLLM ||
     (async (userText, userMessage = null, options = {}) => {
-      const { silentUser = false, useRecentHistory = true, memoryMode = 'new', condensedMemory = '' } = options || {};
       const requestId = `${Date.now()}-${Math.random()}`;
       const placeholder = {
         id: `agent-${requestId}`,
@@ -494,93 +493,120 @@ export function attachAgentChatLLM(agent, deps) {
       };
       agent.appendMessage(placeholder);
 
+      try {
+        const replyText = await agent._llmComplete({ userText, userMessage, options });
+        agent.updateAgentMessage(requestId, replyText);
+
+        const roleSlug = agent.state?.activeRoleSlug || agent.activeRoleSlug;
+        if (roleSlug && typeof agent.runRoleMemoryUpdate === 'function') {
+          agent.runRoleMemoryUpdate(roleSlug, replyText).catch(error => {
+            console.warn('Role memory update failed', error);
+          });
+        }
+      } catch (error) {
+        console.warn('LLM call failed', error);
+        agent.updateAgentMessage(requestId, error?.message || 'LLM call failed.');
+      }
+    });
+
+  agent._llmComplete =
+    agent._llmComplete ||
+    (async ({ userText, userMessage = null, options = {} }) => {
+      const { silentUser = false, useRecentHistory = true, memoryMode = 'new', condensedMemory = '' } = options || {};
+
       const cfg = agent.state.llmConfig;
       if (!cfg || !cfg.provider) {
-        agent.updateAgentMessage(requestId, 'No cloud model configured. Use: /a <provider> <apikey>');
-        return;
+        throw new Error('No cloud model configured. Use: /a <provider> <apikey>');
       }
 
       const resolved = await agent.resolveProviderDef(cfg.provider);
       if (!resolved) {
-        agent.updateAgentMessage(requestId, 'Cloud model provider missing. Re-run /a.');
-        return;
+        throw new Error('Cloud model provider missing. Re-run /a.');
       }
 
       const providerDef = resolved.def;
       const baseUrl = cfg.baseUrl || providerDef.baseUrl;
       if (!baseUrl) {
-        agent.updateAgentMessage(requestId, 'Provider missing baseUrl. Re-run /a.');
-        return;
+        throw new Error('Provider missing baseUrl. Re-run /a.');
       }
 
-      try {
-        const baseSystemPrompt = agent.buildLLMSystemPrompt();
-        const storyLangCode =
-          (typeof agent.getStoryLangCode === 'function' && agent.getStoryLangCode()) || agent.state?.storyLangCode || null;
-        const storyLanguageInstruction =
-          storyLangCode && typeof agent.getStoryLanguageInstruction === 'function' ? agent.getStoryLanguageInstruction() : '';
-        const memoryInstruction =
-          memoryMode === 'continue' && String(condensedMemory || '').trim()
-            ? `MEMORY (condensed story so far):\n${String(condensedMemory || '').trim()}`
-            : '';
-        const systemPrompt = [storyLanguageInstruction, baseSystemPrompt, memoryInstruction].filter(Boolean).join('\n\n');
-        let recent = useRecentHistory ? agent.getRecentChatMessagesForLLM() : [];
+      const requestId = `${Date.now()}-${Math.random()}`;
+      const baseSystemPrompt = agent.buildLLMSystemPrompt();
+      const storyLangCode =
+        (typeof agent.getStoryLangCode === 'function' && agent.getStoryLangCode()) || agent.state?.storyLangCode || null;
+      const storyLanguageInstruction =
+        storyLangCode && typeof agent.getStoryLanguageInstruction === 'function' ? agent.getStoryLanguageInstruction() : '';
+      const memoryInstruction =
+        memoryMode === 'continue' && String(condensedMemory || '').trim()
+          ? `MEMORY (condensed story so far):\n${String(condensedMemory || '').trim()}`
+          : '';
+      const systemPrompt = [storyLanguageInstruction, baseSystemPrompt, memoryInstruction].filter(Boolean).join('\n\n');
+      let recent = useRecentHistory ? agent.getRecentChatMessagesForLLM() : [];
 
-        if (silentUser) {
-          recent.push({
-            id: `ephemeral-${requestId}`,
-            sender: 'user',
-            text: userText,
-            timestamp: Date.now(),
-          });
-        } else if (userMessage && userMessage.id) {
-          recent = recent.filter(message => message.id !== userMessage.id);
-          recent.push(userMessage);
-        } else {
-          recent.push({
-            id: `ephemeral-${requestId}`,
-            sender: 'user',
-            text: userText,
-            timestamp: Date.now(),
-          });
-        }
-
-        recent = recent.slice(-LLM_HISTORY_LIMIT);
-
-        let replyText = '';
-        if (providerDef.kind === 'openai_compat') {
-          replyText = await agent.callOpenAICompatible({
-            baseUrl,
-            apiKey: cfg.apiKey,
-            model: cfg.model || providerDef.defaultModel,
-            systemPrompt,
-            recent,
-            authHeader: providerDef.authHeader || DEFAULT_AUTH_HEADER,
-          });
-        } else if (providerDef.kind === 'gemini') {
-          replyText = await agent.callGemini({
-            baseUrl,
-            apiKey: cfg.apiKey,
-            model: cfg.model || providerDef.defaultModel,
-            systemPrompt,
-            recent,
-            authHeader: providerDef.authHeader,
-          });
-        } else {
-          agent.updateAgentMessage(requestId, 'Unsupported provider kind.');
-          return;
-        }
-
-        if (!replyText) {
-          agent.updateAgentMessage(requestId, 'Model returned empty response.');
-          return;
-        }
-
-        agent.updateAgentMessage(requestId, replyText.trim());
-      } catch (error) {
-        console.warn('LLM call failed', error);
-        agent.updateAgentMessage(requestId, 'LLM call failed.');
+      if (silentUser) {
+        recent.push({
+          id: `ephemeral-${requestId}`,
+          sender: 'user',
+          text: userText,
+          timestamp: Date.now(),
+        });
+      } else if (userMessage && userMessage.id) {
+        recent = recent.filter(message => message.id !== userMessage.id);
+        recent.push(userMessage);
+      } else {
+        recent.push({
+          id: `ephemeral-${requestId}`,
+          sender: 'user',
+          text: userText,
+          timestamp: Date.now(),
+        });
       }
+
+      recent = recent.slice(-LLM_HISTORY_LIMIT);
+
+      let replyText = '';
+      if (providerDef.kind === 'openai_compat') {
+        replyText = await agent.callOpenAICompatible({
+          baseUrl,
+          apiKey: cfg.apiKey,
+          model: cfg.model || providerDef.defaultModel,
+          systemPrompt,
+          recent,
+          authHeader: providerDef.authHeader || DEFAULT_AUTH_HEADER,
+        });
+      } else if (providerDef.kind === 'gemini') {
+        replyText = await agent.callGemini({
+          baseUrl,
+          apiKey: cfg.apiKey,
+          model: cfg.model || providerDef.defaultModel,
+          systemPrompt,
+          recent,
+          authHeader: providerDef.authHeader,
+        });
+      } else {
+        throw new Error('Unsupported provider kind.');
+      }
+
+      if (!replyText) {
+        throw new Error('Model returned empty response.');
+      }
+
+      return replyText.trim();
+    });
+
+  agent.callLLMSilent =
+    agent.callLLMSilent ||
+    (async (prompt, options = {}) => {
+      const responseText = await agent._llmComplete({
+        userText: String(prompt || ''),
+        userMessage: null,
+        options: {
+          silentUser: true,
+          useRecentHistory: false,
+          ...(options || {}),
+        },
+      });
+      return String(responseText || '').trim();
     });
 
   // ---- /a command dispatcher ----
