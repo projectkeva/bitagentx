@@ -1616,6 +1616,7 @@ class AgentChat extends React.Component {
         return;
       }
       await new Promise(resolve => this.setState({ roleLangCode: normalizeStoryLangCode(stored) }, resolve));
+      this.appendRoleCommandMessage(this.buildRoleLangStatusMessage());
       await this.handleTriggers('/r new', null);
     } catch (error) {
       console.warn('Failed to restore role language', error);
@@ -2216,7 +2217,7 @@ TASK:
       }
 
       await this.setRoleLangCode(normalizedArg);
-      this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+      this.appendRoleCommandMessage(this.buildRoleLangStatusMessage());
       await this.handleTriggers('/r new', null);
       return true;
     }
@@ -2821,6 +2822,14 @@ TASK:
       lines.push(`[[/rolelang ${item.code}|${item.label}]]`);
     });
     return lines.join('\n');
+  };
+
+  buildRoleLangStatusMessage = () => {
+    const code = this.getRoleLangCode();
+    const label = getStoryLangLabel(code || 'en');
+    const current = this.getRoleMenuText('currentLanguage', { label, code: code || 'en' });
+
+    return [current, `[[/rolelang|${this.getRoleMenuText('changeLanguage')}]]`].join('\n');
   };
 
   appendRoleCommandMessage = text => {
