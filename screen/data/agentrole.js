@@ -1609,19 +1609,10 @@ class AgentChat extends React.Component {
       return;
     }
     this.hasRoleStartupRun = true;
-    try {
-      const stored = await AsyncStorage.getItem(ROLE_LANG_CODE_STORAGE_KEY);
-      if (!stored) {
-        this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
-        return;
-      }
-      await new Promise(resolve => this.setState({ roleLangCode: normalizeStoryLangCode(stored) }, resolve));
-      this.appendRoleCommandMessage(this.buildRoleLangStatusMessage());
-      await this.handleTriggers('/r new', null);
-    } catch (error) {
-      console.warn('Failed to restore role language', error);
-      this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+    if (this.hasAutoCommandRun) {
+      return;
     }
+    await this.handleTriggers('/role', null);
   };
 
   restoreStoryLangCode = async () => {
@@ -2201,6 +2192,14 @@ TASK:
       return true;
     }
 
+    if (/^\/role\b/i.test(trimmed)) {
+      const ok = await this.ensureRoleLangReady(true);
+      if (!ok) return true;
+
+      await this.handleTriggers('/r new', null);
+      return true;
+    }
+
     if (/^\/rolelang\b/i.test(trimmed)) {
       const args = trimmed.replace(/^\/rolelang\b/i, '').trim();
       if (!args) {
@@ -2218,7 +2217,7 @@ TASK:
 
       await this.setRoleLangCode(normalizedArg);
       this.appendRoleCommandMessage(this.buildRoleLangStatusMessage());
-      await this.handleTriggers('/r new', null);
+      await this.handleTriggers('/role', null);
       return true;
     }
     const aMatch = /^\/a(?:\s+(.+))?$/i.exec(trimmed);
@@ -2840,9 +2839,26 @@ TASK:
     }
   };
 
+  ensureRoleLangReady = async (showUI = true) => {
+    if (!this.state.roleLangCode) {
+      const stored = await AsyncStorage.getItem(ROLE_LANG_CODE_STORAGE_KEY);
+      if (stored) {
+        await new Promise(resolve => this.setState({ roleLangCode: normalizeStoryLangCode(stored) }, resolve));
+      }
+    }
+
+    if (!this.getRoleLangCode()) {
+      if (showUI) this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+      return false;
+    }
+
+    if (showUI) this.appendRoleCommandMessage(this.buildRoleLangStatusMessage());
+    return true;
+  };
+
   handleRoleNewMenu = async () => {
     if (!this.getRoleLangCode()) {
-      this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+      await this.handleTriggers('/role', null);
       return;
     }
 
