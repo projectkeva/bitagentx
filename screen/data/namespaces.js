@@ -444,7 +444,7 @@ class Namespace extends React.Component {
       desc: data.desc,
       addr: data.addr,
       profile: data.profile,
-      autoCommand: '/r new',
+      autoCommand: '/role',
       suppressAutoLinkStart: true,
     });
   }
