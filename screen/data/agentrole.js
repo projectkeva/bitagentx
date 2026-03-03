@@ -1471,8 +1471,8 @@ class AgentChat extends React.Component {
     this._latestStoryBlockHeight = null;
     const params = this.props.navigation?.state?.params || {};
     this.agentId = getAgentIdFromParams(params);
-    this.chatScope = 'story';
-    this.isStoryScope = true;
+    this.chatScope = 'role';
+    this.isStoryScope = false;
     this.agentChatDir = `${CHAT_DIR}/${encodeURIComponent(this.agentId)}/${encodeURIComponent(this.chatScope)}`;
     this.roleFilesDir = `${this.agentChatDir}/roles`;
     this.getDayFilePath = dateKey => `${this.agentChatDir}/${dateKey}.json`;
@@ -1504,7 +1504,7 @@ class AgentChat extends React.Component {
     const displayName = params.displayName || 'Agent';
     const shortCode = params.shortCode ? `@${params.shortCode}` : '';
     const baseTitle = shortCode ? `${displayName}${shortCode}` : displayName;
-    const title = `${baseTitle} · Story`;
+    const title = `${baseTitle} · Role`;
 
     return {
       ...BlueNavigationStyle(),
