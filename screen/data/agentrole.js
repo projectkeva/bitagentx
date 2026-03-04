@@ -54,6 +54,8 @@ const LLM_LAST_USED_PATH = `${LLM_DIR}/last_used.json`;
 const STORY_BLOCK_CACHE_PATH = `${CHAT_DIR}/_story_block_cache.json`;
 const STORY_LANG_CODE_STORAGE_KEY = 'story_lang_code';
 const ROLE_LANG_CODE_STORAGE_KEY = 'role_lang_code';
+const ROLE_LAST_SELECTED_STORAGE_KEY = 'role_last_selected';
+const ROLE_PENDING_NEW_STORAGE_KEY = 'role_pending_new';
 const STORY_SUPPORTED_LANGS = [
   { code: 'en', label: 'English' },
   { code: 'zh-cn', label: '中文（简体）' },
@@ -1454,6 +1456,8 @@ class AgentChat extends React.Component {
       pendingModelFinalConfirm: false,
       pendingRoleCall: false,
       activeRoleSlug: null,
+      lastSelectedRole: null,
+      pendingNewRole: null,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1557,6 +1561,7 @@ class AgentChat extends React.Component {
   initializeChat = async () => {
     await this.ensureDirs();
     await this.restoreStoryLangCode();
+    await this.restoreLastSelectedRole();
     const history = await this.readHistory();
     const builtinRead = await this.readJsonFile(LLM_BUILTIN_PATH);
     if (builtinRead.__missing) {
@@ -2192,6 +2197,57 @@ TASK:
       return true;
     }
 
+    if (/^\/r\s+create\b/i.test(trimmed)) {
+      const name = trimmed.replace(/^\/r\s+create\b/i, '').trim();
+      if (!name) {
+        await this.showRoleCreateWizard();
+        return true;
+      }
+      const ok = await this.setPendingNewRole(name);
+      if (!ok) {
+        await this.showRoleCreateWizard();
+        return true;
+      }
+      await this.showRoleCreateConfirm(name);
+      return true;
+    }
+
+    if (/^\/r\s+setname\b/i.test(trimmed)) {
+      const name = trimmed.replace(/^\/r\s+setname\b/i, '').trim();
+      if (!name) {
+        await this.showRoleCreateWizard();
+        return true;
+      }
+      const ok = await this.setPendingNewRole(name);
+      if (!ok) {
+        await this.showRoleCreateWizard();
+        return true;
+      }
+      await this.showRoleCreateConfirm(name);
+      return true;
+    }
+
+    if (/^\/r\s+confirm\b/i.test(trimmed)) {
+      const name = await this.getPendingNewRole();
+      if (!name) {
+        await this.showRoleCreateWizard();
+        return true;
+      }
+      await this.saveLastSelectedRole(name);
+      await this.clearPendingNewRole();
+
+      this.replyFromAgent(`Selected role: ${name}\n\n[[/role|Continue]]`);
+
+      await this.handleTriggers('/role', null);
+      return true;
+    }
+
+    if (/^\/r\s+cancel\b/i.test(trimmed)) {
+      await this.clearPendingNewRole();
+      await this.handleTriggers('/r new', null);
+      return true;
+    }
+
     if (/^\/role\b/i.test(trimmed)) {
       const ok = await this.ensureRoleLangReady(true);
       if (!ok) return true;
@@ -2814,6 +2870,71 @@ TASK:
     await new Promise(resolve => this.setState({ roleLangCode: normalized }, resolve));
   };
 
+  restoreLastSelectedRole = async () => {
+    const raw = await AsyncStorage.getItem(ROLE_LAST_SELECTED_STORAGE_KEY);
+    if (!raw) return;
+    try {
+      const obj = JSON.parse(raw);
+      if (obj && obj.roleName) {
+        await new Promise(resolve => this.setState({ lastSelectedRole: obj }, resolve));
+      }
+    } catch {}
+  };
+
+  saveLastSelectedRole = async roleName => {
+    const obj = { roleName: String(roleName || '').trim(), updatedAt: Date.now() };
+    if (!obj.roleName) return;
+    await AsyncStorage.setItem(ROLE_LAST_SELECTED_STORAGE_KEY, JSON.stringify(obj));
+    await new Promise(resolve => this.setState({ lastSelectedRole: obj }, resolve));
+  };
+
+  setPendingNewRole = async roleName => {
+    const name = String(roleName || '').trim();
+    if (!name) return false;
+    await AsyncStorage.setItem(ROLE_PENDING_NEW_STORAGE_KEY, name);
+    await new Promise(resolve => this.setState({ pendingNewRole: name }, resolve));
+    return true;
+  };
+
+  clearPendingNewRole = async () => {
+    await AsyncStorage.removeItem(ROLE_PENDING_NEW_STORAGE_KEY);
+    await new Promise(resolve => this.setState({ pendingNewRole: null }, resolve));
+  };
+
+  getPendingNewRole = async () => {
+    const inState = String(this.state.pendingNewRole || '').trim();
+    if (inState) return inState;
+    const stored = await AsyncStorage.getItem(ROLE_PENDING_NEW_STORAGE_KEY);
+    return String(stored || '').trim();
+  };
+
+  showRoleCreateWizard = async () => {
+    const lines = [
+      'Create a new role',
+      '',
+      'Type a role name using:',
+      '/r create <role name>',
+      '',
+      'Example:',
+      '[[/r create MyRole|Use name: MyRole]]',
+      '',
+      '[[/r cancel|Cancel]]',
+    ];
+    this.replyFromAgent(lines.join('\n'));
+  };
+
+  showRoleCreateConfirm = async name => {
+    const lines = [
+      `Role name: ${name}`,
+      '',
+      'Confirm to select this role.',
+      '',
+      '[[/r confirm|Confirm]]',
+      '[[/r cancel|Cancel]]',
+    ];
+    this.replyFromAgent(lines.join('\n'));
+  };
+
   getRoleLangMenuMessage = () => {
     const current = getStoryLangLabel(this.getRoleLangCode() || 'en');
     const lines = [this.getRoleMenuText('langMenuTitle', { current }), '', this.getRoleMenuText('supportedLangs'), ''];
@@ -2881,7 +3002,7 @@ TASK:
     const lines = [
       'Role setup:',
       '',
-      `[[/r|New role]]`,
+      `[[/r create|New role]]`,
       '',
       `[[/rolelang|${this.getRoleMenuText('changeLanguage')}]]`,
       '',
