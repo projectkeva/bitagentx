@@ -1455,6 +1455,9 @@ class AgentChat extends React.Component {
       pendingReturnToDestinyMenu: false,
       pendingModelFinalConfirm: false,
       pendingRoleCall: false,
+      pendingRoleSuggest: false,
+      pendingRoleSuggestOriginal: '',
+      pendingRoleSuggestOptions: [],
       activeRoleSlug: null,
       lastSelectedRole: null,
       pendingNewRole: null,
@@ -1733,6 +1736,106 @@ class AgentChat extends React.Component {
     const rolePrompt = buildRoleplayPrompt(roleData.roleName, agentId, roleData.memory || '');
 
     await this.replyFromLLM(rolePrompt, userMessage, { silentUser: true });
+  };
+
+  handleRoleSuggestWithName = async (name, userMessage = null) => {
+    const original = String(name || '').trim();
+    if (!original) {
+      await new Promise(resolve => this.setState({ pendingRoleCall: true }, resolve));
+      this.replyFromAgent('Who do you want to summon? Reply with the role name.');
+      return;
+    }
+
+    const hasLLM = !!this.state.llmConfig?.provider && typeof this.callLLMSilent === 'function';
+    if (!hasLLM) {
+      await this.handleRoleCallWithName(original, userMessage);
+      return;
+    }
+
+    await new Promise(resolve =>
+      this.setState(
+        {
+          pendingRoleSuggest: true,
+          pendingRoleSuggestOriginal: original,
+          pendingRoleSuggestOptions: [],
+        },
+        resolve,
+      ),
+    );
+
+    const prompt = `
+You are a role name resolver for a role-playing game UI.
+
+USER_INPUT_NAME: ${JSON.stringify(original)}
+
+TASK:
+- Propose 6 or fewer summonable role names related to USER_INPUT_NAME.
+- For each, include a short "source" string that explains the origin/type, e.g.
+  "mythology", "history", "game archetype", "anime vibe", "sci-fi trope", "original variant".
+- Names should be short and usable as a role title.
+- Output ONLY valid JSON (no markdown, no extra text).
+
+OUTPUT JSON SCHEMA:
+{
+  "options":[
+    {"name":"...", "source":"..."},
+    ...
+  ]
+}
+`.trim();
+
+    let raw = '';
+    try {
+      raw = await this.callLLMSilent(prompt);
+    } catch (error) {
+      raw = '';
+    }
+
+    let options = [];
+    try {
+      const parsed = JSON.parse(String(raw || '').trim());
+      if (parsed && Array.isArray(parsed.options)) {
+        options = parsed.options
+          .map(item => ({
+            name: String(item?.name || '').trim(),
+            source: String(item?.source || '').trim(),
+          }))
+          .filter(item => item.name);
+      }
+    } catch {}
+
+    if (!options.length) {
+      options = [{ name: original, source: 'use input name' }];
+    }
+
+    const seen = new Set();
+    const cleaned = [];
+    options.forEach(option => {
+      const key = option.name.toLowerCase();
+      if (!seen.has(key) && cleaned.length < 6) {
+        seen.add(key);
+        cleaned.push(option);
+      }
+    });
+
+    await new Promise(resolve => this.setState({ pendingRoleSuggestOptions: cleaned }, resolve));
+    this.replyFromAgent(this.buildRoleSuggestMenuMessage(original, cleaned));
+  };
+
+  buildRoleSuggestMenuMessage = (original, options) => {
+    const lines = [];
+    lines.push(`Found summonable roles for: ${original}`);
+    lines.push('');
+
+    options.forEach((option, idx) => {
+      const label = option.source ? `${option.name} — ${option.source}` : option.name;
+      lines.push(`${idx + 1}. [[/r pick ${option.name}|${label}]]`);
+    });
+
+    lines.push('');
+    lines.push(`[[/r useonly|Use name only: ${original}]]`);
+    lines.push('[[/r back|Back]]');
+    return lines.join('\n');
   };
 
   runRoleMemoryUpdate = async (roleSlug, assistantReplyText) => {
@@ -2193,7 +2296,50 @@ TASK:
         return true;
       }
 
-      await this.handleRoleCallWithName(args, userMessage);
+      await this.handleRoleSuggestWithName(args, userMessage);
+      return true;
+    }
+
+    if (/^\/r\s+pick\b/i.test(trimmed)) {
+      const picked = trimmed.replace(/^\/r\s+pick\b/i, '').trim();
+      const name = picked || '';
+      const original = this.state.pendingRoleSuggestOriginal || '';
+
+      await new Promise(resolve =>
+        this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [] }, resolve),
+      );
+
+      if (!name) {
+        if (original) {
+          await this.handleRoleSuggestWithName(original, userMessage);
+        } else {
+          await this.handleRoleNewMenu();
+        }
+        return true;
+      }
+
+      await this.handleRoleCallWithName(name, userMessage);
+      return true;
+    }
+
+    if (/^\/r\s+useonly\b/i.test(trimmed)) {
+      const original = String(this.state.pendingRoleSuggestOriginal || '').trim();
+      await new Promise(resolve =>
+        this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [] }, resolve),
+      );
+      if (!original) {
+        await this.handleRoleNewMenu();
+        return true;
+      }
+      await this.handleRoleCallWithName(original, userMessage);
+      return true;
+    }
+
+    if (/^\/r\s+back\b/i.test(trimmed)) {
+      await new Promise(resolve =>
+        this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [] }, resolve),
+      );
+      await this.handleRoleNewMenu();
       return true;
     }
 
@@ -3002,7 +3148,7 @@ TASK:
     const lines = [
       'Role setup:',
       '',
-      `[[/r create|New role]]`,
+      `[[/r call|New role]]`,
       '',
       `[[/rolelang|${this.getRoleMenuText('changeLanguage')}]]`,
       '',
