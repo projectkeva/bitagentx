@@ -1421,7 +1421,7 @@ const buildDestinySeedPrompt = (agentId, overrideCurrentBlock = null) => {
   return DESTINY_SEED_PROMPT;
 };
 
-const buildRoleplayPrompt = (roleText, agentId, roleMemoryCard) => {
+const buildRoleplayPromptOffline = (roleText, agentId, roleMemoryCard) => {
   const sanitizedRole = (roleText || '').trim();
   const roleName = sanitizedRole || 'unknown';
   const { idStr, birthBlock, currentBlock, levelStart, alpha } = buildSeedData(agentId);
@@ -1434,8 +1434,47 @@ const buildRoleplayPrompt = (roleText, agentId, roleMemoryCard) => {
     .replace(/\{CURRENT_BLOCK\}/g, String(currentBlock))
     .replace(/\{LEVEL_START\}/g, String(levelStart))
     .replace(/\{ALPHA\}/g, formatSigned(alpha))
+
     .replace(/\{ROLE_NAME\}/g, roleName)
     .replace(/\{STARTING_MEMORY_CARD_SECTION\}/g, memorySection);
+};
+
+const buildRoleLanguageInstruction = roleLangCode => {
+  const code = normalizeStoryLangCode(roleLangCode || 'en');
+  switch (code) {
+    case 'zh-cn':
+      return 'Language: Simplified Chinese. Reply only in Simplified Chinese. Do NOT ask the user to choose a language.';
+    case 'zh-tw':
+      return 'Language: Traditional Chinese. Reply only in Traditional Chinese. Do NOT ask the user to choose a language.';
+    case 'ja':
+      return 'Language: Japanese. Reply only in Japanese. Do NOT ask the user to choose a language.';
+    case 'ko':
+      return 'Language: Korean. Reply only in Korean. Do NOT ask the user to choose a language.';
+    default:
+      return `Language: ${code}. Reply only in ${code}. Do NOT ask the user to choose a language.`;
+  }
+};
+
+const stripRoleplayLanguageHandshake = promptText => {
+  const text = String(promptText || '');
+  let out = text.replace('- The user will choose a language. ROLE_NAME is provided below.\n', '');
+  const startKey = 'MANDATORY START — TURN-GATED HANDSHAKE';
+  const endKey = 'DEFAULT RULES';
+  const s = out.indexOf(startKey);
+  const e = out.indexOf(endKey);
+  if (s !== -1 && e !== -1 && e > s) {
+    out = out.slice(0, s) + out.slice(e);
+  }
+  return out;
+};
+
+const buildRoleplayPromptOnline = (roleText, agentId, roleMemoryCard, roleLangCode) => {
+  const base = buildRoleplayPromptOffline(roleText, agentId, roleMemoryCard);
+  const langLine = buildRoleLanguageInstruction(roleLangCode);
+  const merged = `${langLine}
+
+${base}`;
+  return stripRoleplayLanguageHandshake(merged);
 };
 
 class AgentChat extends React.Component {
@@ -1733,7 +1772,8 @@ class AgentChat extends React.Component {
 
     const ctx = typeof this.resolveNamespaceContext === 'function' ? this.resolveNamespaceContext() : null;
     const agentId = ctx?.agentId || this.agentId || 'unknown';
-    const rolePrompt = buildRoleplayPrompt(roleData.roleName, agentId, roleData.memory || '');
+    const roleLang = this.getRoleLangCode() || 'en';
+    const rolePrompt = buildRoleplayPromptOnline(roleData.roleName, agentId, roleData.memory || '', roleLang);
 
     await this.replyFromLLM(rolePrompt, userMessage, { silentUser: true });
   };
@@ -1829,12 +1869,11 @@ OUTPUT JSON SCHEMA:
 
     options.forEach((option, idx) => {
       const label = option.source ? `${option.name} — ${option.source}` : option.name;
-      lines.push(`${idx + 1}. [[/r pick ${option.name}|${label}]]`);
+      lines.push(`${idx + 1}. [[/r summon ${option.name}|${label}]]`);
+      lines.push('');
     });
 
-    lines.push('');
-    lines.push(`[[/r useonly|Use name only: ${original}]]`);
-    lines.push('[[/r back|Back]]');
+    lines.push(`0. [[/r useonly|Use name only: ${original}]]`);
     return lines.join('\n');
   };
 
@@ -2300,8 +2339,8 @@ TASK:
       return true;
     }
 
-    if (/^\/r\s+pick\b/i.test(trimmed)) {
-      const picked = trimmed.replace(/^\/r\s+pick\b/i, '').trim();
+    if (/^\/r\s+summon\b/i.test(trimmed)) {
+      const picked = trimmed.replace(/^\/r\s+summon\b/i, '').trim();
       const name = picked || '';
       const original = this.state.pendingRoleSuggestOriginal || '';
 
@@ -2310,11 +2349,8 @@ TASK:
       );
 
       if (!name) {
-        if (original) {
-          await this.handleRoleSuggestWithName(original, userMessage);
-        } else {
-          await this.handleRoleNewMenu();
-        }
+        if (original) await this.handleRoleSuggestWithName(original, userMessage);
+        else await this.handleRoleNewMenu();
         return true;
       }
 
@@ -2332,14 +2368,6 @@ TASK:
         return true;
       }
       await this.handleRoleCallWithName(original, userMessage);
-      return true;
-    }
-
-    if (/^\/r\s+back\b/i.test(trimmed)) {
-      await new Promise(resolve =>
-        this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [] }, resolve),
-      );
-      await this.handleRoleNewMenu();
       return true;
     }
 
@@ -2508,14 +2536,14 @@ TASK:
     if (roleMatch) {
       await Roleplay.handleRoleCommand(this, roleMatch[1], {
         Rolecards,
-        buildRoleplayPrompt,
+        buildRoleplayPrompt: buildRoleplayPromptOffline,
       });
       return;
     }
     if (/^\/r\b/i.test(trimmed)) {
       await Roleplay.handleRoleCommand(this, 'unknown', {
         Rolecards,
-        buildRoleplayPrompt,
+        buildRoleplayPrompt: buildRoleplayPromptOffline,
       });
       this.replyFromAgent(
         Roleplay.buildRoleHistoryMessage(this, {
