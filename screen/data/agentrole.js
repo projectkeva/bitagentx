@@ -150,6 +150,15 @@ const COMMAND_TOKEN_REGEX =
 const COMMAND_DISPLAY_TOKEN_REGEX = /\[\[([^\]|]+)\|([^\]]+)\]\]/gi;
 const STORY_CHOICE_PREFIX_RE =
   /^\s*(?:\[\s*([A-Za-z]|\d{1,2})\s*\]|【\s*([A-Za-z]|\d{1,2})\s*】|\(\s*([A-Za-z]|\d{1,2})\s*\)|（\s*([A-Za-z]|\d{1,2})\s*）|([A-Za-z]|\d{1,2})\s*[).:：、．])\s*(.+)$/;
+const normalizeSource = srcRaw => {
+  const s = String(srcRaw || '')
+    .trim()
+    .toLowerCase();
+  const one = (s.split(/\s+/)[0] || '').replace(/[^a-z0-9_-]/g, '');
+  const allowed = new Set(['game', 'mythology', 'history', 'anime', 'scifi', 'trope', 'original', 'local', 'onchain', 'unknown']);
+  if (!one) return 'unknown';
+  return allowed.has(one) ? one : 'unknown';
+};
 const stripMarkdownWrap = s => {
   let t = String(s || '').trim();
   if ((t.startsWith('**') && t.endsWith('**')) || (t.startsWith('__') && t.endsWith('__'))) {
@@ -1497,6 +1506,8 @@ class AgentChat extends React.Component {
       pendingRoleSuggest: false,
       pendingRoleSuggestOriginal: '',
       pendingRoleSuggestOptions: [],
+      pendingRoleSourceView: null,
+      pendingRoleSourceOriginal: '',
       activeRoleSlug: null,
       lastSelectedRole: null,
       pendingNewRole: null,
@@ -1780,6 +1791,14 @@ class AgentChat extends React.Component {
 
   handleRoleSuggestWithName = async (name, userMessage = null) => {
     const original = String(name || '').trim();
+    const containsOriginal = (candidateName, originalName) => {
+      const a = String(candidateName || '').toLowerCase();
+      const b = String(originalName || '')
+        .toLowerCase()
+        .trim();
+      if (!b) return true;
+      return a.includes(b);
+    };
     if (!original) {
       await new Promise(resolve => this.setState({ pendingRoleCall: true }, resolve));
       this.replyFromAgent('Who do you want to summon? Reply with the role name.');
@@ -1835,17 +1854,17 @@ OUTPUT JSON SCHEMA:
     try {
       const parsed = JSON.parse(String(raw || '').trim());
       if (parsed && Array.isArray(parsed.options)) {
-        options = parsed.options
-          .map(item => ({
-            name: String(item?.name || '').trim(),
-            source: String(item?.source || '').trim(),
-          }))
-          .filter(item => item.name);
+        options = parsed.options.map(item => ({
+          name: String(item?.name || '').trim(),
+          source: normalizeSource(item?.source),
+        }));
       }
     } catch {}
 
+    options = options.filter(o => o.name && containsOriginal(o.name, original));
+
     if (!options.length) {
-      options = [{ name: original, source: 'use input name' }];
+      options = [{ name: original, source: 'unknown' }];
     }
 
     const seen = new Set();
@@ -1868,13 +1887,87 @@ OUTPUT JSON SCHEMA:
     lines.push('');
 
     options.forEach((option, idx) => {
-      const label = option.source ? `${option.name} — ${option.source}` : option.name;
-      lines.push(`${idx + 1}. [[/r summon ${option.name}|${label}]]`);
+      const nameBtn = `[[/r summon ${option.name}|${option.name}]]`;
+      const srcBtn = `[[/r source ${option.source}|${option.source}]]`;
+      lines.push(`${idx + 1}. ${nameBtn} — ${srcBtn}`);
       lines.push('');
     });
 
     lines.push(`0. [[/r useonly|Use name only: ${original}]]`);
     return lines.join('\n');
+  };
+
+  buildRoleSourceMenuMessage = src => {
+    const options = Array.isArray(this.state.pendingRoleSuggestOptions) ? this.state.pendingRoleSuggestOptions : [];
+    const same = options.filter(o => normalizeSource(o.source) === src);
+
+    const lines = [];
+    lines.push(`Source: ${src}`);
+    lines.push('');
+
+    if (!same.length) {
+      lines.push('(No cached roles for this source yet.)');
+      lines.push('');
+    } else {
+      same.forEach((o, idx) => {
+        lines.push(`${idx + 1}. [[/r summon ${o.name}|${o.name}]]`);
+      });
+      lines.push('');
+    }
+
+    lines.push(`[[/r more ${src}|More roles]]`);
+    lines.push(`[[/r new|Back to role setup]]`);
+    return lines.join('\n');
+  };
+
+  handleRoleSuggestMoreBySource = async (original, src) => {
+    const hasLLM = !!this.state.llmConfig?.provider && typeof this.callLLMSilent === 'function';
+    if (!hasLLM) return;
+
+    const prompt = `
+You are a role name generator.
+
+USER_INPUT_NAME: ${JSON.stringify(original)}
+SOURCE: ${JSON.stringify(src)}
+
+RULES:
+- Generate 8 additional role names.
+- Every name MUST contain USER_INPUT_NAME as a substring (case-insensitive).
+- Each item source MUST be exactly SOURCE (one word).
+- Output ONLY JSON: {"options":[{"name":"...","source":"${src}"}]}
+`.trim();
+
+    let raw = '';
+    try {
+      raw = await this.callLLMSilent(prompt);
+    } catch {}
+
+    let more = [];
+    try {
+      const parsed = JSON.parse(String(raw || '').trim());
+      if (parsed && Array.isArray(parsed.options)) {
+        more = parsed.options.map(x => ({
+          name: String(x?.name || '').trim(),
+          source: normalizeSource(x?.source || src),
+        }));
+      }
+    } catch {}
+
+    more = more.filter(o => o.name && String(o.name).toLowerCase().includes(String(original).toLowerCase()));
+
+    const cur = Array.isArray(this.state.pendingRoleSuggestOptions) ? this.state.pendingRoleSuggestOptions : [];
+    const seen = new Set(cur.map(o => String(o.name).toLowerCase()));
+    const merged = [...cur];
+
+    more.forEach(o => {
+      const k = String(o.name).toLowerCase();
+      if (!seen.has(k)) {
+        seen.add(k);
+        merged.push(o);
+      }
+    });
+
+    await new Promise(resolve => this.setState({ pendingRoleSuggestOptions: merged }, resolve));
   };
 
   runRoleMemoryUpdate = async (roleSlug, assistantReplyText) => {
@@ -2326,6 +2419,33 @@ TASK:
       return true;
     }
 
+    if (/^\/r\s+source\b/i.test(trimmed)) {
+      const src = normalizeSource(trimmed.replace(/^\/r\s+source\b/i, '').trim());
+      const original = String(this.state.pendingRoleSuggestOriginal || '').trim();
+
+      await new Promise(resolve =>
+        this.setState(
+          {
+            pendingRoleSourceView: src,
+            pendingRoleSourceOriginal: original,
+          },
+          resolve,
+        ),
+      );
+
+      this.replyFromAgent(this.buildRoleSourceMenuMessage(src));
+      return true;
+    }
+
+    if (/^\/r\s+more\b/i.test(trimmed)) {
+      const src = normalizeSource(trimmed.replace(/^\/r\s+more\b/i, '').trim());
+      const original = String(this.state.pendingRoleSourceOriginal || this.state.pendingRoleSuggestOriginal || '').trim();
+
+      await this.handleRoleSuggestMoreBySource(original, src);
+      this.replyFromAgent(this.buildRoleSourceMenuMessage(src));
+      return true;
+    }
+
     if (/^\/r\s+call\b/i.test(trimmed)) {
       const args = trimmed.replace(/^\/r\s+call\b/i, '').trim();
 
@@ -2345,7 +2465,7 @@ TASK:
       const original = this.state.pendingRoleSuggestOriginal || '';
 
       await new Promise(resolve =>
-        this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [] }, resolve),
+        this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [], pendingRoleSourceView: null, pendingRoleSourceOriginal: '' }, resolve),
       );
 
       if (!name) {
@@ -2361,7 +2481,7 @@ TASK:
     if (/^\/r\s+useonly\b/i.test(trimmed)) {
       const original = String(this.state.pendingRoleSuggestOriginal || '').trim();
       await new Promise(resolve =>
-        this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [] }, resolve),
+        this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [], pendingRoleSourceView: null, pendingRoleSourceOriginal: '' }, resolve),
       );
       if (!original) {
         await this.handleRoleNewMenu();
