@@ -1486,6 +1486,30 @@ ${base}`;
   return stripRoleplayLanguageHandshake(merged);
 };
 
+const buildRoleChatPrompt = (roleName, agentId, roleMemoryCard, roleLangCode) => {
+  const langLine = buildRoleLanguageInstruction(roleLangCode);
+  const mem = String(roleMemoryCard || '').trim();
+
+  return `
+${langLine}
+
+You are ROLE_NAME: ${roleName}
+AGENT_ID: ${agentId}
+
+ROLE MEMORY (local, user-confirmable):
+${mem ? mem : '(empty)'}
+
+ROLEPLAY MODE (CHAT):
+- This is NOT a branching story game.
+- Do NOT present numbered choices, menus, or INPUT prompts (no "1.", "2.", "INPUT:", "type 1-4/1-9").
+- Just roleplay as ${roleName} and chat naturally with the user.
+- Keep responses concise unless the user asks for detail.
+- Never ask the user to choose a language.
+
+Start now with ONE natural in-character line to confirm you are online.
+`.trim();
+};
+
 class AgentChat extends React.Component {
   constructor(props) {
     super(props);
@@ -1509,6 +1533,8 @@ class AgentChat extends React.Component {
       pendingRoleSourceView: null,
       pendingRoleSourceOriginal: '',
       activeRoleSlug: null,
+      roleCardOffset: 0,
+      roleCardPage: [],
       lastSelectedRole: null,
       pendingNewRole: null,
     };
@@ -1781,10 +1807,13 @@ class AgentChat extends React.Component {
     this.activeRoleSlug = roleSlug;
     await new Promise(resolve => this.setState({ activeRoleSlug: roleSlug }, resolve));
 
+    const first = await this.loadLocalRoleCardsPage(0);
+    await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: first }, resolve));
+
     const ctx = typeof this.resolveNamespaceContext === 'function' ? this.resolveNamespaceContext() : null;
     const agentId = ctx?.agentId || this.agentId || 'unknown';
     const roleLang = this.getRoleLangCode() || 'en';
-    const rolePrompt = buildRoleplayPromptOnline(roleData.roleName, agentId, roleData.memory || '', roleLang);
+    const rolePrompt = buildRoleChatPrompt(roleData.roleName, agentId, roleData.memory || '', roleLang);
 
     await this.replyFromLLM(rolePrompt, userMessage, { silentUser: true });
   };
@@ -2443,6 +2472,25 @@ TASK:
 
       await this.handleRoleSuggestMoreBySource(original, src);
       this.replyFromAgent(this.buildRoleSourceMenuMessage(src));
+      return true;
+    }
+
+    if (/^\/role\s+cards\b/i.test(trimmed)) {
+      const page = await this.loadLocalRoleCardsPage(0);
+      await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: page }, resolve));
+      this.replyFromAgent(this.buildLocalRoleCardsMessage(page, 0));
+      return true;
+    }
+
+    if (/^\/role\s+morecards\b/i.test(trimmed)) {
+      const nextOffset = (this.state.roleCardOffset || 0) + PAGE_SIZE;
+      const page = await this.loadLocalRoleCardsPage(nextOffset);
+      if (!page.length) {
+        this.replyFromAgent('(no more)');
+        return true;
+      }
+      await new Promise(resolve => this.setState({ roleCardOffset: nextOffset, roleCardPage: page }, resolve));
+      this.replyFromAgent(this.buildLocalRoleCardsMessage(page, nextOffset));
       return true;
     }
 
@@ -3277,21 +3325,9 @@ TASK:
       return;
     }
 
-    try {
-      await Rolecards.handleRoleMemoryCommand(
-        this,
-        {
-          BlueApp,
-          BlueElectrum,
-          updateKeyValue,
-          deleteKeyValue,
-          FALLBACK_DATA_PER_BYTE_FEE,
-        },
-        '/m',
-      );
-    } catch (error) {
-      console.warn('Role new: list rolecards failed', error);
-    }
+    const first = await this.loadLocalRoleCardsPage(0);
+    await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: first }, resolve));
+    this.replyFromAgent(this.buildLocalRoleCardsMessage(first, 0));
 
     const lines = [
       'Role setup:',
@@ -3303,6 +3339,56 @@ TASK:
       `[[/a list|${this.getRoleMenuText('changeModel')}]]`,
     ];
     this.replyFromAgent(lines.join('\n'));
+  };
+
+  loadLocalRoleCardsPage = async (offset = 0) => {
+    try {
+      const exists = await RNFS.exists(this.roleFilesDir);
+      if (!exists) return [];
+
+      const entries = await RNFS.readDir(this.roleFilesDir);
+      const files = entries.filter(e => e.isFile() && e.name.endsWith('.json'));
+
+      const all = [];
+      for (const f of files) {
+        try {
+          const raw = await RNFS.readFile(f.path, 'utf8');
+          const j = JSON.parse(raw);
+          if (j && j.roleSlug) {
+            all.push({
+              roleName: j.roleName || j.roleSlug,
+              roleSlug: j.roleSlug,
+              updatedAt: Number(j.updatedAt || j.createdAt || 0),
+            });
+          }
+        } catch {}
+      }
+
+      all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      return all.slice(offset, offset + PAGE_SIZE);
+    } catch (e) {
+      console.warn('loadLocalRoleCardsPage failed', e);
+      return [];
+    }
+  };
+
+  buildLocalRoleCardsMessage = (cards, offset) => {
+    const lines = [];
+    lines.push('Cards:');
+    lines.push('');
+
+    if (!cards.length) {
+      lines.push('(empty)');
+      return lines.join('\n');
+    }
+
+    cards.forEach((c, idx) => {
+      lines.push(`${offset + idx + 1}. [[/r summon ${c.roleName}|${c.roleName}]]`);
+    });
+
+    lines.push('');
+    lines.push('[[/role morecards|More]]');
+    return lines.join('\n');
   };
 
   handleLangCommand = async argsString => {
