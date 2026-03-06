@@ -1964,6 +1964,7 @@ OUTPUT JSON:
 
   buildRoleMemoryQuickConsoleMessage = () => {
     return [
+      '[[/r recall|Recall memory]]',
       '[[/r memory adjust|Adjust memory]]',
       '[[/r new|Switch role]]',
     ].join('\n');
@@ -2490,7 +2491,8 @@ RULES:
             if (cleaned) nextMemory = cleaned;
           } catch {}
         } else {
-          nextMemory = currentMemory ? `${currentMemory}\n${adjustText}` : adjustText;
+          nextMemory = currentMemory || buildDefaultRoleMemoryCard(roleData.roleName || roleSlug);
+          this.replyFromAgent('(memory adjust needs LLM; memory kept unchanged)');
         }
 
         roleData.memory = nextMemory;
@@ -2508,6 +2510,7 @@ RULES:
         ].join('\n'));
 
         this.replyFromAgent([
+          '[[/r recall|Recall memory]]',
           '[[/r memory adjust|Continue adjusting]]',
           '[[/r memory reset|Reset memory]]',
           '[[/r memory commit|Commit memory on-chain]]',
@@ -2650,6 +2653,7 @@ RULES:
       await this.writeRoleFile(roleSlug, roleData);
 
       this.replyFromAgent('Memory reset successfully.');
+      this.replyFromAgent(this.buildRoleMemoryQuickConsoleMessage());
 
       await this.handleTriggers('/r continuechat', null);
       return true;
@@ -2747,6 +2751,7 @@ RULES:
             pendingRoleSuggest: false,
             pendingRoleSuggestOriginal: '',
             pendingRoleSuggestOptions: [],
+            pendingRoleCall: false,
           },
           resolve,
         ),
@@ -2792,7 +2797,7 @@ RULES:
         'Delete this role memory?',
         '',
         '[[/r memory delete confirm|Confirm delete]]',
-        '[[/r recall|Cancel]]',
+        '[[/r recall|Back]]',
       ].join('\n'));
       return true;
     }
