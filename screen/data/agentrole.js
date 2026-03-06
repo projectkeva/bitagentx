@@ -1499,6 +1499,10 @@ class AgentChat extends React.Component {
       pendingRoleSuggest: false,
       pendingRoleSuggestOriginal: '',
       pendingRoleSuggestOptions: [],
+      pendingMemoryAdjust: false,
+      pendingMemoryRoleSlug: null,
+      pendingMemoryDeleteConfirm: false,
+      pendingMemoryDeleteRoleSlug: null,
       activeRoleSlug: null,
       roleCardOffset: 0,
       roleCardPage: [],
@@ -1754,6 +1758,34 @@ class AgentChat extends React.Component {
     }
   };
 
+  deleteRoleFile = async roleSlug => {
+    try {
+      const path = this.getRoleFilePath(roleSlug);
+      const exists = await RNFS.exists(path);
+      if (!exists) return true;
+      await RNFS.unlink(path);
+      return true;
+    } catch (error) {
+      console.warn('Failed to delete role file', error);
+      return false;
+    }
+  };
+
+  getActiveRoleData = async () => {
+    const roleSlug =
+      this.state.activeRoleSlug ||
+      this.activeRoleSlug ||
+      Rolecards.normalizeRoleSlug(this.state.lastSelectedRole?.roleName || '') ||
+      '';
+
+    if (!roleSlug) return null;
+
+    const roleData = await this.readRoleFile(roleSlug);
+    if (!roleData) return null;
+
+    return { roleSlug, roleData };
+  };
+
   handleRoleCallWithName = async (name, userMessage = null) => {
     const normalizedName = String(name || '').trim();
     const roleSlug = Rolecards.normalizeRoleSlug(normalizedName) || 'unknown';
@@ -1784,6 +1816,7 @@ class AgentChat extends React.Component {
     const rolePrompt = buildRoleChatPrompt(roleData.roleName, agentId, roleData.memory || '', roleLang);
 
     this.replyFromAgent(this.buildRoleSummonSuccessMessage(roleData.roleName));
+    this.replyFromAgent(this.buildRoleMemoryConsoleMessage(roleData));
     await this.replyFromLLM(rolePrompt, userMessage, { silentUser: true });
   };
 
@@ -1900,11 +1933,21 @@ OUTPUT JSON:
   };
 
   buildRoleSummonSuccessMessage = roleName => {
+    return `Role summoned successfully: ${roleName}`;
+  };
+
+  buildRoleMemoryConsoleMessage = roleData => {
+    const memoryText = String(roleData?.memory || '').trim();
+
     return [
-      `Role summoned successfully: ${roleName}`,
+      'Memory:',
+      memoryText || '(empty)',
       '',
-      '[[/r recall|Recall memory]]',
-      '[[/r new|Switch role]]',
+      '[[/r memory adjust|Adjust memory]]',
+      '[[/r memory reset|Reset memory]]',
+      '[[/r memory commit|Commit memory on-chain]]',
+      '[[/r memory delete|Delete memory]]',
+      '[[/r continuechat|Continue chat]]',
     ].join('\n');
   };
 
@@ -2351,6 +2394,74 @@ TASK:
 
   handleTriggers = async (text, userMessage = null) => {
     const trimmed = text.trim();
+
+    if (this.state.pendingMemoryAdjust && userMessage) {
+      const adjustText = String(trimmed || '').trim();
+
+      if (adjustText && !adjustText.startsWith('/')) {
+        const roleSlug = this.state.pendingMemoryRoleSlug;
+        const roleData = roleSlug ? await this.readRoleFile(roleSlug) : null;
+
+        if (!roleSlug || !roleData) {
+          await new Promise(resolve =>
+            this.setState({ pendingMemoryAdjust: false, pendingMemoryRoleSlug: null }, resolve),
+          );
+          this.replyFromAgent('(memory adjust failed)');
+          return true;
+        }
+
+        const currentMemory = String(roleData.memory || '').trim();
+        let nextMemory = currentMemory;
+
+        if (!!this.state.llmConfig?.provider && typeof this.callLLMSilent === 'function') {
+          const prompt = `
+You are a memory editor for a role-playing agent.
+
+CURRENT_MEMORY:
+${JSON.stringify(currentMemory).slice(0, 8000)}
+
+USER_ADJUST_REQUEST:
+${JSON.stringify(adjustText).slice(0, 4000)}
+
+TASK:
+- Rewrite CURRENT_MEMORY according to USER_ADJUST_REQUEST.
+- Keep only the updated memory.
+- Do NOT explain.
+- Output plain text only.
+`.trim();
+
+          try {
+            const raw = await this.callLLMSilent(prompt);
+            const cleaned = String(raw || '').trim();
+            if (cleaned) nextMemory = cleaned;
+          } catch {}
+        } else {
+          nextMemory = currentMemory ? `${currentMemory}\n${adjustText}` : adjustText;
+        }
+
+        roleData.memory = nextMemory;
+        roleData.updatedAt = Date.now();
+        await this.writeRoleFile(roleSlug, roleData);
+
+        await new Promise(resolve =>
+          this.setState({ pendingMemoryAdjust: false, pendingMemoryRoleSlug: null }, resolve),
+        );
+
+        this.replyFromAgent([
+          'Memory updated.',
+          '',
+          nextMemory || '(empty)',
+        ].join('\n'));
+
+        this.replyFromAgent([
+          '[[/r memory adjust|Continue adjusting]]',
+          '[[/r continuechat|Continue chat]]',
+        ].join('\n'));
+
+        return true;
+      }
+    }
+
     if (this.state.pendingRoleCall && !trimmed.startsWith('/')) {
       await new Promise(resolve => this.setState({ pendingRoleCall: false }, resolve));
       await this.handleTriggers(`/r call ${trimmed}`, userMessage);
@@ -2422,24 +2533,197 @@ TASK:
     }
 
     if (/^\/r\s+recall\b/i.test(trimmed)) {
-      const selected = this.state.lastSelectedRole;
-      const roleName = selected?.roleName || this.state.activeRoleSlug || '';
-
-      if (!roleName) {
+      const active = await this.getActiveRoleData();
+      if (!active) {
         this.replyFromAgent('(no active role)');
         return true;
       }
 
+      const { roleData } = active;
       this.replyFromAgent([
-        `Memory recall: ${roleName}`,
-        '',
-        'Memory loading is not fully connected yet.',
-        '',
-        '[[/r new|Switch role]]',
+        'Memory:',
+        String(roleData.memory || '').trim() || '(empty)',
       ].join('\n'));
+
+      this.replyFromAgent(this.buildRoleMemoryConsoleMessage(roleData));
       return true;
     }
 
+    if (/^\/r\s+memory\s+adjust\b/i.test(trimmed)) {
+      const active = await this.getActiveRoleData();
+      if (!active) {
+        this.replyFromAgent('(no active role)');
+        return true;
+      }
+
+      await new Promise(resolve =>
+        this.setState(
+          {
+            pendingMemoryAdjust: true,
+            pendingMemoryRoleSlug: active.roleSlug,
+          },
+          resolve,
+        ),
+      );
+
+      this.replyFromAgent('What memory would you like to adjust?');
+      return true;
+    }
+
+    if (/^\/r\s+memory\s+reset\b/i.test(trimmed)) {
+      const active = await this.getActiveRoleData();
+      if (!active) {
+        this.replyFromAgent('(no active role)');
+        return true;
+      }
+
+      const { roleSlug, roleData } = active;
+      roleData.memory = '';
+      roleData.updatedAt = Date.now();
+      await this.writeRoleFile(roleSlug, roleData);
+
+      this.replyFromAgent('Memory reset successfully.');
+
+      await this.handleTriggers('/r continuechat', null);
+      return true;
+    }
+
+    if (/^\/r\s+continuechat\b/i.test(trimmed)) {
+      const active = await this.getActiveRoleData();
+      if (!active) {
+        this.replyFromAgent('(no active role)');
+        return true;
+      }
+
+      const { roleData } = active;
+      const ctx = typeof this.resolveNamespaceContext === 'function' ? this.resolveNamespaceContext() : null;
+      const agentId = ctx?.agentId || this.agentId || 'unknown';
+      const roleLang = this.getRoleLangCode() || 'en';
+      const rolePrompt = buildRoleChatPrompt(roleData.roleName, agentId, roleData.memory || '', roleLang);
+
+      await this.replyFromLLM(rolePrompt, null, { silentUser: true });
+      return true;
+    }
+
+    if (/^\/r\s+memory\s+commit\b/i.test(trimmed)) {
+      const active = await this.getActiveRoleData();
+      if (!active) {
+        this.replyFromAgent('(no active role)');
+        return true;
+      }
+
+      const { roleSlug, roleData } = active;
+      const memoryText = String(roleData.memory || '').trim();
+
+      if (!memoryText) {
+        this.replyFromAgent('(memory is empty)');
+        return true;
+      }
+
+      try {
+        const namespaceId = this.props?.navigation?.state?.params?.namespaceId;
+        if (!namespaceId) {
+          this.replyFromAgent('(missing namespace)');
+          return true;
+        }
+
+        const walletId = this.props?.navigation?.state?.params?.walletId;
+        const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
+        if (!wallet) {
+          this.replyFromAgent('(wallet not found)');
+          return true;
+        }
+
+        const key = `role.memory.${roleSlug}`;
+        await this.updateKeyValue({
+          wallet,
+          namespaceId,
+          key,
+          value: memoryText,
+        });
+
+        this.replyFromAgent(`Memory committed on-chain: ${key}`);
+      } catch (e) {
+        console.warn('Memory commit failed', e);
+        this.replyFromAgent('(memory commit failed)');
+      }
+      return true;
+    }
+
+    if (/^\/r\s+memory\s+delete\s+confirm\b/i.test(trimmed)) {
+      const roleSlug = this.state.pendingMemoryDeleteRoleSlug;
+
+      if (!roleSlug) {
+        await new Promise(resolve =>
+          this.setState(
+            {
+              pendingMemoryDeleteConfirm: false,
+              pendingMemoryDeleteRoleSlug: null,
+            },
+            resolve,
+          ),
+        );
+        this.replyFromAgent('(no role selected for deletion)');
+        return true;
+      }
+
+      const ok = await this.deleteRoleFile(roleSlug);
+
+      await new Promise(resolve =>
+        this.setState(
+          {
+            pendingMemoryDeleteConfirm: false,
+            pendingMemoryDeleteRoleSlug: null,
+            activeRoleSlug: null,
+          },
+          resolve,
+        ),
+      );
+      this.activeRoleSlug = null;
+
+      await this.clearLastSelectedRole();
+
+      const first = await this.loadLocalRoleCardsPage(0);
+      await new Promise(resolve =>
+        this.setState({ roleCardOffset: 0, roleCardPage: first.items }, resolve),
+      );
+
+      if (!ok) {
+        this.replyFromAgent('(delete memory failed)');
+        return true;
+      }
+
+      this.replyFromAgent('Role memory deleted successfully.');
+
+      await this.handleTriggers('/r new', null);
+      return true;
+    }
+
+    if (/^\/r\s+memory\s+delete\b/i.test(trimmed)) {
+      const active = await this.getActiveRoleData();
+      if (!active) {
+        this.replyFromAgent('(no active role)');
+        return true;
+      }
+
+      await new Promise(resolve =>
+        this.setState(
+          {
+            pendingMemoryDeleteConfirm: true,
+            pendingMemoryDeleteRoleSlug: active.roleSlug,
+          },
+          resolve,
+        ),
+      );
+
+      this.replyFromAgent([
+        'Delete this role memory?',
+        '',
+        '[[/r memory delete confirm|Confirm delete]]',
+        '[[/r recall|Cancel]]',
+      ].join('\n'));
+      return true;
+    }
 
     if (/^\/r\s+create\b/i.test(trimmed)) {
       const name = trimmed.replace(/^\/r\s+create\b/i, '').trim();
@@ -3150,6 +3434,11 @@ TASK:
     if (!obj.roleName) return;
     await AsyncStorage.setItem(ROLE_LAST_SELECTED_STORAGE_KEY, JSON.stringify(obj));
     await new Promise(resolve => this.setState({ lastSelectedRole: obj }, resolve));
+  };
+
+  clearLastSelectedRole = async () => {
+    await AsyncStorage.removeItem(ROLE_LAST_SELECTED_STORAGE_KEY);
+    await new Promise(resolve => this.setState({ lastSelectedRole: null }, resolve));
   };
 
   setPendingNewRole = async roleName => {
