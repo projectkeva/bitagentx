@@ -157,6 +157,26 @@ const stripMarkdownWrap = s => {
   }
   return t;
 };
+
+const buildDefaultRoleMemoryCard = roleName => {
+  const safeRole = String(roleName || 'unknown').trim();
+
+  return [
+    'MEMORY_CARD v0.2',
+    `ROLE=${safeRole}`,
+    '[VERIFIED]',
+    '- Origin World Tag: UNKNOWN',
+    '- Role Function: UNKNOWN',
+    '- Signature: UNKNOWN',
+    '- Key Relationship: UNKNOWN',
+    '- Last Known Scene: UNKNOWN',
+    '- Others: UNKNOWN',
+    '[LIKELY]',
+    '- UNKNOWN',
+    '[FOG]',
+    '- UNKNOWN',
+  ].join('\n');
+};
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
   'Loading the on-device LLM…',
@@ -1786,7 +1806,7 @@ class AgentChat extends React.Component {
     return { roleSlug, roleData };
   };
 
-  handleRoleCallWithName = async (name, userMessage = null) => {
+  handleRoleCallWithName = async (name, userMessage = null, opts = {}) => {
     const normalizedName = String(name || '').trim();
     const roleSlug = Rolecards.normalizeRoleSlug(normalizedName) || 'unknown';
     const now = Date.now();
@@ -1795,7 +1815,7 @@ class AgentChat extends React.Component {
       existingRoleData || {
         roleName: normalizedName || roleSlug,
         roleSlug,
-        memory: '',
+        memory: buildDefaultRoleMemoryCard(normalizedName || roleSlug),
         createdAt: now,
       };
     roleData.roleName = roleData.roleName || normalizedName || roleSlug;
@@ -1815,8 +1835,10 @@ class AgentChat extends React.Component {
     const roleLang = this.getRoleLangCode() || 'en';
     const rolePrompt = buildRoleChatPrompt(roleData.roleName, agentId, roleData.memory || '', roleLang);
 
-    this.replyFromAgent(this.buildRoleSummonSuccessMessage(roleData.roleName));
-    this.replyFromAgent(this.buildRoleMemoryConsoleMessage(roleData));
+    if (!opts?.isContinue) {
+      this.replyFromAgent(this.buildRoleSummonSuccessMessage(roleData.roleName));
+      this.replyFromAgent(this.buildRoleMemoryQuickConsoleMessage());
+    }
     await this.replyFromLLM(rolePrompt, userMessage, { silentUser: true });
   };
 
@@ -1933,10 +1955,21 @@ OUTPUT JSON:
   };
 
   buildRoleSummonSuccessMessage = roleName => {
-    return `Role summoned successfully: ${roleName}`;
+    return [
+      'Role summoned successfully.',
+      '',
+      String(roleName || '').trim(),
+    ].join('\n');
   };
 
-  buildRoleMemoryConsoleMessage = roleData => {
+  buildRoleMemoryQuickConsoleMessage = () => {
+    return [
+      '[[/r memory adjust|Adjust memory]]',
+      '[[/r new|Switch role]]',
+    ].join('\n');
+  };
+
+  buildRoleMemoryFullConsoleMessage = roleData => {
     const memoryText = String(roleData?.memory || '').trim();
 
     return [
@@ -1948,6 +1981,7 @@ OUTPUT JSON:
       '[[/r memory commit|Commit memory on-chain]]',
       '[[/r memory delete|Delete memory]]',
       '[[/r continuechat|Continue chat]]',
+      '[[/r new|Switch role]]',
     ].join('\n');
   };
 
@@ -2415,19 +2449,39 @@ TASK:
 
         if (!!this.state.llmConfig?.provider && typeof this.callLLMSilent === 'function') {
           const prompt = `
-You are a memory editor for a role-playing agent.
+You are a memory editor for an xKEVA role-playing agent.
 
-CURRENT_MEMORY:
-${JSON.stringify(currentMemory).slice(0, 8000)}
+CURRENT_MEMORY_CARD:
+${JSON.stringify(currentMemory).slice(0, 12000)}
 
 USER_ADJUST_REQUEST:
 ${JSON.stringify(adjustText).slice(0, 4000)}
 
 TASK:
-- Rewrite CURRENT_MEMORY according to USER_ADJUST_REQUEST.
-- Keep only the updated memory.
-- Do NOT explain.
-- Output plain text only.
+- Rewrite CURRENT_MEMORY_CARD according to USER_ADJUST_REQUEST.
+- Keep the result in EXACT Memory Card format.
+- Use this exact structure:
+
+MEMORY_CARD v0.2
+ROLE=<role name>
+[VERIFIED]
+- Origin World Tag: ...
+- Role Function: ...
+- Signature: ...
+- Key Relationship: ...
+- Last Known Scene: ...
+- Others: ...
+[LIKELY]
+- ...
+[FOG]
+- ...
+
+RULES:
+- VERIFIED is for user-confirmed / stable anchors.
+- LIKELY is for probable but not confirmed details.
+- FOG is for dreamlike fragments or uncertain clues.
+- Do NOT output explanations.
+- Output only the rewritten Memory Card.
 `.trim();
 
           try {
@@ -2455,7 +2509,11 @@ TASK:
 
         this.replyFromAgent([
           '[[/r memory adjust|Continue adjusting]]',
+          '[[/r memory reset|Reset memory]]',
+          '[[/r memory commit|Commit memory on-chain]]',
+          '[[/r memory delete|Delete memory]]',
           '[[/r continuechat|Continue chat]]',
+          '[[/r new|Switch role]]',
         ].join('\n'));
 
         return true;
@@ -2545,7 +2603,7 @@ TASK:
         String(roleData.memory || '').trim() || '(empty)',
       ].join('\n'));
 
-      this.replyFromAgent(this.buildRoleMemoryConsoleMessage(roleData));
+      this.replyFromAgent(this.buildRoleMemoryFullConsoleMessage(roleData));
       return true;
     }
 
@@ -2566,7 +2624,16 @@ TASK:
         ),
       );
 
-      this.replyFromAgent('What memory would you like to adjust?');
+      this.replyFromAgent([
+        'Memory:',
+        String(active.roleData.memory || '').trim() || '(empty)',
+      ].join('\n'));
+
+      this.replyFromAgent([
+        'What memory would you like to adjust?',
+        '',
+        'You can describe what to change in the current memory card.',
+      ].join('\n'));
       return true;
     }
 
@@ -2578,7 +2645,7 @@ TASK:
       }
 
       const { roleSlug, roleData } = active;
-      roleData.memory = '';
+      roleData.memory = buildDefaultRoleMemoryCard(roleData.roleName || roleSlug);
       roleData.updatedAt = Date.now();
       await this.writeRoleFile(roleSlug, roleData);
 
@@ -2675,6 +2742,11 @@ TASK:
             pendingMemoryDeleteConfirm: false,
             pendingMemoryDeleteRoleSlug: null,
             activeRoleSlug: null,
+            pendingMemoryAdjust: false,
+            pendingMemoryRoleSlug: null,
+            pendingRoleSuggest: false,
+            pendingRoleSuggestOriginal: '',
+            pendingRoleSuggestOptions: [],
           },
           resolve,
         ),
@@ -2783,7 +2855,7 @@ TASK:
         return true;
       }
 
-      await this.handleRoleCallWithName(selected.roleName, userMessage);
+      await this.handleRoleCallWithName(selected.roleName, userMessage, { isContinue: true });
       return true;
     }
 
