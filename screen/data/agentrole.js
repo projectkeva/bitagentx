@@ -150,14 +150,12 @@ const COMMAND_TOKEN_REGEX =
 const COMMAND_DISPLAY_TOKEN_REGEX = /\[\[([^\]|]+)\|([^\]]+)\]\]/gi;
 const STORY_CHOICE_PREFIX_RE =
   /^\s*(?:\[\s*([A-Za-z]|\d{1,2})\s*\]|【\s*([A-Za-z]|\d{1,2})\s*】|\(\s*([A-Za-z]|\d{1,2})\s*\)|（\s*([A-Za-z]|\d{1,2})\s*）|([A-Za-z]|\d{1,2})\s*[).:：、．])\s*(.+)$/;
-const normalizeSource = srcRaw => {
-  const s = String(srcRaw || '')
+const normalizeOriginCode = raw => {
+  const s = String(raw || '')
     .trim()
-    .toLowerCase();
-  const one = (s.split(/\s+/)[0] || '').replace(/[^a-z0-9_-]/g, '');
-  const allowed = new Set(['game', 'mythology', 'history', 'anime', 'scifi', 'trope', 'original', 'local', 'onchain', 'unknown']);
-  if (!one) return 'unknown';
-  return allowed.has(one) ? one : 'unknown';
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  return s ? s.slice(0, 8) : 'UNK';
 };
 const stripMarkdownWrap = s => {
   let t = String(s || '').trim();
@@ -1464,28 +1462,6 @@ const buildRoleLanguageInstruction = roleLangCode => {
   }
 };
 
-const stripRoleplayLanguageHandshake = promptText => {
-  const text = String(promptText || '');
-  let out = text.replace('- The user will choose a language. ROLE_NAME is provided below.\n', '');
-  const startKey = 'MANDATORY START — TURN-GATED HANDSHAKE';
-  const endKey = 'DEFAULT RULES';
-  const s = out.indexOf(startKey);
-  const e = out.indexOf(endKey);
-  if (s !== -1 && e !== -1 && e > s) {
-    out = out.slice(0, s) + out.slice(e);
-  }
-  return out;
-};
-
-const buildRoleplayPromptOnline = (roleText, agentId, roleMemoryCard, roleLangCode) => {
-  const base = buildRoleplayPromptOffline(roleText, agentId, roleMemoryCard);
-  const langLine = buildRoleLanguageInstruction(roleLangCode);
-  const merged = `${langLine}
-
-${base}`;
-  return stripRoleplayLanguageHandshake(merged);
-};
-
 const buildRoleChatPrompt = (roleName, agentId, roleMemoryCard, roleLangCode) => {
   const langLine = buildRoleLanguageInstruction(roleLangCode);
   const mem = String(roleMemoryCard || '').trim();
@@ -1530,8 +1506,7 @@ class AgentChat extends React.Component {
       pendingRoleSuggest: false,
       pendingRoleSuggestOriginal: '',
       pendingRoleSuggestOptions: [],
-      pendingRoleSourceView: null,
-      pendingRoleSourceOriginal: '',
+      originTitleByCode: {},
       activeRoleSlug: null,
       roleCardOffset: 0,
       roleCardPage: [],
@@ -1803,12 +1778,13 @@ class AgentChat extends React.Component {
     roleData.roleSlug = roleSlug;
     roleData.updatedAt = now;
     await this.writeRoleFile(roleSlug, roleData);
+    await this.saveLastSelectedRole(roleData.roleName);
 
     this.activeRoleSlug = roleSlug;
     await new Promise(resolve => this.setState({ activeRoleSlug: roleSlug }, resolve));
 
     const first = await this.loadLocalRoleCardsPage(0);
-    await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: first }, resolve));
+    await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: first.items }, resolve));
 
     const ctx = typeof this.resolveNamespaceContext === 'function' ? this.resolveNamespaceContext() : null;
     const agentId = ctx?.agentId || this.agentId || 'unknown';
@@ -1852,22 +1828,27 @@ class AgentChat extends React.Component {
     );
 
     const prompt = `
-You are a role name resolver for a role-playing game UI.
+You are a role resolver for a summon UI.
 
 USER_INPUT_NAME: ${JSON.stringify(original)}
 
 TASK:
 - Propose 6 or fewer summonable role names related to USER_INPUT_NAME.
-- For each, include a short "source" string that explains the origin/type, e.g.
-  "mythology", "history", "game archetype", "anime vibe", "sci-fi trope", "original variant".
-- Names should be short and usable as a role title.
-- Output ONLY valid JSON (no markdown, no extra text).
+- Each option must include:
+  1) "name": the role/character name
+  2) "originCode": a short ENGLISH abbreviation for the MOST ORIGINAL source work/text
+  3) "originTitle": the full English title of that original source work/text
+- originCode is for UI display only.
+- originCode must be 2-8 characters, uppercase letters/numbers only.
+- Do NOT output broad categories like game, mythology, anime, history.
+- Use the original source work/title instead.
+- Output ONLY valid JSON.
 
-OUTPUT JSON SCHEMA:
+OUTPUT JSON:
 {
   "options":[
-    {"name":"...", "source":"..."},
-    ...
+    {"name":"Sun Wukong","originCode":"JTTW","originTitle":"Journey to the West"},
+    {"name":"Zhuge Liang","originCode":"ROTK","originTitle":"Romance of the Three Kingdoms"}
   ]
 }
 `.trim();
@@ -1885,7 +1866,8 @@ OUTPUT JSON SCHEMA:
       if (parsed && Array.isArray(parsed.options)) {
         options = parsed.options.map(item => ({
           name: String(item?.name || '').trim(),
-          source: normalizeSource(item?.source),
+          originCode: normalizeOriginCode(item?.originCode),
+          originTitle: String(item?.originTitle || '').trim(),
         }));
       }
     } catch {}
@@ -1893,7 +1875,7 @@ OUTPUT JSON SCHEMA:
     options = options.filter(o => o.name && containsOriginal(o.name, original));
 
     if (!options.length) {
-      options = [{ name: original, source: 'unknown' }];
+      options = [{ name: original, originCode: 'UNK', originTitle: '' }];
     }
 
     const seen = new Set();
@@ -1906,7 +1888,21 @@ OUTPUT JSON SCHEMA:
       }
     });
 
-    await new Promise(resolve => this.setState({ pendingRoleSuggestOptions: cleaned }, resolve));
+    const originMap = { ...(this.state.originTitleByCode || {}) };
+    cleaned.forEach(item => {
+      if (item.originCode && item.originTitle && !originMap[item.originCode]) {
+        originMap[item.originCode] = item.originTitle;
+      }
+    });
+    await new Promise(resolve =>
+      this.setState(
+        {
+          pendingRoleSuggestOptions: cleaned,
+          originTitleByCode: originMap,
+        },
+        resolve,
+      ),
+    );
     this.replyFromAgent(this.buildRoleSuggestMenuMessage(original, cleaned));
   };
 
@@ -1915,88 +1911,91 @@ OUTPUT JSON SCHEMA:
     lines.push(`Found summonable roles for: ${original}`);
     lines.push('');
 
-    options.forEach((option, idx) => {
+    options.forEach(option => {
       const nameBtn = `[[/r summon ${option.name}|${option.name}]]`;
-      const srcBtn = `[[/r source ${option.source}|${option.source}]]`;
-      lines.push(`${idx + 1}. ${nameBtn} — ${srcBtn}`);
+      const code = option.originCode || 'UNK';
+      const originBtn = `[[/r origin ${code}|@${code}]]`;
+      lines.push(`${nameBtn} ${originBtn}`);
       lines.push('');
     });
 
-    lines.push(`0. [[/r useonly|Use name only: ${original}]]`);
+    lines.push('[[/r useonly|Use name only]]');
+    lines.push('[[/r call|Reselect]]');
     return lines.join('\n');
   };
 
-  buildRoleSourceMenuMessage = src => {
-    const options = Array.isArray(this.state.pendingRoleSuggestOptions) ? this.state.pendingRoleSuggestOptions : [];
-    const same = options.filter(o => normalizeSource(o.source) === src);
+  handleRoleSuggestByOrigin = async code => {
+    const hasLLM = !!this.state.llmConfig?.provider && typeof this.callLLMSilent === 'function';
+    const originTitle = (this.state.originTitleByCode || {})[code] || '';
 
-    const lines = [];
-    lines.push(`Source: ${src}`);
-    lines.push('');
-
-    if (!same.length) {
-      lines.push('(No cached roles for this source yet.)');
-      lines.push('');
-    } else {
-      same.forEach((o, idx) => {
-        lines.push(`${idx + 1}. [[/r summon ${o.name}|${o.name}]]`);
-      });
-      lines.push('');
+    if (!hasLLM) {
+      this.replyFromAgent(`Origin @${code}${originTitle ? `: ${originTitle}` : ''}`);
+      return;
     }
 
-    lines.push(`[[/r more ${src}|More roles]]`);
-    lines.push(`[[/r new|Back to role setup]]`);
-    return lines.join('\n');
-  };
-
-  handleRoleSuggestMoreBySource = async (original, src) => {
-    const hasLLM = !!this.state.llmConfig?.provider && typeof this.callLLMSilent === 'function';
-    if (!hasLLM) return;
-
     const prompt = `
-You are a role name generator.
+You are a role resolver.
 
-USER_INPUT_NAME: ${JSON.stringify(original)}
-SOURCE: ${JSON.stringify(src)}
+ORIGIN_CODE: ${JSON.stringify(code)}
+ORIGIN_TITLE: ${JSON.stringify(originTitle)}
 
-RULES:
-- Generate 8 additional role names.
-- Every name MUST contain USER_INPUT_NAME as a substring (case-insensitive).
-- Each item source MUST be exactly SOURCE (one word).
-- Output ONLY JSON: {"options":[{"name":"...","source":"${src}"}]}
+TASK:
+- List up to 10 characters/roles from this ORIGINAL source work/text.
+- Use ORIGIN_TITLE as the source authority.
+- Output ONLY valid JSON.
+
+OUTPUT JSON:
+{
+  "options":[
+    {"name":"...","originCode":"${code}","originTitle":${JSON.stringify(originTitle)}}
+  ]
+}
 `.trim();
 
     let raw = '';
     try {
       raw = await this.callLLMSilent(prompt);
-    } catch {}
+    } catch {
+      raw = '';
+    }
 
-    let more = [];
+    let options = [];
     try {
       const parsed = JSON.parse(String(raw || '').trim());
       if (parsed && Array.isArray(parsed.options)) {
-        more = parsed.options.map(x => ({
-          name: String(x?.name || '').trim(),
-          source: normalizeSource(x?.source || src),
-        }));
+        options = parsed.options
+          .map(item => ({
+            name: String(item?.name || '').trim(),
+            originCode: normalizeOriginCode(item?.originCode || code),
+            originTitle: String(item?.originTitle || originTitle || '').trim(),
+          }))
+          .filter(item => item.name && item.originCode === code);
       }
     } catch {}
 
-    more = more.filter(o => o.name && String(o.name).toLowerCase().includes(String(original).toLowerCase()));
+    if (!options.length) {
+      this.replyFromAgent(`(no roles found for @${code})`);
+      return;
+    }
 
-    const cur = Array.isArray(this.state.pendingRoleSuggestOptions) ? this.state.pendingRoleSuggestOptions : [];
-    const seen = new Set(cur.map(o => String(o.name).toLowerCase()));
-    const merged = [...cur];
+    this.replyFromAgent(this.buildOriginSuggestMenuMessage(code, options));
+  };
 
-    more.forEach(o => {
-      const k = String(o.name).toLowerCase();
-      if (!seen.has(k)) {
-        seen.add(k);
-        merged.push(o);
-      }
+  buildOriginSuggestMenuMessage = (code, options) => {
+    const lines = [];
+    lines.push(`Origin @${code}`);
+    lines.push('');
+
+    options.forEach(option => {
+      const nameBtn = `[[/r summon ${option.name}|${option.name}]]`;
+      const originBtn = `[[/r origin ${code}|@${code}]]`;
+      lines.push(`${nameBtn} ${originBtn}`);
+      lines.push('');
     });
 
-    await new Promise(resolve => this.setState({ pendingRoleSuggestOptions: merged }, resolve));
+    lines.push(`[[/r originmore ${code}|More roles]]`);
+    lines.push('[[/r call|Reselect]]');
+    return lines.join('\n');
   };
 
   runRoleMemoryUpdate = async (roleSlug, assistantReplyText) => {
@@ -2448,49 +2447,34 @@ TASK:
       return true;
     }
 
-    if (/^\/r\s+source\b/i.test(trimmed)) {
-      const src = normalizeSource(trimmed.replace(/^\/r\s+source\b/i, '').trim());
-      const original = String(this.state.pendingRoleSuggestOriginal || '').trim();
-
-      await new Promise(resolve =>
-        this.setState(
-          {
-            pendingRoleSourceView: src,
-            pendingRoleSourceOriginal: original,
-          },
-          resolve,
-        ),
-      );
-
-      this.replyFromAgent(this.buildRoleSourceMenuMessage(src));
+    if (/^\/r\s+origin\b/i.test(trimmed)) {
+      const code = normalizeOriginCode(trimmed.replace(/^\/r\s+origin\b/i, '').trim());
+      await this.handleRoleSuggestByOrigin(code);
       return true;
     }
 
-    if (/^\/r\s+more\b/i.test(trimmed)) {
-      const src = normalizeSource(trimmed.replace(/^\/r\s+more\b/i, '').trim());
-      const original = String(this.state.pendingRoleSourceOriginal || this.state.pendingRoleSuggestOriginal || '').trim();
-
-      await this.handleRoleSuggestMoreBySource(original, src);
-      this.replyFromAgent(this.buildRoleSourceMenuMessage(src));
+    if (/^\/r\s+originmore\b/i.test(trimmed)) {
+      const code = normalizeOriginCode(trimmed.replace(/^\/r\s+originmore\b/i, '').trim());
+      await this.handleRoleSuggestByOrigin(code);
       return true;
     }
 
     if (/^\/role\s+cards\b/i.test(trimmed)) {
       const page = await this.loadLocalRoleCardsPage(0);
-      await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: page }, resolve));
-      this.replyFromAgent(this.buildLocalRoleCardsMessage(page, 0));
+      await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: page.items }, resolve));
+      this.replyFromAgent(this.buildLocalRoleCardsMessage(page.items, 0, page.hasMore));
       return true;
     }
 
     if (/^\/role\s+morecards\b/i.test(trimmed)) {
       const nextOffset = (this.state.roleCardOffset || 0) + PAGE_SIZE;
       const page = await this.loadLocalRoleCardsPage(nextOffset);
-      if (!page.length) {
+      if (!page.items.length) {
         this.replyFromAgent('(no more)');
         return true;
       }
-      await new Promise(resolve => this.setState({ roleCardOffset: nextOffset, roleCardPage: page }, resolve));
-      this.replyFromAgent(this.buildLocalRoleCardsMessage(page, nextOffset));
+      await new Promise(resolve => this.setState({ roleCardOffset: nextOffset, roleCardPage: page.items }, resolve));
+      this.replyFromAgent(this.buildLocalRoleCardsMessage(page.items, nextOffset, page.hasMore));
       return true;
     }
 
@@ -2513,7 +2497,7 @@ TASK:
       const original = this.state.pendingRoleSuggestOriginal || '';
 
       await new Promise(resolve =>
-        this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [], pendingRoleSourceView: null, pendingRoleSourceOriginal: '' }, resolve),
+        this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [] }, resolve),
       );
 
       if (!name) {
@@ -2529,7 +2513,7 @@ TASK:
     if (/^\/r\s+useonly\b/i.test(trimmed)) {
       const original = String(this.state.pendingRoleSuggestOriginal || '').trim();
       await new Promise(resolve =>
-        this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [], pendingRoleSourceView: null, pendingRoleSourceOriginal: '' }, resolve),
+        this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [] }, resolve),
       );
       if (!original) {
         await this.handleRoleNewMenu();
@@ -2590,11 +2574,31 @@ TASK:
       return true;
     }
 
+    if (/^\/r\s+continue\b/i.test(trimmed)) {
+      const selected = this.state.lastSelectedRole;
+      if (!selected?.roleName) {
+        await this.handleTriggers('/r new', null);
+        return true;
+      }
+
+      await this.handleRoleCallWithName(selected.roleName, userMessage);
+      return true;
+    }
+
     if (/^\/role\b/i.test(trimmed)) {
       const ok = await this.ensureRoleLangReady(true);
       if (!ok) return true;
 
-      await this.handleTriggers('/r new', null);
+      if (!this.state.lastSelectedRole) {
+        await this.restoreLastSelectedRole();
+      }
+
+      const selected = this.state.lastSelectedRole;
+      if (selected && selected.roleName) {
+        await this.handleTriggers('/r continue', null);
+      } else {
+        await this.handleTriggers('/r new', null);
+      }
       return true;
     }
 
@@ -3326,8 +3330,8 @@ TASK:
     }
 
     const first = await this.loadLocalRoleCardsPage(0);
-    await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: first }, resolve));
-    this.replyFromAgent(this.buildLocalRoleCardsMessage(first, 0));
+    await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: first.items }, resolve));
+    this.replyFromAgent(this.buildLocalRoleCardsMessage(first.items, 0, first.hasMore));
 
     const lines = [
       'Role setup:',
@@ -3344,7 +3348,7 @@ TASK:
   loadLocalRoleCardsPage = async (offset = 0) => {
     try {
       const exists = await RNFS.exists(this.roleFilesDir);
-      if (!exists) return [];
+      if (!exists) return { items: [], hasMore: false };
 
       const entries = await RNFS.readDir(this.roleFilesDir);
       const files = entries.filter(e => e.isFile() && e.name.endsWith('.json'));
@@ -3365,14 +3369,17 @@ TASK:
       }
 
       all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-      return all.slice(offset, offset + PAGE_SIZE);
+      return {
+        items: all.slice(offset, offset + PAGE_SIZE),
+        hasMore: offset + PAGE_SIZE < all.length,
+      };
     } catch (e) {
       console.warn('loadLocalRoleCardsPage failed', e);
-      return [];
+      return { items: [], hasMore: false };
     }
   };
 
-  buildLocalRoleCardsMessage = (cards, offset) => {
+  buildLocalRoleCardsMessage = (cards, _offset, hasMore = false) => {
     const lines = [];
     lines.push('Cards:');
     lines.push('');
@@ -3382,12 +3389,14 @@ TASK:
       return lines.join('\n');
     }
 
-    cards.forEach((c, idx) => {
-      lines.push(`${offset + idx + 1}. [[/r summon ${c.roleName}|${c.roleName}]]`);
+    cards.forEach(c => {
+      lines.push(`[[/r summon ${c.roleName}|${c.roleName}]]`);
+      lines.push('');
     });
 
-    lines.push('');
-    lines.push('[[/role morecards|More]]');
+    if (hasMore) {
+      lines.push('[[/role morecards|More]]');
+    }
     return lines.join('\n');
   };
 
