@@ -1835,10 +1835,8 @@ class AgentChat extends React.Component {
     const roleLang = this.getRoleLangCode() || 'en';
     const rolePrompt = buildRoleChatPrompt(roleData.roleName, agentId, roleData.memory || '', roleLang);
 
-    if (!opts?.isContinue) {
-      this.replyFromAgent(this.buildRoleSummonSuccessMessage(roleData.roleName));
-      this.replyFromAgent(this.buildRoleMemoryQuickConsoleMessage());
-    }
+    this.replyFromAgent(this.buildRoleSummonSuccessMessage(roleData.roleName));
+    this.replyFromAgent(this.buildRoleMemoryQuickConsoleMessage());
     await this.replyFromLLM(rolePrompt, userMessage, { silentUser: true });
   };
 
@@ -2397,20 +2395,31 @@ TASK:
   };
 
   handleSend = async payload => {
-    const rawInput = String(payload?.displayText ?? this.state.inputValue ?? '').trim();
-    if (!rawInput) {
+    const displayText = String(payload?.displayText ?? this.state.inputValue ?? '');
+    const rawInput = displayText.trim();
+    const modelText = String(payload?.modelText ?? rawInput).trim();
+
+    if (!modelText) {
       return;
     }
-    const modelText = String(payload?.modelText ?? rawInput).trim();
+
+    if (!rawInput) {
+      this.setState({ inputValue: '' });
+      await this.handleTriggers(modelText, null);
+      return;
+    }
+
     const userMessage = this.buildMessage(rawInput, 'user');
     userMessage._modelText = modelText;
     userMessage._choiceMeta = payload?.choiceMeta || null;
+
     this.appendMessage(rawInput, 'user', {
       id: userMessage.id,
       timestamp: userMessage.timestamp,
       _modelText: userMessage._modelText,
       _choiceMeta: userMessage._choiceMeta,
     });
+
     this.setState({ inputValue: '' });
     await this.handleTriggers(modelText, userMessage);
   };
