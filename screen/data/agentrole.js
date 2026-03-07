@@ -1962,8 +1962,8 @@ OUTPUT JSON:
 
   buildRoleMemoryQuickConsoleMessage = () => {
     return [
-      '[[/r recall|Recall memory]]',
       '[[/r memory adjust|Adjust memory]]',
+      '',
       '[[/r new|Switch role]]',
     ].join('\n');
   };
@@ -2732,8 +2732,9 @@ RULES:
 
     if (/^\/r\s+memory\s+delete\s+confirm\b/i.test(trimmed)) {
       const roleSlug = this.state.pendingMemoryDeleteRoleSlug;
+      const currentActiveSlug = this.state.activeRoleSlug || this.activeRoleSlug || '';
 
-      if (!roleSlug) {
+      if (!roleSlug || (currentActiveSlug && roleSlug !== currentActiveSlug)) {
         await new Promise(resolve =>
           this.setState(
             {
@@ -2743,7 +2744,7 @@ RULES:
             resolve,
           ),
         );
-        this.replyFromAgent('(no role selected for deletion)');
+        this.replyFromAgent(roleSlug ? '(delete target mismatch)' : '(no role selected for deletion)');
         return true;
       }
 
@@ -2761,6 +2762,7 @@ RULES:
             pendingRoleSuggestOriginal: '',
             pendingRoleSuggestOptions: [],
             pendingRoleCall: false,
+            pendingNewRole: null,
           },
           resolve,
         ),
@@ -2768,6 +2770,7 @@ RULES:
       this.activeRoleSlug = null;
 
       await this.clearLastSelectedRole();
+      await this.clearPendingNewRole();
 
       const first = await this.loadLocalRoleCardsPage(0);
       await new Promise(resolve =>
@@ -2781,7 +2784,18 @@ RULES:
 
       this.replyFromAgent('Role memory deleted successfully.');
 
-      await this.handleTriggers('/r new', null);
+      this.replyFromAgent(this.buildLocalRoleCardsMessage(first.items, 0, first.hasMore));
+
+      this.replyFromAgent([
+        'Role setup:',
+        '',
+        '[[/r call|New role]]',
+        '',
+        `[[/rolelang|${this.getRoleMenuText('changeLanguage')}]]`,
+        '',
+        `[[/a list|${this.getRoleMenuText('changeModel')}]]`,
+      ].join('\n'));
+
       return true;
     }
 
