@@ -1806,18 +1806,69 @@ class AgentChat extends React.Component {
     return { roleSlug, roleData };
   };
 
+  buildInitialRoleMemoryCardWithLLM = async roleName => {
+    const safeRole = String(roleName || '').trim() || 'unknown';
+
+    if (!(!!this.state.llmConfig?.provider && typeof this.callLLMSilent === 'function')) {
+      return buildDefaultRoleMemoryCard(safeRole);
+    }
+
+    const prompt = `
+You are an xKEVA role memory initializer.
+
+ROLE_NAME:
+${JSON.stringify(safeRole)}
+
+TASK:
+- Create an initial Memory Card for this role.
+- Use the exact format below.
+- If the role is known, fill reasonable initial anchors.
+- If uncertain, keep uncertainty in LIKELY or FOG, not VERIFIED.
+- Do NOT explain anything.
+- Output only the Memory Card.
+
+FORMAT:
+MEMORY_CARD v0.2
+ROLE=<role name>
+[VERIFIED]
+- Origin World Tag: ...
+- Role Function: ...
+- Signature: ...
+- Key Relationship: ...
+- Last Known Scene: ...
+- Others: ...
+[LIKELY]
+- ...
+[FOG]
+- ...
+`.trim();
+
+    try {
+      const raw = await this.callLLMSilent(prompt);
+      const text = String(raw || '').trim();
+      if (text && text.includes('MEMORY_CARD v0.2') && text.includes('[VERIFIED]')) {
+        return text;
+      }
+    } catch {}
+
+    return buildDefaultRoleMemoryCard(safeRole);
+  };
+
   handleRoleCallWithName = async (name, userMessage = null, opts = {}) => {
     const normalizedName = String(name || '').trim();
     const roleSlug = Rolecards.normalizeRoleSlug(normalizedName) || 'unknown';
     const now = Date.now();
     const existingRoleData = await this.readRoleFile(roleSlug);
-    const roleData =
-      existingRoleData || {
+    let roleData = existingRoleData;
+    if (!roleData) {
+      const initialMemory = await this.buildInitialRoleMemoryCardWithLLM(normalizedName || roleSlug);
+      roleData = {
         roleName: normalizedName || roleSlug,
         roleSlug,
-        memory: buildDefaultRoleMemoryCard(normalizedName || roleSlug),
+        memory: initialMemory,
         createdAt: now,
       };
+    }
     roleData.roleName = roleData.roleName || normalizedName || roleSlug;
     roleData.roleSlug = roleSlug;
     roleData.updatedAt = now;
@@ -2439,6 +2490,13 @@ TASK:
   handleTriggers = async (text, userMessage = null) => {
     const trimmed = text.trim();
 
+    if (this.state.pendingMemoryAdjust && trimmed.startsWith('/')) {
+      await new Promise(resolve =>
+        this.setState({ pendingMemoryAdjust: false, pendingMemoryRoleSlug: null }, resolve),
+      );
+      this.replyFromAgent('(memory adjust cancelled)');
+    }
+
     if (this.state.pendingMemoryAdjust && userMessage) {
       const adjustText = String(trimmed || '').trim();
 
@@ -2570,6 +2628,18 @@ RULES:
       return true;
     }
 
+
+    if (/^\/r\s+select\b/i.test(trimmed)) {
+      const selectedName = trimmed.replace(/^\/r\s+select\b/i, '').trim();
+      if (!selectedName) {
+        await this.handleRoleNewMenu();
+        return true;
+      }
+
+      await this.handleRoleCallWithName(selectedName, userMessage);
+      return true;
+    }
+
     if (/^\/r\s+summon\b/i.test(trimmed)) {
       const picked = trimmed.replace(/^\/r\s+summon\b/i, '').trim();
       const name = picked || '';
@@ -2640,6 +2710,8 @@ RULES:
         'Memory:',
         String(active.roleData.memory || '').trim() || '(empty)',
       ].join('\n'));
+
+      this.replyFromAgent(this.buildRoleMemoryFullConsoleMessage(active.roleData));
 
       this.replyFromAgent([
         'What memory would you like to adjust?',
@@ -3697,7 +3769,7 @@ RULES:
     }
 
     cards.forEach(c => {
-      lines.push(`[[/r summon ${c.roleName}|${c.roleName}]]`);
+      lines.push(`[[/r select ${c.roleName}|${c.roleName}]]`);
       lines.push('');
     });
 
