@@ -1526,6 +1526,7 @@ class AgentChat extends React.Component {
       activeRoleSlug: null,
       roleCardOffset: 0,
       roleCardPage: [],
+      pendingReturnToRoleMenu: false,
       lastSelectedRole: null,
       pendingNewRole: null,
     };
@@ -2963,6 +2964,12 @@ RULES:
       const ok = await this.ensureRoleLangReady(true);
       if (!ok) return true;
 
+      if (!this.hasConfiguredRoleLLM()) {
+        await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: true }, resolve));
+        await this.handleTriggers('/a list', null);
+        return true;
+      }
+
       if (!this.state.lastSelectedRole) {
         await this.restoreLastSelectedRole();
       }
@@ -3437,6 +3444,18 @@ RULES:
     const reply = this.buildMessage(text, 'agent');
     this.appendMessage(reply);
 
+    if (this.state.pendingReturnToRoleMenu) {
+      const t = String(text || '')
+        .trim()
+        .toLowerCase();
+      const isModelSelectedMsg = t.includes('model selected');
+
+      if (isModelSelectedMsg) {
+        this.setState({ pendingReturnToRoleMenu: false }, () => this.handleTriggers('/role', null));
+        return;
+      }
+    }
+
     // Story: after "model selected" -> auto /d menu
     if (this.isStoryScope) {
       const t = String(text || '')
@@ -3700,6 +3719,11 @@ RULES:
 
     if (showUI) this.appendRoleCommandMessage(this.buildRoleLangStatusMessage());
     return true;
+  };
+
+  hasConfiguredRoleLLM = () => {
+    const cfg = this.state.llmConfig || this.currentLLMConfig;
+    return !!String(cfg?.provider || '').trim();
   };
 
   handleRoleNewMenu = async () => {
