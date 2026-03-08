@@ -1528,9 +1528,6 @@ class AgentChat extends React.Component {
       roleCardOffset: 0,
       roleCardPage: [],
       pendingReturnToRoleMenu: false,
-      pendingRoleModelSetup: false,
-      pendingRoleModelStep: null,
-      pendingRoleModelDraft: null,
       lastSelectedRole: null,
       pendingNewRole: null,
     };
@@ -2038,48 +2035,8 @@ OUTPUT JSON:
     ].join('\n');
   };
 
-  buildRoleModelMenuMessage = async () => {
-    const builtin = (await this.readBuiltinRegistry?.()) || {};
-    const custom = (await this.readCustomRegistry?.()) || {};
-    const active = this.state.llmConfig || this.currentLLMConfig || {};
-
-    const activeProvider = String(active?.provider || '')
-      .trim()
-      .toLowerCase();
-
-    const builtinProviders = ['gpt', 'grok', 'gemini', 'deepseek', 'kimi', 'qwen', 'local'];
-    const lines = ['Model selection:', ''];
-
-    builtinProviders.forEach(name => {
-      const hasKey = !!builtin?.[name]?.apiKey;
-      const marker = activeProvider === name ? '●' : hasKey ? '✓' : '○';
-      lines.push(`${marker} [[/rolemodel builtin ${name}|${name}]]`);
-    });
-
-    lines.push('');
-    lines.push('Custom models:');
-
-    const customNames = Object.keys(custom || {});
-    if (!customNames.length) {
-      lines.push('(empty)');
-    } else {
-      customNames.forEach(name => {
-        const provider = `custom:${String(name).toLowerCase()}`;
-        const marker = activeProvider === provider ? '●' : '✓';
-        lines.push(`${marker} [[/rolemodel usecustom ${name}|${name}]]`);
-      });
-    }
-
-    lines.push('');
-    lines.push('[[/rolemodel custom|Add custom model]]');
-    lines.push('');
-    lines.push('[[/role|Back]]');
-
-    return lines.join('\n');
-  };
-
   buildRoleMemoryFullConsoleMessage = roleData => {
-    const memoryText = String(roleData?.memory || '').trim();
+    const memoryText = this.normalizeMemoryCardText(String(roleData?.memory || '').trim());
 
     return [
       'Memory:',
@@ -2649,173 +2606,8 @@ ROLE=<role name>
       }
     }
 
-    if (this.state.pendingRoleModelSetup && userMessage) {
-      const textValue = String(trimmed || '').trim();
-
-      if (textValue.startsWith('/')) {
-        await new Promise(resolve =>
-          this.setState(
-            {
-              pendingRoleModelSetup: false,
-              pendingRoleModelStep: null,
-              pendingRoleModelDraft: null,
-            },
-            resolve,
-          ),
-        );
-        this.replyFromAgent('(model setup cancelled)');
-      } else if (textValue) {
-        const step = this.state.pendingRoleModelStep;
-        const draft = { ...(this.state.pendingRoleModelDraft || {}) };
-
-        if (step === 'builtin_key') {
-          draft.apiKey = textValue;
-          await this.finishRoleBuiltinModelSetup(draft);
-          return true;
-        }
-
-        if (step === 'custom_name') {
-          draft.name = textValue;
-          await new Promise(resolve =>
-            this.setState(
-              {
-                pendingRoleModelStep: 'custom_url',
-                pendingRoleModelDraft: draft,
-              },
-              resolve,
-            ),
-          );
-          this.replyFromAgent('Enter base URL:');
-          return true;
-        }
-
-        if (step === 'custom_url') {
-          draft.baseUrl = textValue;
-          await new Promise(resolve =>
-            this.setState(
-              {
-                pendingRoleModelStep: 'custom_key',
-                pendingRoleModelDraft: draft,
-              },
-              resolve,
-            ),
-          );
-          this.replyFromAgent('Enter API key:');
-          return true;
-        }
-
-        if (step === 'custom_key') {
-          draft.apiKey = textValue;
-          await this.finishRoleCustomModelSetup(draft);
-          return true;
-        }
-      }
-    }
-
-    if (/^\/rolemodel\s+builtin\b/i.test(trimmed)) {
-      const provider = trimmed.replace(/^\/rolemodel\s+builtin\b/i, '').trim().toLowerCase();
-      if (!provider) {
-        await this.startRoleModelSetup();
-        return true;
-      }
-
-      const builtin = (await this.readBuiltinRegistry?.()) || {};
-      const saved = builtin?.[provider];
-
-      if (saved?.apiKey) {
-        const providerDef = LLM_PROVIDERS[provider];
-        if (!providerDef) {
-          this.replyFromAgent('(unknown provider)');
-          return true;
-        }
-
-        const nextConfig = {
-          provider,
-          apiKey: saved.apiKey,
-          model: saved.model || providerDef.defaultModel,
-          baseUrl: saved.baseUrl || providerDef.baseUrl || '',
-        };
-
-        await this.saveLLMConfig(nextConfig);
-        await this.writeActiveProvider({ name: provider, updatedAt: Date.now() });
-        this.currentLLMConfig = nextConfig;
-
-        await new Promise(resolve =>
-          this.setState({ llmConfig: nextConfig }, resolve),
-        );
-
-        this.replyFromAgent(`Model selected: ${provider}`);
-        await this.handleTriggers('/role', null);
-        return true;
-      }
-
-      await new Promise(resolve =>
-        this.setState(
-          {
-            pendingRoleModelSetup: true,
-            pendingRoleModelStep: 'builtin_key',
-            pendingRoleModelDraft: { provider },
-          },
-          resolve,
-        ),
-      );
-
-      this.replyFromAgent(`Enter API key for ${provider}:`);
-      return true;
-    }
-
-    if (/^\/rolemodel\s+usecustom\b/i.test(trimmed)) {
-      const name = trimmed.replace(/^\/rolemodel\s+usecustom\b/i, '').trim();
-      if (!name) {
-        await this.startRoleModelSetup();
-        return true;
-      }
-
-      const custom = (await this.readCustomRegistry?.()) || {};
-      const saved = custom?.[name];
-      if (!saved) {
-        this.replyFromAgent('(custom model not found)');
-        return true;
-      }
-
-      const nextConfig = {
-        provider: `custom:${String(name).toLowerCase()}`,
-        apiKey: saved.apiKey,
-        model: saved.model || name,
-        baseUrl: saved.baseUrl || '',
-      };
-
-      await this.saveLLMConfig(nextConfig);
-      await this.writeActiveProvider({ name: nextConfig.provider, updatedAt: Date.now() });
-      this.currentLLMConfig = nextConfig;
-
-      await new Promise(resolve =>
-        this.setState({ llmConfig: nextConfig }, resolve),
-      );
-
-      this.replyFromAgent(`Model selected: ${name}`);
-      await this.handleTriggers('/role', null);
-      return true;
-    }
-
-    if (/^\/rolemodel\s+custom\b/i.test(trimmed)) {
-      await new Promise(resolve =>
-        this.setState(
-          {
-            pendingRoleModelSetup: true,
-            pendingRoleModelStep: 'custom_name',
-            pendingRoleModelDraft: {},
-          },
-          resolve,
-        ),
-      );
-
-      this.replyFromAgent('Enter custom model name:');
-      return true;
-    }
-
     if (/^\/rolemodel\b/i.test(trimmed)) {
-      await this.startRoleModelSetup();
+      await this.handleTriggers('/a list', null);
       return true;
     }
 
@@ -2911,7 +2703,7 @@ ROLE=<role name>
       const { roleData } = active;
       this.replyFromAgent([
         'Memory:',
-        String(roleData.memory || '').trim() || '(empty)',
+        this.normalizeMemoryCardText(String(roleData.memory || '').trim()) || '(empty)',
       ].join('\n'));
 
       this.replyFromAgent(this.buildRoleMemoryFullConsoleMessage(roleData));
@@ -2937,7 +2729,7 @@ ROLE=<role name>
 
       this.replyFromAgent([
         'Memory:',
-        String(active.roleData.memory || '').trim() || '(empty)',
+        this.normalizeMemoryCardText(String(active.roleData.memory || '').trim()) || '(empty)',
       ].join('\n'));
 
       this.replyFromAgent(this.buildRoleMemoryFullConsoleMessage(active.roleData));
@@ -3193,7 +2985,7 @@ ROLE=<role name>
       if (!ok) return true;
 
       if (!this.hasConfiguredRoleLLM()) {
-        await this.startRoleModelSetup();
+        await this.handleTriggers('/a list', null);
         return true;
       }
 
@@ -3946,106 +3738,6 @@ ROLE=<role name>
 
     if (showUI) this.appendRoleCommandMessage(this.buildRoleLangStatusMessage());
     return true;
-  };
-
-  startRoleModelSetup = async () => {
-    await new Promise(resolve =>
-      this.setState(
-        {
-          pendingRoleModelSetup: false,
-          pendingRoleModelStep: null,
-          pendingRoleModelDraft: null,
-        },
-        resolve,
-      ),
-    );
-
-    const menu = await this.buildRoleModelMenuMessage();
-    this.replyFromAgent(menu);
-  };
-
-  finishRoleBuiltinModelSetup = async draft => {
-    const provider = String(draft?.provider || '')
-      .trim()
-      .toLowerCase();
-    const apiKey = String(draft?.apiKey || '').trim();
-
-    if (!provider || !apiKey) {
-      this.replyFromAgent('(missing provider or api key)');
-      return;
-    }
-
-    const providerDef = LLM_PROVIDERS[provider];
-    if (!providerDef) {
-      this.replyFromAgent('(unknown provider)');
-      return;
-    }
-
-    const nextConfig = {
-      provider,
-      apiKey,
-      model: providerDef.defaultModel,
-      baseUrl: providerDef.baseUrl || '',
-    };
-
-    await this.saveLLMConfig(nextConfig);
-    await this.writeActiveProvider({ name: provider, updatedAt: Date.now() });
-    this.currentLLMConfig = nextConfig;
-
-    await new Promise(resolve =>
-      this.setState(
-        {
-          llmConfig: nextConfig,
-          pendingRoleModelSetup: false,
-          pendingRoleModelStep: null,
-          pendingRoleModelDraft: null,
-        },
-        resolve,
-      ),
-    );
-
-    this.replyFromAgent(`Model configured: ${provider}`);
-    await this.handleTriggers('/role', null);
-  };
-
-  finishRoleCustomModelSetup = async draft => {
-    const name = String(draft?.name || '').trim();
-    const baseUrl = String(draft?.baseUrl || '')
-      .trim()
-      .replace(/\/$/, '');
-    const apiKey = String(draft?.apiKey || '').trim();
-
-    if (!name || !baseUrl || !apiKey) {
-      this.replyFromAgent('(missing custom model fields)');
-      return;
-    }
-
-    const provider = `custom:${name.toLowerCase()}`;
-    const nextConfig = {
-      provider,
-      apiKey,
-      model: name,
-      baseUrl,
-    };
-
-    await this.saveLLMConfig(nextConfig);
-    await this.writeActiveProvider({ name: provider, updatedAt: Date.now() });
-    this.currentLLMConfig = nextConfig;
-
-    await new Promise(resolve =>
-      this.setState(
-        {
-          llmConfig: nextConfig,
-          pendingRoleModelSetup: false,
-          pendingRoleModelStep: null,
-          pendingRoleModelDraft: null,
-        },
-        resolve,
-      ),
-    );
-
-    this.replyFromAgent(`Custom model configured: ${name}`);
-    await this.handleTriggers('/role', null);
   };
 
   hasConfiguredRoleLLM = () => {
