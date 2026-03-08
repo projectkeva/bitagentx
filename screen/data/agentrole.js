@@ -1530,6 +1530,10 @@ class AgentChat extends React.Component {
       pendingReturnToRoleMenu: false,
       lastSelectedRole: null,
       pendingNewRole: null,
+      pendingRoleModelStep: null,
+      pendingRoleModelBuiltinProvider: '',
+      pendingRoleModelCustomName: '',
+      pendingRoleModelCustomBaseUrl: '',
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -2606,8 +2610,242 @@ ROLE=<role name>
       }
     }
 
+    if (this.state.pendingRoleModelStep && trimmed.startsWith('/')) {
+      await this.clearRoleModelPendingState();
+      this.replyFromAgent('(role model setup cancelled)');
+    }
+
+    if (this.state.pendingRoleModelStep && userMessage && !trimmed.startsWith('/')) {
+      const value = String(trimmed || '').trim();
+      if (!value) {
+        this.replyFromAgent('(empty input)');
+        return true;
+      }
+
+      if (this.state.pendingRoleModelStep === 'builtin_api_key') {
+        const provider = String(this.state.pendingRoleModelBuiltinProvider || '').trim().toLowerCase();
+        if (!provider || !LLM_PROVIDERS[provider]) {
+          await this.clearRoleModelPendingState();
+          this.replyFromAgent('(builtin provider not found)');
+          return true;
+        }
+
+        const builtin = (await this.readBuiltinRegistry?.()) || {};
+        builtin[provider] = {
+          ...(builtin[provider] || {}),
+          baseUrl: LLM_PROVIDERS[provider].baseUrl || '',
+          apiKey: value,
+          model: builtin?.[provider]?.model || LLM_PROVIDERS[provider].defaultModel || 'default',
+          updatedAt: Date.now(),
+        };
+        await this.writeBuiltinRegistry(builtin);
+        await this.clearRoleModelPendingState();
+        await this.activateRoleModelProvider(provider);
+        await this.handleTriggers('/role', null);
+        return true;
+      }
+
+      if (this.state.pendingRoleModelStep === 'custom_name') {
+        await new Promise(resolve =>
+          this.setState(
+            {
+              pendingRoleModelStep: 'custom_base_url',
+              pendingRoleModelCustomName: value,
+              pendingRoleModelCustomBaseUrl: '',
+            },
+            resolve,
+          ),
+        );
+        this.replyFromAgent('Enter base URL:');
+        return true;
+      }
+
+      if (this.state.pendingRoleModelStep === 'custom_base_url') {
+        await new Promise(resolve =>
+          this.setState({ pendingRoleModelStep: 'custom_api_key', pendingRoleModelCustomBaseUrl: value }, resolve),
+        );
+        this.replyFromAgent('Enter API key:');
+        return true;
+      }
+
+      if (this.state.pendingRoleModelStep === 'custom_api_key') {
+        const nameRaw = String(this.state.pendingRoleModelCustomName || '').trim();
+        const provider = nameRaw.toLowerCase();
+        const baseUrl = String(this.state.pendingRoleModelCustomBaseUrl || '').trim().replace(/\/$/, '');
+        if (!nameRaw || !provider || !baseUrl) {
+          await this.clearRoleModelPendingState();
+          this.replyFromAgent('(custom model setup failed)');
+          return true;
+        }
+
+        const custom = (await this.readCustomRegistry?.()) || {};
+        custom[provider] = {
+          ...(custom[provider] || {}),
+          baseUrl,
+          apiKey: value,
+          model: custom?.[provider]?.model || 'default',
+          label: nameRaw,
+          updatedAt: Date.now(),
+        };
+        await this.writeCustomRegistry(custom);
+        await this.clearRoleModelPendingState();
+        await this.activateRoleModelProvider(provider);
+        await this.handleTriggers('/role', null);
+        return true;
+      }
+    }
+
+    if (/^\/rolemodel\s+remove\b$/i.test(trimmed)) {
+      const menu = await this.buildRoleModelRemoveMenuMessage();
+      this.replyFromAgent(menu);
+      return true;
+    }
+
+    if (/^\/rolemodel\s+remove\s+builtin\b/i.test(trimmed)) {
+      const provider = trimmed.replace(/^\/rolemodel\s+remove\s+builtin\b/i, '').trim().toLowerCase();
+      if (!provider) {
+        const menu = await this.buildRoleModelRemoveMenuMessage();
+        this.replyFromAgent(menu);
+        return true;
+      }
+
+      const builtin = (await this.readBuiltinRegistry?.()) || {};
+      if (!builtin?.[provider]) {
+        this.replyFromAgent('(builtin provider not found)');
+        await this.handleTriggers('/role', null);
+        return true;
+      }
+
+      builtin[provider] = {
+        ...builtin[provider],
+        apiKey: '',
+      };
+
+      await this.writeBuiltinRegistry(builtin);
+
+      const activeProvider = String(this.state.llmConfig?.provider || this.currentLLMConfig?.provider || '')
+        .trim()
+        .toLowerCase();
+      if (activeProvider === provider) {
+        await this.writeActiveProvider({ name: '', updatedAt: Date.now() });
+        this.currentLLMConfig = null;
+        await new Promise(resolve => this.setState({ llmConfig: null }, resolve));
+      }
+
+      this.replyFromAgent(`Key removed: ${provider}`);
+      await this.handleTriggers('/role', null);
+      return true;
+    }
+
+    if (/^\/rolemodel\s+remove\s+custom\b/i.test(trimmed)) {
+      const name = trimmed.replace(/^\/rolemodel\s+remove\s+custom\b/i, '').trim();
+      if (!name) {
+        const menu = await this.buildRoleModelRemoveMenuMessage();
+        this.replyFromAgent(menu);
+        return true;
+      }
+
+      const provider = String(name || '').toLowerCase();
+      const custom = (await this.readCustomRegistry?.()) || {};
+      if (!custom?.[provider]) {
+        this.replyFromAgent('(custom model not found)');
+        await this.handleTriggers('/role', null);
+        return true;
+      }
+
+      delete custom[provider];
+      await this.writeCustomRegistry(custom);
+
+      const activeProvider = String(this.state.llmConfig?.provider || this.currentLLMConfig?.provider || '')
+        .trim()
+        .toLowerCase();
+      if (activeProvider === provider || activeProvider === `custom:${provider}`) {
+        await this.writeActiveProvider({ name: '', updatedAt: Date.now() });
+        this.currentLLMConfig = null;
+        await new Promise(resolve => this.setState({ llmConfig: null }, resolve));
+      }
+
+      this.replyFromAgent(`Custom model removed: ${name}`);
+      await this.handleTriggers('/role', null);
+      return true;
+    }
+
+    if (/^\/rolemodel\s+builtin\b/i.test(trimmed)) {
+      const provider = trimmed.replace(/^\/rolemodel\s+builtin\b/i, '').trim().toLowerCase();
+      if (!provider || !LLM_PROVIDERS[provider]) {
+        const menu = await this.buildRoleModelMenuMessage();
+        this.replyFromAgent(menu);
+        return true;
+      }
+
+      const builtin = (await this.readBuiltinRegistry?.()) || {};
+      const hasKey = !!String(builtin?.[provider]?.apiKey || '').trim();
+      if (hasKey) {
+        await this.activateRoleModelProvider(provider);
+        await this.handleTriggers('/role', null);
+        return true;
+      }
+
+      await new Promise(resolve =>
+        this.setState(
+          {
+            pendingRoleModelStep: 'builtin_api_key',
+            pendingRoleModelBuiltinProvider: provider,
+            pendingRoleModelCustomName: '',
+            pendingRoleModelCustomBaseUrl: '',
+          },
+          resolve,
+        ),
+      );
+      this.replyFromAgent(`Enter API key for ${provider}:`);
+      return true;
+    }
+
+    if (/^\/rolemodel\s+custom\b/i.test(trimmed)) {
+      const rawName = trimmed.replace(/^\/rolemodel\s+custom\b/i, '').trim();
+      if (rawName) {
+        const provider = rawName.toLowerCase();
+        const custom = (await this.readCustomRegistry?.()) || {};
+        if (custom?.[provider]) {
+          const hasKey = !!String(custom?.[provider]?.apiKey || '').trim();
+          if (hasKey) {
+            await this.activateRoleModelProvider(provider);
+            await this.handleTriggers('/role', null);
+            return true;
+          }
+          await new Promise(resolve =>
+            this.setState(
+              {
+                pendingRoleModelStep: 'custom_api_key',
+                pendingRoleModelBuiltinProvider: '',
+                pendingRoleModelCustomName: rawName,
+                pendingRoleModelCustomBaseUrl: String(custom?.[provider]?.baseUrl || '').trim(),
+              },
+              resolve,
+            ),
+          );
+          this.replyFromAgent('Enter API key:');
+          return true;
+        }
+      }
+
+      await new Promise(resolve =>
+        this.setState(
+          {
+            pendingRoleModelStep: 'custom_name',
+            pendingRoleModelBuiltinProvider: '',
+            pendingRoleModelCustomName: '',
+            pendingRoleModelCustomBaseUrl: '',
+          },
+          resolve,
+        ),
+      );
+      this.replyFromAgent('Enter custom model name:');
+      return true;
+    }
+
     if (/^\/rolemodel\b/i.test(trimmed)) {
-      await this.handleTriggers('/a list', null);
+      await this.startRoleModelSetup();
       return true;
     }
 
@@ -2886,7 +3124,7 @@ ROLE=<role name>
         '',
         `[[/rolelang|${this.getRoleMenuText('changeLanguage')}]]`,
         '',
-        `[[/a list|${this.getRoleMenuText('changeModel')}]]`,
+        `[[/rolemodel|${this.getRoleMenuText('changeModel')}]]`,
       ].join('\n'));
 
       return true;
@@ -3745,6 +3983,139 @@ ROLE=<role name>
     return !!String(cfg?.provider || '').trim();
   };
 
+  clearRoleModelPendingState = async () => {
+    await new Promise(resolve =>
+      this.setState(
+        {
+          pendingRoleModelStep: null,
+          pendingRoleModelBuiltinProvider: '',
+          pendingRoleModelCustomName: '',
+          pendingRoleModelCustomBaseUrl: '',
+        },
+        resolve,
+      ),
+    );
+  };
+
+  activateRoleModelProvider = async providerName => {
+    const provider = String(providerName || '').trim().toLowerCase();
+    if (!provider) return false;
+
+    const resolved = (await this.resolveProviderDef?.(provider)) || null;
+    if (!resolved?.def) {
+      this.replyFromAgent('(provider not found)');
+      return false;
+    }
+
+    const builtin = (await this.readBuiltinRegistry?.()) || {};
+    const custom = (await this.readCustomRegistry?.()) || {};
+    const registryEntry = resolved.source === 'custom' ? custom?.[provider] || null : builtin?.[provider] || null;
+
+    const baseUrl = String(registryEntry?.baseUrl || resolved.def.baseUrl || '').trim().replace(/\/$/, '');
+    if (!baseUrl) {
+      this.replyFromAgent('(missing baseUrl)');
+      return false;
+    }
+
+    const model = String(registryEntry?.model || resolved.def.defaultModel || 'default').trim();
+    const apiKey = String(registryEntry?.apiKey || '').trim();
+    const next = { provider, baseUrl, apiKey, model, updatedAt: Date.now() };
+
+    this.currentLLMConfig = next;
+    await new Promise(resolve => this.setState({ llmConfig: next }, resolve));
+    await this.saveLLMConfig(next);
+    await this.writeActiveProvider({ name: provider, updatedAt: Date.now() });
+    await this.writeJsonFile(LLM_LAST_USED_PATH, {
+      provider,
+      baseUrl,
+      apiKey,
+      model,
+      updatedAt: Date.now(),
+    });
+
+    return true;
+  };
+
+  buildRoleModelMenuMessage = async () => {
+    const builtin = (await this.readBuiltinRegistry?.()) || {};
+    const custom = (await this.readCustomRegistry?.()) || {};
+
+    const activeProvider = String(this.state.llmConfig?.provider || this.currentLLMConfig?.provider || '')
+      .trim()
+      .toLowerCase();
+    const builtinProviders = ['gpt', 'grok', 'gemini', 'deepseek', 'kimi', 'qwen', 'local'];
+
+    const lines = ['Role model setup:', ''];
+
+    builtinProviders.forEach(name => {
+      const hasKey = !!String(builtin?.[name]?.apiKey || '').trim();
+      const marker = activeProvider === name ? '●' : hasKey ? '✓' : '○';
+      lines.push(`[[/rolemodel builtin ${name}|${marker} ${name}]]`);
+    });
+
+    lines.push('');
+    lines.push('Custom models:');
+
+    const customNames = Object.keys(custom || {});
+    if (!customNames.length) {
+      lines.push('(empty)');
+    } else {
+      customNames.forEach(name => {
+        const label = String(custom?.[name]?.label || name).trim() || name;
+        const hasKey = !!String(custom?.[name]?.apiKey || '').trim();
+        const marker = activeProvider === name ? '●' : hasKey ? '✓' : '○';
+        lines.push(`[[/rolemodel custom ${name}|${marker} ${label}]]`);
+      });
+    }
+
+    lines.push('');
+    lines.push('[[/rolemodel custom|Add custom model]]');
+    lines.push('[[/rolemodel remove|Remove key]]');
+    lines.push('');
+    lines.push('[[/role|Back]]');
+
+    return lines.join('\n');
+  };
+
+  buildRoleModelRemoveMenuMessage = async () => {
+    const builtin = (await this.readBuiltinRegistry?.()) || {};
+    const custom = (await this.readCustomRegistry?.()) || {};
+
+    const builtinProviders = ['gpt', 'grok', 'gemini', 'deepseek', 'kimi', 'qwen', 'local'];
+    const lines = ['Remove key / custom model:', ''];
+
+    let hasAny = false;
+
+    builtinProviders.forEach(name => {
+      if (builtin?.[name]?.apiKey) {
+        hasAny = true;
+        lines.push(`[[/rolemodel remove builtin ${name}|${name}]]`);
+      }
+    });
+
+    const customNames = Object.keys(custom || {});
+    customNames.forEach(name => {
+      hasAny = true;
+      const label = String(custom?.[name]?.label || name).trim() || name;
+      lines.push(`[[/rolemodel remove custom ${name}|${label}]]`);
+    });
+
+    if (!hasAny) {
+      lines.push('(empty)');
+    }
+
+    lines.push('');
+    lines.push('[[/rolemodel|Back]]');
+
+    return lines.join('\n');
+  };
+
+  startRoleModelSetup = async () => {
+    await this.clearRoleModelPendingState();
+    const menu = await this.buildRoleModelMenuMessage();
+    this.replyFromAgent(menu);
+  };
+
   handleRoleNewMenu = async () => {
     if (!this.getRoleLangCode()) {
       await this.handleTriggers('/role', null);
@@ -3762,7 +4133,7 @@ ROLE=<role name>
       '',
       `[[/rolelang|${this.getRoleMenuText('changeLanguage')}]]`,
       '',
-      `[[/a list|${this.getRoleMenuText('changeModel')}]]`,
+      `[[/rolemodel|${this.getRoleMenuText('changeModel')}]]`,
     ];
     this.replyFromAgent(lines.join('\n'));
   };
