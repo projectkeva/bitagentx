@@ -162,19 +162,20 @@ const buildDefaultRoleMemoryCard = roleName => {
   const safeRole = String(roleName || 'unknown').trim();
 
   return [
-    'MEMORY_CARD v0.2',
     `ROLE=${safeRole}`,
-    '[VERIFIED]',
-    '- Origin World Tag: UNKNOWN',
-    '- Role Function: UNKNOWN',
-    '- Signature: UNKNOWN',
-    '- Key Relationship: UNKNOWN',
-    '- Last Known Scene: UNKNOWN',
-    '- Others: UNKNOWN',
-    '[LIKELY]',
-    '- UNKNOWN',
-    '[FOG]',
-    '- UNKNOWN',
+    '[V]',
+    '- Origin: unknown',
+    '- Function: unknown',
+    '- Signature: unknown',
+    '- Relation: unknown',
+    '- Scene: unknown',
+    '- Other: unknown',
+    '',
+    '[L]',
+    '- unknown',
+    '',
+    '[F]',
+    '- unknown',
   ].join('\n');
 };
 const INTRO_MESSAGES = [
@@ -1810,6 +1811,14 @@ class AgentChat extends React.Component {
     return { roleSlug, roleData };
   };
 
+  normalizeMemoryCardText = text => {
+    return String(text || '')
+      .replace(/\\\\n/g, '\n')
+      .replace(/\r\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  };
+
   buildInitialRoleMemoryCardWithLLM = async roleName => {
     const safeRole = String(roleName || '').trim() || 'unknown';
 
@@ -1824,34 +1833,37 @@ ROLE_NAME:
 ${JSON.stringify(safeRole)}
 
 TASK:
-- Create an initial Memory Card for this role.
-- Use the exact format below.
-- If the role is known, fill reasonable initial anchors.
-- If uncertain, keep uncertainty in LIKELY or FOG, not VERIFIED.
-- Do NOT explain anything.
-- Output only the Memory Card.
+- Create a compact 3-layer memory card for this role.
+- Keep it short and useful.
+- If the role is known, fill concrete anchors.
+- If uncertain, use "unknown" only for uncertain fields, not everything.
+- Output plain text only.
+- Do NOT use JSON.
+- Do NOT use markdown fences.
+- Do NOT include "MEMORY_CARD v0.2".
 
 FORMAT:
-MEMORY_CARD v0.2
 ROLE=<role name>
-[VERIFIED]
-- Origin World Tag: ...
-- Role Function: ...
+[V]
+- Origin: ...
+- Function: ...
 - Signature: ...
-- Key Relationship: ...
-- Last Known Scene: ...
-- Others: ...
-[LIKELY]
+- Relation: ...
+- Scene: ...
+- Other: ...
+
+[L]
 - ...
-[FOG]
+
+[F]
 - ...
 `.trim();
 
     try {
       const raw = await this.callLLMSilent(prompt);
-      const text = String(raw || '').trim();
-      if (text && text.includes('MEMORY_CARD v0.2') && text.includes('[VERIFIED]')) {
-        return text;
+      const text = this.normalizeMemoryCardText(raw);
+      if (text && text.includes('ROLE=') && text.includes('[V]')) {
+        return this.normalizeMemoryCardText(text);
       }
     } catch {}
 
@@ -1869,12 +1881,13 @@ ROLE=<role name>
       roleData = {
         roleName: normalizedName || roleSlug,
         roleSlug,
-        memory: initialMemory,
+        memory: this.normalizeMemoryCardText(initialMemory),
         createdAt: now,
       };
     }
     roleData.roleName = roleData.roleName || normalizedName || roleSlug;
     roleData.roleSlug = roleSlug;
+    roleData.memory = this.normalizeMemoryCardText(roleData.memory);
     roleData.updatedAt = now;
     await this.writeRoleFile(roleSlug, roleData);
     await this.saveLastSelectedRole(roleData.roleName);
@@ -2017,7 +2030,9 @@ OUTPUT JSON:
 
   buildRoleMemoryQuickConsoleMessage = () => {
     return [
-      '[[/r memory adjust|Adjust memory]]',
+      '[[/r recall|Memory]]',
+      '',
+      '[[/rolemodel|Model]]',
       '',
       '[[/r new|Switch role]]',
     ].join('\n');
@@ -2034,6 +2049,7 @@ OUTPUT JSON:
       '[[/r memory reset|Reset memory]]',
       '[[/r memory commit|Commit memory on-chain]]',
       '[[/r memory delete|Delete memory]]',
+      '[[/rolemodel|Model]]',
       '[[/r continuechat|Continue chat]]',
       '[[/r new|Switch role]]',
     ].join('\n');
@@ -2068,7 +2084,7 @@ TASK:
       return;
     }
 
-    roleData.memory = updatedMemoryText;
+    roleData.memory = this.normalizeMemoryCardText(updatedMemoryText);
     roleData.updatedAt = Date.now();
     await this.writeRoleFile(roleSlug, roleData);
   };
@@ -2523,42 +2539,41 @@ TASK:
           const prompt = `
 You are a memory editor for an xKEVA role-playing agent.
 
-CURRENT_MEMORY_CARD:
+CURRENT_MEMORY:
 ${JSON.stringify(currentMemory).slice(0, 12000)}
 
 USER_ADJUST_REQUEST:
 ${JSON.stringify(adjustText).slice(0, 4000)}
 
 TASK:
-- Rewrite CURRENT_MEMORY_CARD according to USER_ADJUST_REQUEST.
-- Keep the result in EXACT Memory Card format.
-- Use this exact structure:
+- Rewrite CURRENT_MEMORY according to USER_ADJUST_REQUEST.
+- Keep the result compact.
+- Preserve the 3-layer structure.
+- Output plain text only.
+- Do NOT explain.
+- Do NOT use JSON.
+- Do NOT include "MEMORY_CARD v0.2".
 
-MEMORY_CARD v0.2
+FORMAT:
 ROLE=<role name>
-[VERIFIED]
-- Origin World Tag: ...
-- Role Function: ...
+[V]
+- Origin: ...
+- Function: ...
 - Signature: ...
-- Key Relationship: ...
-- Last Known Scene: ...
-- Others: ...
-[LIKELY]
-- ...
-[FOG]
+- Relation: ...
+- Scene: ...
+- Other: ...
+
+[L]
 - ...
 
-RULES:
-- VERIFIED is for user-confirmed / stable anchors.
-- LIKELY is for probable but not confirmed details.
-- FOG is for dreamlike fragments or uncertain clues.
-- Do NOT output explanations.
-- Output only the rewritten Memory Card.
+[F]
+- ...
 `.trim();
 
           try {
             const raw = await this.callLLMSilent(prompt);
-            const cleaned = String(raw || '').trim();
+            const cleaned = this.normalizeMemoryCardText(raw);
             if (cleaned) nextMemory = cleaned;
           } catch {}
         } else {
@@ -2566,7 +2581,7 @@ RULES:
           this.replyFromAgent('(memory adjust needs LLM; memory kept unchanged)');
         }
 
-        roleData.memory = nextMemory;
+        roleData.memory = this.normalizeMemoryCardText(nextMemory);
         roleData.updatedAt = Date.now();
         await this.writeRoleFile(roleSlug, roleData);
 
@@ -2839,7 +2854,7 @@ RULES:
       }
 
       const { roleSlug, roleData } = active;
-      roleData.memory = buildDefaultRoleMemoryCard(roleData.roleName || roleSlug);
+      roleData.memory = this.normalizeMemoryCardText(buildDefaultRoleMemoryCard(roleData.roleName || roleSlug));
       roleData.updatedAt = Date.now();
       await this.writeRoleFile(roleSlug, roleData);
 
