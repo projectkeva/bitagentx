@@ -2038,6 +2038,46 @@ OUTPUT JSON:
     ].join('\n');
   };
 
+  buildRoleModelMenuMessage = async () => {
+    const builtin = (await this.readBuiltinRegistry?.()) || {};
+    const custom = (await this.readCustomRegistry?.()) || {};
+    const active = this.state.llmConfig || this.currentLLMConfig || {};
+
+    const activeProvider = String(active?.provider || '')
+      .trim()
+      .toLowerCase();
+
+    const builtinProviders = ['gpt', 'grok', 'gemini', 'deepseek', 'kimi', 'qwen', 'local'];
+    const lines = ['Model selection:', ''];
+
+    builtinProviders.forEach(name => {
+      const hasKey = !!builtin?.[name]?.apiKey;
+      const marker = activeProvider === name ? '●' : hasKey ? '✓' : '○';
+      lines.push(`${marker} [[/rolemodel builtin ${name}|${name}]]`);
+    });
+
+    lines.push('');
+    lines.push('Custom models:');
+
+    const customNames = Object.keys(custom || {});
+    if (!customNames.length) {
+      lines.push('(empty)');
+    } else {
+      customNames.forEach(name => {
+        const provider = `custom:${String(name).toLowerCase()}`;
+        const marker = activeProvider === provider ? '●' : '✓';
+        lines.push(`${marker} [[/rolemodel usecustom ${name}|${name}]]`);
+      });
+    }
+
+    lines.push('');
+    lines.push('[[/rolemodel custom|Add custom model]]');
+    lines.push('');
+    lines.push('[[/role|Back]]');
+
+    return lines.join('\n');
+  };
+
   buildRoleMemoryFullConsoleMessage = roleData => {
     const memoryText = String(roleData?.memory || '').trim();
 
@@ -2679,6 +2719,36 @@ ROLE=<role name>
         return true;
       }
 
+      const builtin = (await this.readBuiltinRegistry?.()) || {};
+      const saved = builtin?.[provider];
+
+      if (saved?.apiKey) {
+        const providerDef = LLM_PROVIDERS[provider];
+        if (!providerDef) {
+          this.replyFromAgent('(unknown provider)');
+          return true;
+        }
+
+        const nextConfig = {
+          provider,
+          apiKey: saved.apiKey,
+          model: saved.model || providerDef.defaultModel,
+          baseUrl: saved.baseUrl || providerDef.baseUrl || '',
+        };
+
+        await this.saveLLMConfig(nextConfig);
+        await this.writeActiveProvider({ name: provider, updatedAt: Date.now() });
+        this.currentLLMConfig = nextConfig;
+
+        await new Promise(resolve =>
+          this.setState({ llmConfig: nextConfig }, resolve),
+        );
+
+        this.replyFromAgent(`Model selected: ${provider}`);
+        await this.handleTriggers('/role', null);
+        return true;
+      }
+
       await new Promise(resolve =>
         this.setState(
           {
@@ -2691,6 +2761,40 @@ ROLE=<role name>
       );
 
       this.replyFromAgent(`Enter API key for ${provider}:`);
+      return true;
+    }
+
+    if (/^\/rolemodel\s+usecustom\b/i.test(trimmed)) {
+      const name = trimmed.replace(/^\/rolemodel\s+usecustom\b/i, '').trim();
+      if (!name) {
+        await this.startRoleModelSetup();
+        return true;
+      }
+
+      const custom = (await this.readCustomRegistry?.()) || {};
+      const saved = custom?.[name];
+      if (!saved) {
+        this.replyFromAgent('(custom model not found)');
+        return true;
+      }
+
+      const nextConfig = {
+        provider: `custom:${String(name).toLowerCase()}`,
+        apiKey: saved.apiKey,
+        model: saved.model || name,
+        baseUrl: saved.baseUrl || '',
+      };
+
+      await this.saveLLMConfig(nextConfig);
+      await this.writeActiveProvider({ name: nextConfig.provider, updatedAt: Date.now() });
+      this.currentLLMConfig = nextConfig;
+
+      await new Promise(resolve =>
+        this.setState({ llmConfig: nextConfig }, resolve),
+      );
+
+      this.replyFromAgent(`Model selected: ${name}`);
+      await this.handleTriggers('/role', null);
       return true;
     }
 
@@ -3848,31 +3952,16 @@ ROLE=<role name>
     await new Promise(resolve =>
       this.setState(
         {
-          pendingRoleModelSetup: true,
-          pendingRoleModelStep: 'builtin_pick',
-          pendingRoleModelDraft: {},
+          pendingRoleModelSetup: false,
+          pendingRoleModelStep: null,
+          pendingRoleModelDraft: null,
         },
         resolve,
       ),
     );
 
-    this.replyFromAgent(
-      [
-        'Choose a model provider:',
-        '',
-        '[[/rolemodel builtin gpt|GPT]]',
-        '[[/rolemodel builtin grok|Grok]]',
-        '[[/rolemodel builtin gemini|Gemini]]',
-        '[[/rolemodel builtin deepseek|DeepSeek]]',
-        '[[/rolemodel builtin kimi|Kimi]]',
-        '[[/rolemodel builtin qwen|Qwen]]',
-        '[[/rolemodel builtin local|Local]]',
-        '',
-        '[[/rolemodel custom|Custom model]]',
-        '',
-        '[[/role|Cancel]]',
-      ].join('\n'),
-    );
+    const menu = await this.buildRoleModelMenuMessage();
+    this.replyFromAgent(menu);
   };
 
   finishRoleBuiltinModelSetup = async draft => {
