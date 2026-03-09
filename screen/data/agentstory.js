@@ -1450,6 +1450,11 @@ class AgentChat extends React.Component {
       pendingDestinyMode: null,
       pendingReturnToDestinyMenu: false,
       pendingModelFinalConfirm: false,
+      pendingAISetup: false,
+      pendingAISetupStep: null,
+      pendingAISetupDraft: null,
+      pendingReturnToRoleMenu: false,
+      pendingReturnToStoryMenu: false,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -2060,6 +2065,9 @@ class AgentChat extends React.Component {
 
   handleTriggers = async (text, userMessage = null) => {
     const trimmed = text.trim();
+    if (await this.handlePendingAISetupInput?.(trimmed)) {
+      return;
+    }
     const aMatch = /^\/a(?:\s+(.+))?$/i.exec(trimmed);
     if (aMatch) {
       const isFinalModelCommand = /^\/a\s+model\b/i.test(trimmed);

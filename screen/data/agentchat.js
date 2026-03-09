@@ -1149,6 +1149,11 @@ class AgentChat extends React.Component {
       visibleCount: PAGE_SIZE,
       inputValue: '',
       llmConfig: null,
+      pendingAISetup: false,
+      pendingAISetupStep: null,
+      pendingAISetupDraft: null,
+      pendingReturnToRoleMenu: false,
+      pendingReturnToStoryMenu: false,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1753,6 +1758,9 @@ class AgentChat extends React.Component {
 
   handleTriggers = async (text, userMessage = null) => {
     const trimmed = text.trim();
+    if (await this.handlePendingAISetupInput?.(trimmed)) {
+      return;
+    }
     const aMatch = /^\/a(?:\s+(.+))?$/i.exec(trimmed);
     if (aMatch) {
       const beforeModel = String(this.state.llmConfig?.model || '');

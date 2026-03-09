@@ -610,6 +610,91 @@ export function attachAgentChatLLM(agent, deps) {
     });
 
   // ---- /a command dispatcher ----
+  agent.finishAISetupFlow =
+    agent.finishAISetupFlow ||
+    (async () => {
+      if (agent.state?.pendingReturnToRoleMenu) {
+        await new Promise(resolve => agent.setState({ pendingReturnToRoleMenu: false }, resolve));
+        await agent.handleTriggers('/role', null);
+        return;
+      }
+      if (agent.state?.pendingReturnToStoryMenu) {
+        await new Promise(resolve => agent.setState({ pendingReturnToStoryMenu: false }, resolve));
+        await agent.handleTriggers('/d', null);
+      }
+    });
+
+  agent.resetAISetupState =
+    agent.resetAISetupState ||
+    (async () => {
+      await new Promise(resolve =>
+        agent.setState({ pendingAISetup: false, pendingAISetupStep: null, pendingAISetupDraft: null }, resolve),
+      );
+    });
+
+  agent.useProviderFromList =
+    agent.useProviderFromList ||
+    (async provider => {
+      const resolved = await agent.resolveProviderDef(provider);
+      if (!resolved) {
+        agent.replyFromAgent('Unknown provider. Try: /a list');
+        return;
+      }
+
+      const builtinReg = await agent.readBuiltinRegistry();
+      const customReg = await agent.readCustomRegistry();
+      let registryEntry = resolved.source === 'custom' ? customReg?.[provider] || null : builtinReg?.[provider] || null;
+
+      if (resolved.source !== 'custom') {
+        const hasKey = !!String(registryEntry?.apiKey || '').trim();
+        if (!hasKey) {
+          await new Promise(resolve =>
+            agent.setState(
+              {
+                pendingAISetup: true,
+                pendingAISetupStep: 'builtin_key',
+                pendingAISetupDraft: { provider },
+              },
+              resolve,
+            ),
+          );
+          agent.replyFromAgent(`Enter API key for ${provider}:`);
+          return;
+        }
+      } else if (!String(registryEntry?.apiKey || '').trim()) {
+        await new Promise(resolve =>
+          agent.setState(
+            {
+              pendingAISetup: true,
+              pendingAISetupStep: 'custom_key',
+              pendingAISetupDraft: {
+                provider,
+                customName: registryEntry?.label || provider,
+                customUrl: String(registryEntry?.baseUrl || '').trim().replace(/\/$/, ''),
+              },
+            },
+            resolve,
+          ),
+        );
+        agent.replyFromAgent('Enter API key:');
+        return;
+      }
+
+      const current = agent.currentLLMConfig || agent.state.llmConfig || (await agent.loadLLMConfig());
+      try {
+        await agent.applyProviderConfig({
+          providerName: provider,
+          providerDef: resolved.def,
+          registryEntry,
+          llmConfig: current,
+          startup: false,
+        });
+        await agent.finishAISetupFlow();
+      } catch (error) {
+        agent.replyFromAgent('Failed to load models. Check baseUrl/key or endpoint compatibility.');
+      }
+    });
+
   agent.renderAIProviderList =
     agent.renderAIProviderList ||
     (async () => {
@@ -618,34 +703,106 @@ export function attachAgentChatLLM(agent, deps) {
       const customReg = await agent.readCustomRegistry();
 
       const USE_COL_WIDTH = 18;
-      const NAME_COL_WIDTH = 10;
-
       const pad = (s, n) => String(s).padEnd(n, ' ');
       const statusDot = hasKey => (hasKey ? '🟩' : '🟥');
-
-      const makeBuiltinLine = (name, hasKey) => {
-        const useToken = `[[/a ${name}|use]]`;
-        return `${statusDot(hasKey)} ${pad(useToken, USE_COL_WIDTH)} ${name}`;
-      };
-
-      const makeCustomLine = (name, hasKey) => {
-        const useToken = `[[/a ${name}|use]]`;
-        const delToken = `[[/a del ${name}|del]]`;
-        return `${statusDot(hasKey)} ${pad(useToken, USE_COL_WIDTH)} ${pad(name, NAME_COL_WIDTH)} ${delToken}`;
-      };
 
       const builtinLines = Object.keys(LLM_PROVIDERS).map(name => {
         const hasCurrentKey = cur?.provider === name && !!String(cur?.apiKey || '').trim();
         const hasKey = !!String(builtinReg?.[name]?.apiKey || '').trim() || hasCurrentKey;
-        return makeBuiltinLine(name, hasKey);
+        return `${statusDot(hasKey)} ${pad(`[[/a ${name}|use]]`, USE_COL_WIDTH)} ${name}`;
       });
 
       const customNames = Object.keys(customReg || {}).filter(name => customReg?.[name]?.baseUrl);
       const customLines = customNames.length
-        ? customNames.map(name => makeCustomLine(name, !!String(customReg?.[name]?.apiKey || '').trim()))
+        ? customNames.map(name => `${statusDot(!!String(customReg?.[name]?.apiKey || '').trim())} ${pad(`[[/a ${name}|use]]`, USE_COL_WIDTH)} ${customReg?.[name]?.label || name}`)
         : ['(none)'];
 
-      agent.replyFromAgent(`Builtin providers:\n${builtinLines.join('\n')}\n\nCustom providers:\n${customLines.join('\n')}`);
+      agent.replyFromAgent([
+        'Builtin providers:',
+        ...builtinLines,
+        '',
+        'Custom providers:',
+        ...customLines,
+        '',
+        '[[/a addcustom|Add custom model]]',
+        '[[/a remove|Remove key]]',
+      ].join('\n'));
+    });
+
+  agent.renderAIRemoveMenu =
+    agent.renderAIRemoveMenu ||
+    (async () => {
+      const builtinReg = await agent.readBuiltinRegistry();
+      const customReg = await agent.readCustomRegistry();
+      const builtinLines = Object.keys(LLM_PROVIDERS)
+        .filter(name => !!String(builtinReg?.[name]?.apiKey || '').trim())
+        .map(name => `[[/a remove builtin ${name}|${name}]]`);
+      const customLines = Object.keys(customReg || {}).map(name => `[[/a remove custom ${name}|${customReg?.[name]?.label || name}]]`);
+      const lines = ['Remove key / custom model:', '', ...builtinLines, ...customLines];
+      if (lines.length <= 2) lines.push('(none)');
+      agent.replyFromAgent(lines.join('\n'));
+    });
+
+  agent.handlePendingAISetupInput =
+    agent.handlePendingAISetupInput ||
+    (async trimmed => {
+      if (!agent.state?.pendingAISetup || !agent.state?.pendingAISetupStep) return false;
+      if (trimmed.startsWith('/')) {
+        await agent.resetAISetupState();
+        return false;
+      }
+      const value = String(trimmed || '').trim();
+      if (!value) {
+        agent.replyFromAgent('(empty input)');
+        return true;
+      }
+      const step = agent.state.pendingAISetupStep;
+      const draft = agent.state.pendingAISetupDraft || {};
+
+      if (step === 'builtin_key') {
+        const provider = String(draft.provider || '').toLowerCase();
+        const builtin = (await agent.readBuiltinRegistry()) || {};
+        builtin[provider] = { ...(builtin[provider] || {}), baseUrl: LLM_PROVIDERS[provider]?.baseUrl || '', apiKey: value, updatedAt: Date.now() };
+        await agent.writeBuiltinRegistry(builtin);
+        await agent.resetAISetupState();
+        await agent.useProviderFromList(provider);
+        return true;
+      }
+
+      if (step === 'custom_name') {
+        await new Promise(resolve =>
+          agent.setState({ pendingAISetupStep: 'custom_url', pendingAISetupDraft: { ...draft, customName: value } }, resolve),
+        );
+        agent.replyFromAgent('Enter base URL:');
+        return true;
+      }
+
+      if (step === 'custom_url') {
+        await new Promise(resolve =>
+          agent.setState({ pendingAISetupStep: 'custom_key', pendingAISetupDraft: { ...draft, customUrl: value } }, resolve),
+        );
+        agent.replyFromAgent('Enter API key:');
+        return true;
+      }
+
+      if (step === 'remove_menu') {
+        agent.replyFromAgent('Select an item from the remove menu.');
+        return true;
+      }
+
+      if (step === 'custom_key') {
+        const nameRaw = String(draft.customName || '').trim();
+        const provider = String(draft.provider || nameRaw).toLowerCase();
+        const baseUrl = String(draft.customUrl || '').trim().replace(/\/$/, '');
+        const custom = (await agent.readCustomRegistry()) || {};
+        custom[provider] = { ...(custom[provider] || {}), label: nameRaw || provider, baseUrl, apiKey: value, updatedAt: Date.now() };
+        await agent.writeCustomRegistry(custom);
+        await agent.resetAISetupState();
+        await agent.useProviderFromList(provider);
+        return true;
+      }
+
+      return false;
     });
 
   agent.handleAIConfigCommand =
@@ -655,15 +812,75 @@ export function attachAgentChatLLM(agent, deps) {
       if (parts.length === 1) {
         const cur = agent.state.llmConfig;
         const curLine = cur ? `Current: ${cur.provider} / ${cur.model || ''}` : 'Current: (none)';
-        const providersList = Object.keys(LLM_PROVIDERS).join(', ');
-        agent.replyFromAgent(
-          `${curLine}\nUsage:\n[[/a list|/a list]]\n/a <provider> [key] [model]\n/a add <provider> <url> [key]\n/a del <provider>\n/a model <model>\n[[/a off|/a off]]\nProviders: ${providersList}`,
-        );
+        agent.replyFromAgent(`${curLine}
+Usage:
+[[/a list|/a list]]
+/a <provider> [key] [model]
+/a add <provider> <url> [key]
+/a del <provider>
+/a model <model>
+[[/a off|/a off]]`);
         return;
       }
 
       const sub = String(parts[1] || '').toLowerCase();
+      if (sub === 'list') return agent.renderAIProviderList();
+      if (sub === 'addcustom') {
+        await new Promise(resolve =>
+          agent.setState({ pendingAISetup: true, pendingAISetupStep: 'custom_name', pendingAISetupDraft: {} }, resolve),
+        );
+        agent.replyFromAgent('Enter custom model name:');
+        return;
+      }
+      if (sub === 'remove') {
+        const targetType = String(parts[2] || '').toLowerCase();
+        const targetName = String(parts[3] || '').toLowerCase();
+        if (!targetType || !targetName) {
+          await new Promise(resolve =>
+            agent.setState({ pendingAISetup: true, pendingAISetupStep: 'remove_menu', pendingAISetupDraft: null }, resolve),
+          );
+          return agent.renderAIRemoveMenu();
+        }
+        if (targetType === 'builtin') {
+          const builtin = (await agent.readBuiltinRegistry()) || {};
+          if (builtin[targetName]) {
+            builtin[targetName] = { ...(builtin[targetName] || {}), apiKey: '' };
+            await agent.writeBuiltinRegistry(builtin);
+          }
+        }
+        if (targetType === 'custom') {
+          const custom = (await agent.readCustomRegistry()) || {};
+          if (custom[targetName]) {
+            delete custom[targetName];
+            await agent.writeCustomRegistry(custom);
+          }
+        }
+        await agent.resetAISetupState();
+        const activeProvider = String(agent.state.llmConfig?.provider || agent.currentLLMConfig?.provider || '').toLowerCase();
+        if (activeProvider === targetName) {
+          await agent.clearLLMConfig();
+          await agent.clearActiveProvider();
+        }
+        await agent.finishAISetupFlow();
+        return;
+      }
 
+      if (LLM_PROVIDERS[sub]) {
+        const keyArg = parts[2] || '';
+        if (keyArg) {
+          const builtinReg = await agent.readBuiltinRegistry();
+          builtinReg[sub] = { ...(builtinReg[sub] || {}), baseUrl: LLM_PROVIDERS[sub].baseUrl, apiKey: keyArg, updatedAt: Date.now() };
+          await agent.writeBuiltinRegistry(builtinReg);
+        }
+        return agent.useProviderFromList(sub);
+      }
+
+      const resolved = await agent.resolveProviderDef(sub);
+      if (resolved?.source === 'custom') {
+        return agent.useProviderFromList(sub);
+      }
+
+      // legacy flows
       if (sub === 'model') {
         const model = parts[2];
         if (!model) {
@@ -673,7 +890,7 @@ export function attachAgentChatLLM(agent, deps) {
         let cur = agent.currentLLMConfig || agent.state.llmConfig;
         if (!cur || !cur.provider || !cur.baseUrl) cur = await agent.loadLLMConfig();
         if (!cur || !cur.provider) {
-          agent.replyFromAgent('No provider configured. Use: /a list or /a add <provider> <url> [key]');
+          agent.replyFromAgent('No provider configured. Use: /a list');
           return;
         }
         const next = { ...cur, model };
@@ -681,168 +898,47 @@ export function attachAgentChatLLM(agent, deps) {
         await agent.saveLLMConfig(next);
         await agent.writeActiveProvider({ name: cur.provider, updatedAt: Date.now() });
         agent.replyFromAgent(`Model selected: ${model}`);
+        await agent.finishAISetupFlow();
         return;
       }
-
       if (sub === 'off' || sub === 'clear') {
         await agent.clearLLMConfig();
         await agent.clearActiveProvider();
         agent.replyFromAgent('Cloud model disabled.');
         return;
       }
-
-      if (sub === 'list') {
-        await agent.renderAIProviderList();
-        return;
-      }
-
       if (sub === 'add') {
         const name = String(parts[2] || '').toLowerCase();
-        if (!/^[a-z0-9_-]{1,32}$/i.test(name)) {
-          agent.replyFromAgent('Usage: /a add <provider> <url> [key]');
-          return;
-        }
         const baseUrl = String(parts[3] || '').trim().replace(/\/$/, '');
-        if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+        const apiKey = parts[4] || '';
+        if (!name || !/^https?:\/\//i.test(baseUrl)) {
           agent.replyFromAgent('Usage: /a add <provider> <url> [key]');
           return;
         }
-        const apiKey = parts[4] || '';
-        const registry = await agent.readCustomRegistry();
-        registry[name] = { baseUrl, apiKey, updatedAt: Date.now() };
-        const ok = await agent.writeCustomRegistry(registry);
-        if (!ok) {
-          agent.replyFromAgent('Failed to save provider registry (writeFile error).');
-          return;
-        }
-        const verify = await agent.readCustomRegistry();
-        if (!verify?.[name]?.baseUrl) {
-          agent.replyFromAgent(
-            `Failed to persist provider: ${name}\n` +
-              `registryPath=${LLM_CUSTOM_PATH}\n` +
-              `Tip: check app file permissions or RNFS writeFile failure.`,
-          );
-          return;
-        }
-        agent.replyFromAgent(`Added provider: ${name} (${baseUrl}) key=${apiKey ? 'YES' : 'NO'}`);
+        const custom = (await agent.readCustomRegistry()) || {};
+        custom[name] = { ...(custom[name] || {}), label: name, baseUrl, apiKey, updatedAt: Date.now() };
+        await agent.writeCustomRegistry(custom);
         await agent.renderAIProviderList();
         return;
       }
-
       if (sub === 'del') {
         const name = String(parts[2] || '').toLowerCase();
-        if (!name) {
+        if (!name || LLM_PROVIDERS[name]) {
           agent.replyFromAgent('Usage: /a del <provider>');
           return;
         }
-        if (LLM_PROVIDERS[name]) {
-          agent.replyFromAgent('Cannot delete builtin provider.');
-          return;
-        }
-        const registry = await agent.readCustomRegistry();
-        if (registry[name]) {
-          delete registry[name];
-          await agent.writeCustomRegistry(registry);
-        }
-        if (agent.state.llmConfig?.provider === name || agent.currentLLMConfig?.provider === name) {
+        const custom = (await agent.readCustomRegistry()) || {};
+        if (custom[name]) delete custom[name];
+        await agent.writeCustomRegistry(custom);
+        if (String(agent.state.llmConfig?.provider || agent.currentLLMConfig?.provider || '').toLowerCase() === name) {
           await agent.clearLLMConfig();
           await agent.clearActiveProvider();
         }
-        agent.replyFromAgent(`Deleted provider: ${name}`);
+        await agent.renderAIProviderList();
         return;
       }
 
-      const provider = sub;
-
-      if (provider === 'local') {
-        const baseUrl = String(parts[2] || '').trim().replace(/\/$/, '');
-        if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
-          agent.replyFromAgent('Usage: /a local <http_base_url> [key]');
-          return;
-        }
-        const apiKey = parts[3] || '';
-        const modelArg = parts[4];
-        const providerDef = LLM_PROVIDERS.local;
-        const current = agent.currentLLMConfig || agent.state.llmConfig || (await agent.loadLLMConfig());
-        try {
-          await agent.applyProviderConfig({
-            providerName: provider,
-            providerDef,
-            llmConfig: current,
-            baseUrlOverride: baseUrl,
-            apiKeyOverride: apiKey,
-            modelOverride: modelArg,
-            startup: false,
-          });
-        } catch (error) {
-          const msg = String(error?.message || error || '');
-          if (!apiKey || /Missing api key/i.test(msg)) {
-            agent.replyFromAgent(`This provider may require a key. Try: /a ${provider} <key>`);
-          } else {
-            agent.replyFromAgent('Failed to load models. Check baseUrl/key or endpoint compatibility.');
-          }
-        }
-        return;
-      }
-
-      const keyArg = parts[2] || '';
-      const modelArg = parts[3];
-      const resolved = await agent.resolveProviderDef(provider);
-      if (!resolved) {
-        agent.replyFromAgent('Unknown provider. Try: /a list or /a add <provider> <url> [key]');
-        return;
-      }
-
-      const providerDef = resolved.def;
-      let registryEntry = null;
-      let apiKeyOverride = '';
-      const builtinReg = await agent.readBuiltinRegistry();
-      const customReg = await agent.readCustomRegistry();
-
-      if (resolved.source === 'custom') {
-        registryEntry = customReg?.[provider] || null;
-        if (keyArg) {
-          registryEntry = { ...(registryEntry || {}), apiKey: keyArg, updatedAt: Date.now() };
-          customReg[provider] = registryEntry;
-          await agent.writeCustomRegistry(customReg);
-        }
-      } else {
-        registryEntry = builtinReg?.[provider] || null;
-        if (keyArg) {
-          apiKeyOverride = keyArg;
-          builtinReg[provider] = {
-            ...(builtinReg[provider] || {}),
-            baseUrl: providerDef.baseUrl,
-            apiKey: keyArg,
-            updatedAt: Date.now(),
-          };
-          await agent.writeBuiltinRegistry(builtinReg);
-          registryEntry = builtinReg[provider];
-        }
-      }
-
-      const current = agent.currentLLMConfig || agent.state.llmConfig || (await agent.loadLLMConfig());
-      try {
-        await agent.applyProviderConfig({
-          providerName: provider,
-          providerDef,
-          registryEntry,
-          llmConfig: current,
-          apiKeyOverride,
-          modelOverride: modelArg,
-          startup: false,
-        });
-      } catch (error) {
-        const msg = String(error?.message || error || '');
-        if (/Missing baseUrl/i.test(msg)) {
-          agent.replyFromAgent('Missing baseUrl for provider. Try: /a list or /a add <provider> <url> [key]');
-          return;
-        }
-        if (/Missing api key/i.test(msg)) {
-          agent.replyFromAgent(`This provider may require a key. Try: /a ${provider} <key>`);
-          return;
-        }
-        agent.replyFromAgent('Failed to load models. Check baseUrl/key or endpoint compatibility.');
-      }
+      agent.replyFromAgent('Unknown provider. Try: /a list');
     });
+
 }

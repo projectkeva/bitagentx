@@ -1509,6 +1509,10 @@ class AgentChat extends React.Component {
       visibleCount: PAGE_SIZE,
       inputValue: '',
       llmConfig: null,
+      pendingAISetup: false,
+      pendingAISetupStep: null,
+      pendingAISetupDraft: null,
+      pendingReturnToStoryMenu: false,
       storyShortMode: true,
       storyLangCode: null,
       roleLangCode: null,
@@ -2510,6 +2514,9 @@ TASK:
 
   handleTriggers = async (text, userMessage = null) => {
     const trimmed = text.trim();
+    if (await this.handlePendingAISetupInput?.(trimmed)) {
+      return;
+    }
 
     if (this.state.pendingMemoryAdjust && trimmed.startsWith('/')) {
       await new Promise(resolve =>
@@ -2845,7 +2852,8 @@ ROLE=<role name>
     }
 
     if (/^\/rolemodel\b/i.test(trimmed)) {
-      await this.startRoleModelSetup();
+      await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: true }, resolve));
+      await this.handleTriggers('/a list', null);
       return true;
     }
 
