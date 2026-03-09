@@ -47,15 +47,15 @@ import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees'
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const LLM_DIR = `${RNFS.DocumentDirectoryPath}/llm`;
 
-const LLM_BUILTIN_PATH = `${LLM_DIR}/builtin.json`;
-const LLM_CUSTOM_PATH = `${LLM_DIR}/custom.json`;
-const LLM_ACTIVE_PATH = `${LLM_DIR}/active.json`;
-const LLM_LAST_USED_PATH = `${LLM_DIR}/last_used.json`;
+const getLlmBuiltinPath = agentId => `${LLM_DIR}/builtin_${encodeURIComponent(String(agentId || 'default'))}.json`;
+const getLlmCustomPath = agentId => `${LLM_DIR}/custom_${encodeURIComponent(String(agentId || 'default'))}.json`;
+const getLlmActivePath = agentId => `${LLM_DIR}/active_${encodeURIComponent(String(agentId || 'default'))}.json`;
+const getLlmLastUsedPath = agentId => `${LLM_DIR}/last_used_${encodeURIComponent(String(agentId || 'default'))}.json`;
 const STORY_BLOCK_CACHE_PATH = `${CHAT_DIR}/_story_block_cache.json`;
-const STORY_LANG_CODE_STORAGE_KEY = 'story_lang_code';
-const ROLE_LANG_CODE_STORAGE_KEY = 'role_lang_code';
-const ROLE_LAST_SELECTED_STORAGE_KEY = 'role_last_selected';
-const ROLE_PENDING_NEW_STORAGE_KEY = 'role_pending_new';
+const getStoryLangStorageKey = agentId => `story_lang_code_${encodeURIComponent(String(agentId || 'default'))}`;
+const getRoleLangStorageKey = agentId => `role_lang_code_${encodeURIComponent(String(agentId || 'default'))}`;
+const getRoleLastSelectedStorageKey = agentId => `role_last_selected_${encodeURIComponent(String(agentId || 'default'))}`;
+const getRolePendingNewStorageKey = agentId => `role_pending_new_${encodeURIComponent(String(agentId || 'default'))}`;
 const STORY_SUPPORTED_LANGS = [
   { code: 'en', label: 'English' },
   { code: 'zh-cn', label: '中文（简体）' },
@@ -77,7 +77,7 @@ const STORY_SUPPORTED_LANGS = [
 ];
 
 // 可选：如果你未来要“每个 agent 绑定不同模型”，再用它
-const getLLMOverridePath = agentId => `${LLM_DIR}/overrides_${encodeURIComponent(agentId)}.json`;
+const getLLMOverridePath = agentId => `${LLM_DIR}/overrides_${encodeURIComponent(String(agentId || 'default'))}.json`;
 const LLM_HISTORY_LIMIT = 16;
 const DEFAULT_AUTH_HEADER = apiKey => (apiKey ? { Authorization: `Bearer ${apiKey}` } : {});
 
@@ -1555,6 +1555,10 @@ class AgentChat extends React.Component {
     this._latestStoryBlockHeight = null;
     const params = this.props.navigation?.state?.params || {};
     this.agentId = getAgentIdFromParams(params);
+    this.llmBuiltinPath = getLlmBuiltinPath(this.agentId);
+    this.llmCustomPath = getLlmCustomPath(this.agentId);
+    this.llmActivePath = getLlmActivePath(this.agentId);
+    this.llmLastUsedPath = getLlmLastUsedPath(this.agentId);
     this.chatScope = 'role';
     this.isStoryScope = false;
     this.agentChatDir = `${CHAT_DIR}/${encodeURIComponent(this.agentId)}/${encodeURIComponent(this.chatScope)}`;
@@ -1572,10 +1576,10 @@ class AgentChat extends React.Component {
     attachAgentChatLLM(this, {
       loc,
       LLM_DIR,
-      LLM_BUILTIN_PATH,
-      LLM_CUSTOM_PATH,
-      LLM_ACTIVE_PATH,
-      LLM_LAST_USED_PATH,
+      LLM_BUILTIN_PATH: this.llmBuiltinPath,
+      LLM_CUSTOM_PATH: this.llmCustomPath,
+      LLM_ACTIVE_PATH: this.llmActivePath,
+      LLM_LAST_USED_PATH: this.llmLastUsedPath,
       LLM_PROVIDERS,
       DEFAULT_AUTH_HEADER,
       LLM_HISTORY_LIMIT,
@@ -1643,25 +1647,25 @@ class AgentChat extends React.Component {
     await this.restoreStoryLangCode();
     await this.restoreLastSelectedRole();
     const history = await this.readHistory();
-    const builtinRead = await this.readJsonFile(LLM_BUILTIN_PATH);
+    const builtinRead = await this.readJsonFile(this.llmBuiltinPath);
     if (builtinRead.__missing) {
       await this.writeBuiltinRegistry({});
     } else if (builtinRead.__parseError) {
-      this.replyFromAgent(`LLM builtin registry is corrupted. Backup created. Please fix/delete: ${LLM_BUILTIN_PATH}`);
+      this.replyFromAgent(`LLM builtin registry is corrupted. Backup created. Please fix/delete: ${this.llmBuiltinPath}`);
     }
 
-    const customRead = await this.readJsonFile(LLM_CUSTOM_PATH);
+    const customRead = await this.readJsonFile(this.llmCustomPath);
     if (customRead.__missing) {
       await this.writeCustomRegistry({});
     } else if (customRead.__parseError) {
-      this.replyFromAgent(`LLM custom registry is corrupted. Backup created. Please fix/delete: ${LLM_CUSTOM_PATH}`);
+      this.replyFromAgent(`LLM custom registry is corrupted. Backup created. Please fix/delete: ${this.llmCustomPath}`);
     }
 
-    const activeRead = await this.readJsonFile(LLM_ACTIVE_PATH);
+    const activeRead = await this.readJsonFile(this.llmActivePath);
     if (activeRead.__missing) {
       await this.writeActiveProvider({ name: '' });
     } else if (activeRead.__parseError) {
-      this.replyFromAgent(`LLM active state is corrupted. Backup created. Please fix/delete: ${LLM_ACTIVE_PATH}`);
+      this.replyFromAgent(`LLM active state is corrupted. Backup created. Please fix/delete: ${this.llmActivePath}`);
     }
     const digestHistory = this.isStoryScope ? await this.readDigestHistory() : [];
     const historyForRender = this.isStoryScope ? this.buildStoryHistoryMessages(history, digestHistory) : history;
@@ -1705,7 +1709,7 @@ class AgentChat extends React.Component {
       return;
     }
     try {
-      const savedCode = await AsyncStorage.getItem(STORY_LANG_CODE_STORAGE_KEY);
+      const savedCode = await AsyncStorage.getItem(getStoryLangStorageKey(this.agentId));
       if (!savedCode) {
         return;
       }
@@ -1724,7 +1728,7 @@ class AgentChat extends React.Component {
     }
     try {
       const normalized = normalizeStoryLangCode(code);
-      await AsyncStorage.setItem(STORY_LANG_CODE_STORAGE_KEY, normalized);
+      await AsyncStorage.setItem(getStoryLangStorageKey(this.agentId), normalized);
     } catch (error) {
       console.warn('Failed to persist story language', error);
     }
@@ -3870,12 +3874,12 @@ ROLE=<role name>
 
   setRoleLangCode = async code => {
     const normalized = normalizeStoryLangCode(code);
-    await AsyncStorage.setItem(ROLE_LANG_CODE_STORAGE_KEY, normalized);
+    await AsyncStorage.setItem(getRoleLangStorageKey(this.agentId), normalized);
     await new Promise(resolve => this.setState({ roleLangCode: normalized }, resolve));
   };
 
   restoreLastSelectedRole = async () => {
-    const raw = await AsyncStorage.getItem(ROLE_LAST_SELECTED_STORAGE_KEY);
+    const raw = await AsyncStorage.getItem(getRoleLastSelectedStorageKey(this.agentId));
     if (!raw) return;
     try {
       const obj = JSON.parse(raw);
@@ -3888,32 +3892,32 @@ ROLE=<role name>
   saveLastSelectedRole = async roleName => {
     const obj = { roleName: String(roleName || '').trim(), updatedAt: Date.now() };
     if (!obj.roleName) return;
-    await AsyncStorage.setItem(ROLE_LAST_SELECTED_STORAGE_KEY, JSON.stringify(obj));
+    await AsyncStorage.setItem(getRoleLastSelectedStorageKey(this.agentId), JSON.stringify(obj));
     await new Promise(resolve => this.setState({ lastSelectedRole: obj }, resolve));
   };
 
   clearLastSelectedRole = async () => {
-    await AsyncStorage.removeItem(ROLE_LAST_SELECTED_STORAGE_KEY);
+    await AsyncStorage.removeItem(getRoleLastSelectedStorageKey(this.agentId));
     await new Promise(resolve => this.setState({ lastSelectedRole: null }, resolve));
   };
 
   setPendingNewRole = async roleName => {
     const name = String(roleName || '').trim();
     if (!name) return false;
-    await AsyncStorage.setItem(ROLE_PENDING_NEW_STORAGE_KEY, name);
+    await AsyncStorage.setItem(getRolePendingNewStorageKey(this.agentId), name);
     await new Promise(resolve => this.setState({ pendingNewRole: name }, resolve));
     return true;
   };
 
   clearPendingNewRole = async () => {
-    await AsyncStorage.removeItem(ROLE_PENDING_NEW_STORAGE_KEY);
+    await AsyncStorage.removeItem(getRolePendingNewStorageKey(this.agentId));
     await new Promise(resolve => this.setState({ pendingNewRole: null }, resolve));
   };
 
   getPendingNewRole = async () => {
     const inState = String(this.state.pendingNewRole || '').trim();
     if (inState) return inState;
-    const stored = await AsyncStorage.getItem(ROLE_PENDING_NEW_STORAGE_KEY);
+    const stored = await AsyncStorage.getItem(getRolePendingNewStorageKey(this.agentId));
     return String(stored || '').trim();
   };
 
@@ -3971,7 +3975,7 @@ ROLE=<role name>
 
   ensureRoleLangReady = async (showUI = true) => {
     if (!this.state.roleLangCode) {
-      const stored = await AsyncStorage.getItem(ROLE_LANG_CODE_STORAGE_KEY);
+      const stored = await AsyncStorage.getItem(getRoleLangStorageKey(this.agentId));
       if (stored) {
         await new Promise(resolve => this.setState({ roleLangCode: normalizeStoryLangCode(stored) }, resolve));
       }
@@ -4033,7 +4037,7 @@ ROLE=<role name>
     await new Promise(resolve => this.setState({ llmConfig: next }, resolve));
     await this.saveLLMConfig(next);
     await this.writeActiveProvider({ name: provider, updatedAt: Date.now() });
-    await this.writeJsonFile(LLM_LAST_USED_PATH, {
+    await this.writeJsonFile(this.llmLastUsedPath, {
       provider,
       baseUrl,
       apiKey,
