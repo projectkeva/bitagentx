@@ -54,6 +54,20 @@ const getLlmLastUsedPath = agentId => `${LLM_DIR}/last_used_${encodeURIComponent
 const STORY_BLOCK_CACHE_PATH = `${CHAT_DIR}/_story_block_cache.json`;
 const getStoryLangStorageKey = agentId => `story_lang_code_${encodeURIComponent(String(agentId || 'default'))}`;
 const getRoleLangStorageKey = agentId => `role_lang_code_${encodeURIComponent(String(agentId || 'default'))}`;
+const sanitizeDialogText = value => String(value || '')
+  .replace(/[\u200B-\u200D\uFEFF]/g, '')
+  .replace(/[\x00-\x1F\x7F]/g, '')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const sanitizeProviderKey = value => sanitizeDialogText(value)
+  .toLowerCase()
+  .replace(/[^a-z0-9._:/-]+/g, '-')
+  .replace(/-+/g, '-')
+  .replace(/^-|-$/g, '');
+
+const sanitizeUrlInput = value => sanitizeDialogText(value).replace(/\/$/, '');
+
 const getRoleLastSelectedStorageKey = agentId => `role_last_selected_${encodeURIComponent(String(agentId || 'default'))}`;
 const getRolePendingNewStorageKey = agentId => `role_pending_new_${encodeURIComponent(String(agentId || 'default'))}`;
 const STORY_SUPPORTED_LANGS = [
@@ -1538,6 +1552,7 @@ class AgentChat extends React.Component {
       pendingRoleModelBuiltinProvider: '',
       pendingRoleModelCustomName: '',
       pendingRoleModelCustomBaseUrl: '',
+      pendingRoleModelReturnToRole: false,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -2627,14 +2642,14 @@ ROLE=<role name>
     }
 
     if (this.state.pendingRoleModelStep && userMessage && !trimmed.startsWith('/')) {
-      const value = String(trimmed || '').trim();
+      const value = sanitizeDialogText(trimmed);
       if (!value) {
         this.replyFromAgent('(empty input)');
         return true;
       }
 
       if (this.state.pendingRoleModelStep === 'builtin_api_key') {
-        const provider = String(this.state.pendingRoleModelBuiltinProvider || '').trim().toLowerCase();
+        const provider = sanitizeProviderKey(this.state.pendingRoleModelBuiltinProvider);
         if (!provider || !LLM_PROVIDERS[provider]) {
           await this.clearRoleModelPendingState();
           this.replyFromAgent('(builtin provider not found)');
@@ -2651,8 +2666,8 @@ ROLE=<role name>
         };
         await this.writeBuiltinRegistry(builtin);
         await this.clearRoleModelPendingState();
-        await this.activateRoleModelProvider(provider);
-        await this.handleTriggers('/role', null);
+        await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, resolve));
+        await this.handleTriggers(`/a ${provider}`, null);
         return true;
       }
 
@@ -2680,9 +2695,9 @@ ROLE=<role name>
       }
 
       if (this.state.pendingRoleModelStep === 'custom_api_key') {
-        const nameRaw = String(this.state.pendingRoleModelCustomName || '').trim();
-        const provider = nameRaw.toLowerCase();
-        const baseUrl = String(this.state.pendingRoleModelCustomBaseUrl || '').trim().replace(/\/$/, '');
+        const nameRaw = sanitizeDialogText(this.state.pendingRoleModelCustomName);
+        const provider = sanitizeProviderKey(nameRaw);
+        const baseUrl = sanitizeUrlInput(this.state.pendingRoleModelCustomBaseUrl);
         if (!nameRaw || !provider || !baseUrl) {
           await this.clearRoleModelPendingState();
           this.replyFromAgent('(custom model setup failed)');
@@ -2700,8 +2715,8 @@ ROLE=<role name>
         };
         await this.writeCustomRegistry(custom);
         await this.clearRoleModelPendingState();
-        await this.activateRoleModelProvider(provider);
-        await this.handleTriggers('/role', null);
+        await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, resolve));
+        await this.handleTriggers(`/a ${provider}`, null);
         return true;
       }
     }
@@ -2790,10 +2805,19 @@ ROLE=<role name>
       }
 
       const builtin = (await this.readBuiltinRegistry?.()) || {};
+      const currentModel = String(this.state.llmConfig?.provider === provider ? (this.state.llmConfig?.model || '') : '').trim();
+      const lastUsedModel = String(this.currentLLMConfig?.provider === provider ? (this.currentLLMConfig?.model || '') : '').trim();
       const hasKey = !!String(builtin?.[provider]?.apiKey || '').trim();
+      const hasSavedModel = !!String(builtin?.[provider]?.model || currentModel || lastUsedModel).trim();
+      if (hasKey && hasSavedModel) {
+        if (!String(builtin?.[provider]?.model || '').trim() && (currentModel || lastUsedModel)) {
+          builtin[provider] = { ...(builtin[provider] || {}), model: (currentModel || lastUsedModel) };
+          await this.writeBuiltinRegistry?.(builtin);
+        }
+      }
       if (hasKey) {
-        await this.activateRoleModelProvider(provider);
-        await this.handleTriggers('/role', null);
+        await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, resolve));
+        await this.handleTriggers(`/a ${provider}`, null);
         return true;
       }
 
@@ -2818,10 +2842,19 @@ ROLE=<role name>
         const provider = rawName.toLowerCase();
         const custom = (await this.readCustomRegistry?.()) || {};
         if (custom?.[provider]) {
+          const currentModel = String(this.state.llmConfig?.provider === provider ? (this.state.llmConfig?.model || '') : '').trim();
+          const lastUsedModel = String(this.currentLLMConfig?.provider === provider ? (this.currentLLMConfig?.model || '') : '').trim();
           const hasKey = !!String(custom?.[provider]?.apiKey || '').trim();
+          const hasSavedModel = !!String(custom?.[provider]?.model || currentModel || lastUsedModel).trim();
+          if (hasKey && hasSavedModel) {
+            if (!String(custom?.[provider]?.model || '').trim() && (currentModel || lastUsedModel)) {
+              custom[provider] = { ...(custom[provider] || {}), model: (currentModel || lastUsedModel) };
+              await this.writeCustomRegistry?.(custom);
+            }
+          }
           if (hasKey) {
-            await this.activateRoleModelProvider(provider);
-            await this.handleTriggers('/role', null);
+            await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, resolve));
+            await this.handleTriggers(`/a ${provider}`, null);
             return true;
           }
           await new Promise(resolve =>
@@ -2856,7 +2889,7 @@ ROLE=<role name>
     }
 
     if (/^\/rolemodel\b/i.test(trimmed)) {
-      await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: true }, resolve));
+      await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, resolve));
       await this.handleTriggers('/a list', null);
       return true;
     }
@@ -3277,6 +3310,14 @@ ROLE=<role name>
       const isFinalModelCommand = /^\/a\s+model\b/i.test(trimmed);
       const beforeKey = buildLlmSelectionKey(this.state.llmConfig);
 
+      if (!this.isStoryScope) {
+        if (isFinalModelCommand) {
+          await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: true, pendingModelFinalConfirm: true, pendingRoleModelReturnToRole: true }, resolve));
+        } else if (this.state.pendingModelFinalConfirm || this.state.pendingRoleModelReturnToRole) {
+          await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, resolve));
+        }
+      }
+
       await this.handleAIConfigCommand(trimmed);
 
       let reloadedConfig = null;
@@ -3303,6 +3344,9 @@ ROLE=<role name>
         }
         // do NOT call /d here; replyFromAgent("model selected") will trigger /d once
       }
+
+      // Role auto-return is intentionally not handled here for generic /a commands,
+      // because provider selection (e.g. /a deepseek) also changes config before final model version is chosen.
       return;
     }
     const helpMatch = /^\/h\b/i.exec(trimmed);
@@ -3717,10 +3761,15 @@ ROLE=<role name>
       const t = String(text || '')
         .trim()
         .toLowerCase();
-      const isModelSelectedMsg = t.includes('model selected');
+      const isSelectingModelMsg = t.includes('select model:');
+      if (isSelectingModelMsg) {
+        return;
+      }
+      const isModelSelectedMsg = /^model selected(?::|\s|$)/.test(t);
 
       if (isModelSelectedMsg) {
-        this.setState({ pendingReturnToRoleMenu: false }, () => this.handleTriggers('/role', null));
+        this.appendRoleCommandMessage('/role');
+        this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, () => this.handleTriggers('/role', null));
         return;
       }
     }
@@ -3950,10 +3999,8 @@ ROLE=<role name>
 
   getRoleLangMenuMessage = () => {
     const current = getStoryLangLabel(this.getRoleLangCode() || 'en');
-    const lines = [this.getRoleMenuText('langMenuTitle', { current }), '', this.getRoleMenuText('supportedLangs'), ''];
-    STORY_SUPPORTED_LANGS.forEach(item => {
-      lines.push(`[[/rolelang ${item.code}|${item.label}]]`);
-    });
+    const chips = STORY_SUPPORTED_LANGS.map(item => `[[/rolelang ${item.code}|${item.label}]]`).join('   ');
+    const lines = [this.getRoleMenuText('langMenuTitle', { current }), '', this.getRoleMenuText('supportedLangs'), '', chips];
     return lines.join('\n');
   };
 

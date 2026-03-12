@@ -613,7 +613,7 @@ export function attachAgentChatLLM(agent, deps) {
   agent.finishAISetupFlow =
     agent.finishAISetupFlow ||
     (async () => {
-      if (agent.state?.pendingReturnToRoleMenu) {
+      if (agent.state?.pendingReturnToRoleMenu && !agent.state?.pendingRoleModelReturnToRole) {
         await new Promise(resolve => agent.setState({ pendingReturnToRoleMenu: false }, resolve));
         await agent.handleTriggers('/role', null);
         return;
@@ -898,6 +898,11 @@ Usage:
         await agent.saveLLMConfig(next);
         await agent.writeActiveProvider({ name: cur.provider, updatedAt: Date.now() });
         agent.replyFromAgent(`Model selected: ${model}`);
+        if (agent?.state?.pendingRoleModelReturnToRole) {
+          agent.appendRoleCommandMessage('/role');
+          agent.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, () => agent.handleTriggers('/role', null));
+          return;
+        }
         await agent.finishAISetupFlow();
         return;
       }
