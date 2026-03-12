@@ -65,3 +65,5 @@ artifacts/
 *.zip
 
 buildxkeva.bat
+android/app/src/main/assets/index.android.bundle
+android/build-debug-openclaw.log
