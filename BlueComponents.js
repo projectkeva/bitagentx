@@ -169,6 +169,7 @@ export class BlueWalletNavigationHeader extends Component {
   static propTypes = {
     wallet: PropTypes.shape().isRequired,
     onWalletUnitChange: PropTypes.func,
+    navigationHeaderTheme: PropTypes.string,
   };
 
   static getDerivedStateFromProps(props, state) {
@@ -268,10 +269,11 @@ export class BlueWalletNavigationHeader extends Component {
   };
 
   render() {
+    const isDarkAgentHeader = this.props.navigationHeaderTheme === 'dark-agent';
     return (
       <LinearGradient
-        colors={WalletGradient.gradientsFor(this.state.wallet.type)}
-        style={{ padding: 15, minHeight: 140, justifyContent: 'center' }}
+        colors={isDarkAgentHeader ? ['#06131b', '#03080d'] : WalletGradient.gradientsFor(this.state.wallet.type)}
+        style={{ padding: 15, minHeight: 140, justifyContent: 'center', borderBottomWidth: isDarkAgentHeader ? 1 : 0, borderBottomColor: 'rgba(0, 229, 255, 0.28)' }}
       >
         <Image
           source={
@@ -283,6 +285,7 @@ export class BlueWalletNavigationHeader extends Component {
             position: 'absolute',
             bottom: 0,
             right: 0,
+            opacity: isDarkAgentHeader ? 0.18 : 1,
           }}
         />
 
@@ -738,24 +741,56 @@ export class BlueHeaderDefaultSub extends Component {
 
 export class BlueHeaderDefaultMain extends Component {
   render() {
+    const leftComponent = this.props.onBackPress
+      ? {
+          icon: 'chevron-left',
+          type: 'feather',
+          color: BlueApp.settings.foregroundColor,
+          size: 30,
+          onPress: this.props.onBackPress,
+        }
+      : {
+          // eslint-disable-next-line
+          text: this.props.leftText,
+          style: {
+            fontWeight: 'bold',
+            fontSize: 28,
+            color: BlueApp.settings.foregroundColor,
+          },
+        };
+
     return (
       <SafeAreaView style={{ backgroundColor: BlueApp.settings.brandingColor }}>
         <Header
           {...this.props}
           statusBarProps={{ barStyle: 'dark-content', backgroundColor: '#fff' }}
-          leftComponent={{
-            // eslint-disable-next-line
-            text: this.props.leftText,
-            style: {
-              fontWeight: 'bold',
-              fontSize: 28,
-              color: BlueApp.settings.foregroundColor,
-            },
-          }}
+          leftComponent={leftComponent}
+          centerComponent={
+            this.props.onBackPress
+              ? {
+                  text: this.props.leftText,
+                  style: {
+                    fontWeight: 'bold',
+                    fontSize: 28,
+                    color: BlueApp.settings.foregroundColor,
+                  },
+                }
+              : undefined
+          }
           leftContainerStyle={{
-            minWidth: '70%',
+            minWidth: this.props.onBackPress ? 56 : '70%',
             height: 70,
+            justifyContent: 'center',
           }}
+          centerContainerStyle={
+            this.props.onBackPress
+              ? {
+                  flex: 1,
+                  alignItems: 'flex-start',
+                  justifyContent: 'center',
+                }
+              : undefined
+          }
           bottomDivider={false}
           containerStyle={{
             height: 64,
@@ -1370,9 +1405,10 @@ export class NewWalletPanel extends Component {
   }
 }
 
-export const BlueTransactionListItem = ({ item, itemPriceUnit = BitcoinUnit.BTC, shouldRefresh }) => {
+export const BlueTransactionListItem = ({ item, itemPriceUnit = BitcoinUnit.BTC, shouldRefresh, transactionListTheme }) => {
   const [transactionTimeToReadable, setTransactionTimeToReadable] = useState('...');
   const [subtitleNumberOfLines, setSubtitleNumberOfLines] = useState(1);
+  const isDarkTransactionList = transactionListTheme === 'dark';
 
   useEffect(() => {
     const transactionTimeToReadable = loc.transactionTimeToReadable(item.received);
@@ -1410,7 +1446,7 @@ export const BlueTransactionListItem = ({ item, itemPriceUnit = BitcoinUnit.BTC,
   };
 
   const rowTitleStyle = () => {
-    let color = BlueApp.settings.successColor;
+    let color = isDarkTransactionList ? '#00e5ff' : BlueApp.settings.successColor;
 
     if (item.type === 'user_invoice' || item.type === 'payment_request') {
       const currentDate = new Date();
@@ -1418,16 +1454,16 @@ export const BlueTransactionListItem = ({ item, itemPriceUnit = BitcoinUnit.BTC,
       const invoiceExpiration = item.timestamp + item.expire_time;
 
       if (invoiceExpiration > now) {
-        color = BlueApp.settings.successColor;
+        color = isDarkTransactionList ? '#00e5ff' : BlueApp.settings.successColor;
       } else if (invoiceExpiration < now) {
         if (item.ispaid) {
-          color = BlueApp.settings.successColor;
+          color = isDarkTransactionList ? '#00e5ff' : BlueApp.settings.successColor;
         } else {
-          color = '#9AA0AA';
+          color = isDarkTransactionList ? '#b9fbff' : '#9AA0AA';
         }
       }
     } else if (item.value / 100000000 < 0) {
-      color = BlueApp.settings.foregroundColor;
+      color = isDarkTransactionList ? '#eaffff' : BlueApp.settings.foregroundColor;
     }
 
     return {
@@ -1543,8 +1579,37 @@ export const BlueTransactionListItem = ({ item, itemPriceUnit = BitcoinUnit.BTC,
       leftAvatar={avatar()}
       title={transactionTimeToReadable}
       titleNumberOfLines={subtitleNumberOfLines}
+      titleStyle={
+        isDarkTransactionList
+          ? {
+              color: '#eaffff',
+              fontSize: 16,
+              fontWeight: '600',
+            }
+          : undefined
+      }
       subtitle={subtitle()}
+      subtitleStyle={
+        isDarkTransactionList
+          ? {
+              flexWrap: 'wrap',
+              color: '#8befff',
+              fontWeight: '400',
+              fontSize: 14,
+            }
+          : undefined
+      }
       subtitleProps={{ numberOfLines: subtitleNumberOfLines }}
+      containerStyle={
+        isDarkTransactionList
+          ? {
+              backgroundColor: 'transparent',
+              borderBottomColor: 'rgba(0, 229, 255, 0.14)',
+              paddingTop: 16,
+              paddingBottom: 16,
+            }
+          : undefined
+      }
       onPress={onPress}
       onLongPress={onLongPress}
       chevron={false}

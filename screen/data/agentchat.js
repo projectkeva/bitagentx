@@ -27,13 +27,17 @@ let loc = require('../../loc');
 const Rolecards = require('./agentchat_rolecards');
 const Roleplay = require('./agentchat_roleplay');
 import { attachAgentChatLLM } from './agentchat_llm';
+import { LLM_PROVIDERS } from './agentchat_llm_providers';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
+import { getUserAvatarUri } from '../../common/userAvatar';
+const SATOSHI_PRE_LLM_AVATAR_SOURCE = require('../../android/app/src/main/assets/os/theme/retro/icons/satoshi-avatar.png');
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
 import ActionSheet from '../ActionSheet';
 import { decodeBase64, deleteKeyValue, getNamespaceScriptHash, toScriptHash, updateKeyValue } from '../../class/keva-ops';
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
+const LAST_CHAT_SPACE_PATH = `${CHAT_DIR}/_last_chat_space.json`;
 const LLM_DIR = `${RNFS.DocumentDirectoryPath}/llm`;
 
 const LLM_BUILTIN_PATH = `${LLM_DIR}/builtin.json`;
@@ -54,6 +58,9 @@ const STORY_SUPPORTED_LANGS = [
   { code: 'ru', label: 'Русский' },
 ];
 
+const LOCAL_NAMESPACE_AVATAR_DIR = `${RNFS.DocumentDirectoryPath}/namespace_avatars`;
+const getNamespaceAvatarPath = namespaceId => `${LOCAL_NAMESPACE_AVATAR_DIR}/${encodeURIComponent(String(namespaceId || 'unknown'))}.jpg`;
+
 // 可选：如果你未来要“每个 agent 绑定不同模型”，再用它
 const getLLMOverridePath = agentId => `${LLM_DIR}/overrides_${encodeURIComponent(agentId)}.json`;
 const LLM_HISTORY_LIMIT = 16;
@@ -63,51 +70,6 @@ function getAgentIdFromParams(params = {}) {
   // 聊天只绑定 agent 身份，不要跟 walletId / 页面路径耦合
   return (params.shortCode || params.namespaceId || params.agentId || 'default').toString();
 }
-
-const LLM_PROVIDERS = {
-  gpt: {
-    kind: 'openai_compat',
-    baseUrl: 'https://api.openai.com/v1',
-    defaultModel: 'gpt-4o-mini',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  local: {
-    kind: 'openai_compat',
-    baseUrl: '',
-    defaultModel: 'default',
-    authHeader: apiKey => (apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-  },
-  grok: {
-    kind: 'openai_compat',
-    baseUrl: 'https://api.x.ai/v1',
-    defaultModel: 'grok-4',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  deepseek: {
-    kind: 'openai_compat',
-    baseUrl: 'https://api.deepseek.com',
-    defaultModel: 'deepseek-chat',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  kimi: {
-    kind: 'openai_compat',
-    baseUrl: 'https://api.moonshot.cn/v1',
-    defaultModel: 'kimi-k2-turbo-preview',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  qwen: {
-    kind: 'openai_compat',
-    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    defaultModel: 'qwen-plus',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  gemini: {
-    kind: 'gemini',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    defaultModel: 'gemini-2.5-flash',
-    authHeader: apiKey => ({ 'x-goog-api-key': apiKey }),
-  },
-};
 
 const COMMAND_TOKEN_REGEX =
   /\/(?:r|welcome|m)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:h|linkstart|block|a)\b/gi;
@@ -691,12 +653,11 @@ SCENE / MAP DECODING GUIDE:
   * If ATTR_2_MAPS = 0: choose a small random number of areas (3–7).
   * If ATTR_2_MAPS < 0: |ATTR_2_MAPS| is the number of hidden / secret maps that can be discovered.
 
-LANGUAGE HANDSHAKE (BEFORE THE GAME STARTS):
-- Before starting the story, ask the player which language to use for this run.
-- Ask this once, using this question (you may translate it if needed):
-  "Choose your language for this run: [1] English / [2] 简体中文 / [3] Other (type your language)."
-- Use the language they choose (or type) for all narration, dialogue, on-screen text, and system messages in this run.
-- If the answer is unclear, default to the language used in the player's reply.
+LANGUAGE RULE (BEFORE THE GAME STARTS):
+- Do NOT ask the player to choose or confirm a language.
+- Use the role's configured language for this run.
+- If a role language is already provided by the app, use it for all narration, dialogue, on-screen text, and system messages.
+- Only fall back to the player's latest message language if no role language is available.
 
 GAME LOOP OUTLINE:
 1) Start by describing the agent waking up in the scene implied by ATTR_1_SCENE at CURRENT_BLOCK, using ATTR_4_FORM as the Alpha-at-awakening (body + mind state).
@@ -1154,6 +1115,7 @@ class AgentChat extends React.Component {
       pendingAISetupDraft: null,
       pendingReturnToRoleMenu: false,
       pendingReturnToStoryMenu: false,
+      userAvatarUri: null,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1191,6 +1153,43 @@ class AgentChat extends React.Component {
       getTodayDateString: getLocalDateKey,
     });
   }
+
+  persistLastChatShortcut = async () => {
+    try {
+      const params = this.props.navigation?.state?.params || {};
+      const namespaceId = String(params.namespaceId || '').trim();
+      const shortCode = String(params.shortCode || '').trim();
+      const agentId = String(getAgentIdFromParams(params) || '').trim();
+      if (!namespaceId && !shortCode && !agentId) return;
+      await RNFS.mkdir(CHAT_DIR).catch(() => {});
+      await RNFS.writeFile(
+        LAST_CHAT_SPACE_PATH,
+        JSON.stringify(
+          {
+            type: 'chat',
+            routeName: 'AgentChat',
+            agentId,
+            namespaceId,
+            shortCode,
+            displayName: params.displayName || '',
+            walletId: params.walletId || '',
+            txid: params.txid || '',
+            rootAddress: params.rootAddress || '',
+            price: params.price || '',
+            desc: params.desc || '',
+            addr: params.addr || '',
+            profile: params.profile || '',
+            updatedAt: Date.now(),
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+    } catch (error) {
+      console.warn('AgentChat: failed to persist last chat shortcut', error);
+    }
+  };
 
   static navigationOptions = ({ navigation }) => {
     const params = navigation.state?.params || {};
@@ -1231,7 +1230,13 @@ class AgentChat extends React.Component {
   componentDidMount() {
     this._isMounted = true;
     this.props.navigation?.setParams?.({ onTitlePress: this.handleTitlePress });
+    this.persistLastChatShortcut();
     this.initializeChat();
+    this.loadAgentLocalAvatar();
+    this.loadUserAvatar();
+    this.avatarUnsubscribe = this.props.navigation?.addListener?.('didFocus', () => {
+      this.loadUserAvatar();
+    });
   }
 
   componentDidUpdate(prevProps) {
@@ -1241,10 +1246,27 @@ class AgentChat extends React.Component {
       this.hasAutoCommandRun = false;
       this.runAutoCommand().then(() => this.runAutoLinkStart());
     }
+    const prevShortCode = prevProps.navigation?.state?.params?.shortCode;
+    const nextShortCode = this.props.navigation?.state?.params?.shortCode;
+    if (prevShortCode !== nextShortCode) {
+      this.loadAgentLocalAvatar();
+    }
+    const prevParams = prevProps.navigation?.state?.params || {};
+    const nextParams = this.props.navigation?.state?.params || {};
+    if (
+      prevParams.namespaceId !== nextParams.namespaceId ||
+      prevParams.shortCode !== nextParams.shortCode ||
+      prevParams.agentId !== nextParams.agentId
+    ) {
+      this.persistLastChatShortcut();
+    }
   }
 
   componentWillUnmount() {
     this._isMounted = false;
+    if (this.avatarUnsubscribe && typeof this.avatarUnsubscribe.remove === 'function') {
+      this.avatarUnsubscribe.remove();
+    }
   }
 
   initializeChat = async () => {
@@ -1741,7 +1763,12 @@ class AgentChat extends React.Component {
       _choiceMeta: userMessage._choiceMeta,
     });
     this.setState({ inputValue: '' });
-    await this.handleTriggers(modelText, userMessage);
+    try {
+      await this.handleTriggers(modelText, userMessage);
+    } catch (error) {
+      console.warn('AgentChat: handleSend trigger failed', error);
+      this.replyFromAgent('Action failed. Please try again.');
+    }
   };
 
   sendCommand = async commandText => {
@@ -1752,7 +1779,12 @@ class AgentChat extends React.Component {
     const userMessage = this.buildMessage(text, 'user');
     this.appendMessage(userMessage);
     this.setState({ inputValue: '' });
-    await this.handleTriggers(text, userMessage);
+    try {
+      await this.handleTriggers(text, userMessage);
+    } catch (error) {
+      console.warn('AgentChat: sendCommand trigger failed', error);
+      this.replyFromAgent('Action failed. Please try again.');
+    }
     this.shouldScrollToEnd = true;
   };
 
@@ -2258,10 +2290,26 @@ class AgentChat extends React.Component {
     if (normalized === 'new') {
       return 'new';
     }
+    if (normalized === 'offline') {
+      return 'offline';
+    }
+    if (normalized === 'story') {
+      return 'story';
+    }
     return 'menu';
   };
 
   buildDestinyModeMenuMessage = () => {
+    if (!this.isStoryScope) {
+      return [
+        'What would you like to do?',
+        '',
+        '[[/d offline|Offline copy version]]',
+        '',
+        '[[/d story|Open Story window]]',
+      ].join('\n');
+    }
+
     return [
       'What would you like to do?',
       '',
@@ -2346,7 +2394,25 @@ class AgentChat extends React.Component {
   handleDestinyCommand = async modeArg => {
     const mode = this.getDestinyModeFromArg(modeArg);
     if (!this.isStoryScope) {
-      await this.startDestinyRun({ memoryMode: mode === 'continue' ? 'continue' : 'new', condensedMemory: '' });
+      if (mode === 'offline') {
+        const seedPrompt = buildDestinySeedPrompt(this.agentId);
+        const preview = [
+          'Destiny Seed Card preview (offline copy version):',
+          '',
+          ...String(seedPrompt || '').split('\n').slice(0, 18),
+          '',
+          'Open the copy link below and paste the full card into an external/offline model to run it.',
+        ].join('\n');
+        this.replyFromAgentSeedCard(preview, seedPrompt);
+        return;
+      }
+
+      if (mode === 'story') {
+        this.replyFromAgent('Please open the Story window, then use /d there to start the live Story runtime.');
+        return;
+      }
+
+      this.replyFromAgent(this.buildDestinyModeMenuMessage());
       return;
     }
 
@@ -2885,7 +2951,38 @@ class AgentChat extends React.Component {
     return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${time}`;
   };
 
+  loadUserAvatar = async () => {
+    try {
+      const userAvatarUri = await getUserAvatarUri();
+      if (this._isMounted) {
+        this.setState({ userAvatarUri });
+      }
+    } catch (error) {
+      console.warn('Failed to load user avatar for agentchat', error);
+    }
+  };
+
+  loadAgentLocalAvatar = async () => {
+    try {
+      const { shortCode } = this.props.navigation.state.params || {};
+      if (!shortCode) {
+        if (this._isMounted) this.setState({ agentLocalAvatarUri: null });
+        return;
+      }
+      const path = getNamespaceAvatarPath(shortCode);
+      const exists = await RNFS.exists(path);
+      if (this._isMounted) {
+        this.setState({ agentLocalAvatarUri: exists ? `file://${path}` : null });
+      }
+    } catch (error) {
+      console.warn('Failed to load agentchat local avatar', error);
+    }
+  }
+
   getUserAvatar = () => {
+    if (this.state?.userAvatarUri) {
+      return { type: 'image', uri: this.state.userAvatarUri };
+    }
     const { namespaceList } = this.props;
     const firstId = namespaceList?.order?.[0];
     const namespace = firstId ? namespaceList?.namespaces?.[firstId] : null;
@@ -2904,7 +3001,26 @@ class AgentChat extends React.Component {
     };
   };
 
-  renderAvatar = sender => {
+  shouldUseSatoshiPreLLMAvatar = (item = null, visibleIndex = -1) => {
+    const allMessages = Array.isArray(this.state?.allMessages) ? this.state.allMessages : [];
+    if (allMessages.length === 0) {
+      return true;
+    }
+    const firstCompletedLLMIndex = allMessages.findIndex(message =>
+      (message?.sender === 'agent' || message?.role === 'assistant') && message?.requestId && !message?.pending,
+    );
+    if (firstCompletedLLMIndex < 0) {
+      return true;
+    }
+    const itemId = item?.id ? String(item.id) : '';
+    const allIndex = itemId ? allMessages.findIndex(message => String(message?.id || '') === itemId) : -1;
+    if (allIndex >= 0) {
+      return allIndex < firstCompletedLLMIndex;
+    }
+    return visibleIndex >= 0 ? visibleIndex < firstCompletedLLMIndex : false;
+  };
+
+  renderAvatar = (sender, item = null, visibleIndex = -1) => {
     const isUser = sender === 'user';
     if (isUser) {
       const userAvatar = this.getUserAvatar();
@@ -2935,8 +3051,11 @@ class AgentChat extends React.Component {
     }
 
     const { shortCode } = this.props.navigation.state.params || {};
+    const localAvatarUri = this.state.agentLocalAvatarUri;
     const avatarUri = buildHeadAssetUri(shortCode);
-    const source = avatarUri ? { uri: avatarUri } : require('../../img/bluebeast.png');
+    const source = this.shouldUseSatoshiPreLLMAvatar(item, visibleIndex)
+      ? SATOSHI_PRE_LLM_AVATAR_SOURCE
+      : (localAvatarUri ? { uri: localAvatarUri } : (avatarUri ? { uri: avatarUri } : require('../../img/bluebeast.png')));
     return (
       <View style={[styles.avatarWrapper, styles.agentAvatarWrapper]}>
         <Image source={source} style={styles.avatarImage} resizeMode="cover" />
@@ -2976,7 +3095,7 @@ class AgentChat extends React.Component {
               onPress={() => this.handleAvatarPress(text)}
               style={styles.avatarPressable}
             >
-              {this.renderAvatar('agent')}
+              {this.renderAvatar('agent', item, index)}
             </TouchableOpacity>
           )}
           <View style={[styles.bubbleColumn, isUser ? styles.userBubbleColumn : styles.agentBubbleColumn]}>

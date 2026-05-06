@@ -52,6 +52,14 @@ import { IS_ANDROID } from '../../util';
 export default class WalletTransactions extends Component {
   static navigationOptions = ({ navigation }) => {
     return {
+      headerLeft: () => (
+        <TouchableOpacity
+          style={{ marginLeft: 16, minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'flex-start' }}
+          onPress={() => navigation.goBack(null)}
+        >
+          <Icon name="arrow-back" type="material" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
+      ),
       headerRight: () => (
         <TouchableOpacity
           disabled={navigation.getParam('isLoading') === true}

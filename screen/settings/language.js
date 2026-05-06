@@ -1,15 +1,20 @@
 import React, { Component } from 'react';
-import { FlatList } from 'react-native';
+import { ScrollView, View } from 'react-native';
+import AsyncStorage from '@react-native-community/async-storage';
 import { BlueLoading, BlueText, SafeBlueArea, BlueListItem, BlueCard, BlueNavigationStyle } from '../../BlueComponents';
 import PropTypes from 'prop-types';
 import { Icon } from 'react-native-elements';
 import KevaColors from '../../common/KevaColors';
+import { normalizeStoryLangCode } from '../data/agentstory_i18n';
+import { getRoleLangStorageKey } from '../data/namespace_i18n';
+import { getSettingsText, resolveSettingsUiLanguage } from './settings_i18n';
+import { buildSettingsLanguageItems, findSettingsLanguageOption } from './language_catalog';
 let loc = require('../../loc');
 
 export default class Language extends Component {
-  static navigationOptions = () => ({
+  static navigationOptions = ({ navigation }) => ({
     ...BlueNavigationStyle(),
-    title: loc.settings.language,
+    title: navigation.getParam('title', loc.settings.language),
   });
 
   constructor(props) {
@@ -17,61 +22,57 @@ export default class Language extends Component {
     this.state = {
       isLoading: true,
       language: loc.getLanguage(),
-      availableLanguages: [
-        { label: 'English', value: 'en' },
-        { label: 'Afrikaans (AFR)', value: 'zar_afr' },
-        { label: '简体中文 (ZH)', value: 'zh_cn' },
-        { label: '繁体中文 (TW)', value: 'zh_tw' },
-        { label: 'Croatian (HR)', value: 'hr_hr' },
-        { label: 'Česky (CZ)', value: 'cs_cz' },
-        { label: 'Danish (DK)', value: 'da_dk' },
-        { label: 'Deutsch (DE)', value: 'de_de' },
-        { label: 'Español (ES)', value: 'es' },
-        { label: 'Ελληνικά (EL)', value: 'el' },
-        { label: 'Italiano (IT)', value: 'it' },
-        { label: 'Suomi (FI)', value: 'fi_fi' },
-        { label: 'Français (FR)', value: 'fr_fr' },
-        { label: 'Indonesia (ID)', value: 'id_id' },
-        { label: 'Magyar (HU)', value: 'hu_hu' },
-        { label: '日本語 (JP)', value: 'jp_jp' },
-        { label: 'Nederlands (NL)', value: 'nl_nl' },
-        { label: 'Norsk (NB)', value: 'nb_no' },
-        { label: 'Português (BR)', value: 'pt_br' },
-        { label: 'Português (PT)', value: 'pt_pt' },
-        { label: 'Русский', value: 'ru' },
-        { label: 'Svenska (SE)', value: 'sv_se' },
-        { label: 'Thai (TH)', value: 'th_th' },
-        { label: 'Vietnamese (VN)', value: 'vi_vn' },
-        { label: 'Українська', value: 'ua' },
-        { label: 'Türkçe (TR)', value: 'tr_tr' },
-        { label: 'Xhosa (XHO)', value: 'zar_xho' },
-      ],
+      settingsUiLang: 'en',
+      availableLanguages: buildSettingsLanguageItems(),
     };
   }
 
   async componentDidMount() {
+    let settingsUiLang = 'en';
+    try {
+      settingsUiLang = await resolveSettingsUiLanguage();
+    } catch (_) {}
+
+    this.props.navigation?.setParams?.({ title: getSettingsText('language', settingsUiLang) });
     this.setState({
       isLoading: false,
+      settingsUiLang,
     });
   }
 
-  renderItem = ({ item }) => {
-    return (
-      <BlueListItem
-        onPress={() => {
-          console.log('setLanguage', item.value);
-          loc.saveLanguage(item.value);
-          return this.setState({ language: item.value });
-        }}
-        title={item.label}
-        {...(this.state.language === item.value
-          ? {
-              rightIcon: <Icon name="check" type="font-awesome" color="#0c2550" />,
-            }
-          : { hideChevron: true })}
-      />
-    );
+  getRoleLangTargetIds = () => {
+    const params = this.props.navigation?.state?.params || {};
+    const candidates = [params.shortCode, params.namespaceId, params.id, params.agentId, params.peerShortCode, params.peerNamespaceId]
+      .map(value => String(value || '').trim())
+      .filter(Boolean);
+    return [...new Set(candidates.length ? candidates : ['default'])];
   };
+
+  syncRoleLanguage = async item => {
+    const option = findSettingsLanguageOption(item?.value) || item || {};
+    const normalized = normalizeStoryLangCode(option.roleCode || item?.roleCode || item?.value || 'en');
+    await Promise.all(this.getRoleLangTargetIds().map(targetId => AsyncStorage.setItem(getRoleLangStorageKey(targetId), normalized)));
+    return normalized;
+  };
+
+  setInterfaceLanguage = async item => {
+    loc.saveLanguage(item.value);
+    await this.syncRoleLanguage(item);
+    this.setState({ language: item.value });
+  };
+
+  renderAppLanguageItem = item => (
+    <BlueListItem
+      key={`app-${item.value}`}
+      onPress={() => this.setInterfaceLanguage(item)}
+      title={item.label}
+      {...(this.state.language === item.value
+        ? {
+            rightIcon: <Icon name="check" type="font-awesome" color="#0c2550" />,
+          }
+        : { hideChevron: true })}
+    />
+  );
 
   render() {
     if (this.state.isLoading) {
@@ -80,16 +81,16 @@ export default class Language extends Component {
 
     return (
       <SafeBlueArea forceInset={{ horizontal: 'always' }} style={{ flex: 1 }}>
-        <FlatList
-          style={{ flex: 1 }}
-          keyExtractor={(_item, index) => `${index}`}
-          data={this.state.availableLanguages}
-          extraData={this.state.availableLanguages}
-          renderItem={this.renderItem}
-        />
-        <BlueCard>
-          <BlueText style={{color: KevaColors.actionText}}>{loc.general.language_restart}</BlueText>
-        </BlueCard>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 24 }}>
+          <BlueCard>
+            <BlueText style={{ color: KevaColors.actionText, fontWeight: '600' }}>{getSettingsText('language', this.state.settingsUiLang)}</BlueText>
+          </BlueCard>
+          <View>{this.state.availableLanguages.map(this.renderAppLanguageItem)}</View>
+          <BlueCard>
+            <BlueText style={{ color: KevaColors.actionText }}>{getSettingsText('languageRestart', this.state.settingsUiLang)}</BlueText>
+          </BlueCard>
+
+        </ScrollView>
       </SafeBlueArea>
     );
   }

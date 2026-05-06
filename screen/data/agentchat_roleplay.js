@@ -2,47 +2,24 @@
 // Roleplay (/r) module extracted from agentchat.js
 
 async function handleRoleCommand(chat, rawValue, deps) {
-  const { Rolecards, buildRoleplayPrompt } = deps || {};
-  if (!Rolecards || typeof buildRoleplayPrompt !== 'function') {
-    chat.replyFromAgent('Roleplay module deps missing.');
-    return;
-  }
-
   const roleText = String(rawValue || '').trim().slice(0, 1000);
-  const normalizedRole = roleText.toLowerCase() === 'unknown' ? 'unknown' : roleText;
+  const normalizedRole = roleText.toLowerCase() === 'unknown' ? '' : roleText;
 
   if (!normalizedRole) {
+    if (typeof chat.handleRoleNewMenu === 'function') {
+      await chat.handleRoleNewMenu();
+      return;
+    }
     chat.replyFromAgent('Role text is empty.');
     return;
   }
 
-  const ctx = typeof chat.resolveNamespaceContext === 'function' ? chat.resolveNamespaceContext() : null;
-  const agentId = ctx?.agentId || 'unknown';
-
-  let roleMemoryCard = null;
-  const roleSlug = Rolecards.normalizeRoleSlug(normalizedRole);
-
-  if (roleSlug && !Rolecards.ROLECARD_RESERVED_SLUGS.has(roleSlug)) {
-    const indexText = await chat.fetchLatestKeyValue(Rolecards.ROLECARD_INDEX_KEY);
-    if (indexText) {
-      const parsed = Rolecards.parseRoleIndexLines(indexText);
-      const entries = parsed?.entries || [];
-      const matched = entries.find(entry => entry?.roleSlug === roleSlug);
-      if (matched) {
-        const keyName = `${Rolecards.ROLECARD_KEY_PREFIX}${roleSlug}`;
-        const value = await chat.fetchLatestKeyValue(keyName);
-        if (value) roleMemoryCard = value;
-      }
-    }
+  if (typeof chat.handleRoleSuggestWithName === 'function') {
+    await chat.handleRoleSuggestWithName(normalizedRole, null);
+    return;
   }
 
-  const rolePrompt = buildRoleplayPrompt(normalizedRole, agentId, roleMemoryCard);
-  const cardText = `Roleplay Prompt\nAgent ID: ${agentId || 'Unknown'}\nRole: ${normalizedRole}\nReady to copy the full prompt.`;
-
-  chat.replyFromAgentSeedCard(cardText, rolePrompt, 'Copy full roleplay prompt');
-  chat.replyFromAgent(
-    'Click the link above to copy. Paste into GPT, Grok, DeepSeek, or any base model to start a roleplay conversation as the role you provided.',
-  );
+  chat.replyFromAgent('Role summon flow is unavailable.');
 }
 
 function getRecentRoleCommands(chat) {

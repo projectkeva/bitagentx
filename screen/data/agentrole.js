@@ -11,23 +11,54 @@ import {
   Clipboard,
   KeyboardAvoidingView,
   Platform,
+  NativeModules,
+  NativeEventEmitter,
+  Linking,
 } from 'react-native';
 import { Icon } from 'react-native-elements';
+import { buildHeadAssetUri, buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+import { getUserAvatarUri } from '../../common/userAvatar';
+const SATOSHI_PRE_LLM_AVATAR_SOURCE = require('../../android/app/src/main/assets/os/theme/retro/icons/satoshi-avatar.png');
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-community/async-storage';
+import DocumentPicker from 'react-native-document-picker';
+import Slider from '@react-native-community/slider';
 import { connect } from 'react-redux';
-import CryptoJS from 'crypto-js';
 import { decode as b64decode } from 'base-64';
 let BlueElectrum = require('../../BlueElectrum');
 let BlueApp = require('../../BlueApp');
-const StyleSheet = require('../../PlatformStyleSheet');
-const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
 let loc = require('../../loc');
 const Rolecards = require('./agentchat_rolecards');
 const Roleplay = require('./agentchat_roleplay');
-const Destiny = require('./agentchat_destiny');
 import { attachAgentChatLLM } from './agentchat_llm';
+import { LLM_PROVIDERS } from './agentchat_llm_providers';
+import { buildOfflineDestinySeedPrompt } from './agentrole_destiny_offline';
+import { buildRoleMemoryCloneFilename, buildRoleMemoryClonePrompt, getRoleMemoryCloneDir } from './agentrole_clone_memory';
+import { buildRoleFragmentImportPrompt, parseRoleFragmentImportResult } from './agentrole_fragment_import';
+import { buildRoleStoryFragmentImportPrompt, parseRoleStoryFragmentImportResult } from './agentrole_story_fragment_import';
+import { fetchDoppelOnChainMemory, normalizeDoppelMemoryId } from './agentrole_doppel_memory';
+import { fetchDoppelOnChainStorySummary, fetchLocalOnChainStorySummary, normalizeOnChainStoryId } from './agentrole_onchain_story';
+import { buildOfflineStoryClonePrompt, buildStoryCloneFilename, getStoryCloneDir } from './agentstory_clone';
+import { evaluateRoleModelConfig } from './rolemodel_check';
+import { createAgentRoleMemoryStore, normalizeRoleMemoryLayerKey } from './agentrole_memory';
+import {
+  buildRoleMemorySnapshotListMessage,
+  buildRoleMemorySnapshotMenuMessage,
+  createRoleMemorySnapshot,
+  importRoleMemorySnapshot,
+  roleDataHasMemory,
+} from './agentrole_memory_snapshots';
+import { buildRoleSnapshot, normalizeRoleSnapshot, parseRoleSnapshotPayload, serializeRoleSnapshotToLegacyText } from './role_snapshot';
+import {
+  STORY_MENU_MESSAGES,
+  STORY_SUPPORTED_LANGS as ROLE_I18N_SUPPORTED_LANGS,
+  ROLE_UI_MESSAGES,
+  COMMAND_USAGE_MESSAGES,
+  ROLE_HISTORY_TITLES,
+  STORY_UI_MESSAGES,
+  COMMAND_HELP_ALIASES,
+} from './agentrole_i18n';
 import {
   appendDigestEntry,
   buildDigestFromRaw,
@@ -38,27 +69,177 @@ import {
   toDigestFallbackText,
   updateDigestEntry,
 } from './agentchat_story_storage';
-import { buildHeadAssetUri } from '../../common/namespaceAvatar';
+import {
+  buildRoleAdventureRecordsMenuMessage as buildRoleAdventureRecordsMenuMessageHelper,
+  buildRoleStoryMenuMessage as buildRoleStoryMenuMessageHelper,
+  exportRoleStoryRecord as exportRoleStoryRecordHelper,
+  getRoleCurrentStoryPath as getRoleCurrentStoryPathHelper,
+  getRoleCurrentStorySummaryPath as getRoleCurrentStorySummaryPathHelper,
+  getRoleStoryChoicesPath as getRoleStoryChoicesPathHelper,
+  getStoryChatDir as getStoryChatDirHelper,
+  importRoleStoryRecord as importRoleStoryRecordHelper,
+  openRoleStorySpace as openRoleStorySpaceHelper,
+} from './agentrole_story_menu';
+import {
+  buildRoleStorySnapshotListMessage,
+  buildRoleStorySnapshotMenuMessage,
+  createRoleStorySnapshot,
+  importRoleStorySnapshot,
+} from './agentrole_story_snapshots';
+import { buildStoryRecordSnapshot, restoreStoryRecordSnapshot } from './story_record_io';
+import {
+  buildMemoryAdjustConfirmMessage as buildMemoryAdjustConfirmMessageHelper,
+  buildMemoryLanguageMenuMessage as buildMemoryLanguageMenuMessageHelper,
+  buildRoleEditLayerChoiceMessage as buildRoleEditLayerChoiceMessageHelper,
+  buildRoleMemoryCardMessage as buildRoleMemoryCardMessageHelper,
+  buildRoleMemoryFullConsoleMessage as buildRoleMemoryFullConsoleMessageHelper,
+  buildRoleMemoryQuickConsoleMessage as buildRoleMemoryQuickConsoleMessageHelper,
+  buildRoleMemoryRecoverMenuMessage as buildRoleMemoryRecoverMenuMessageHelper,
+  getMemoryActionLabel as getMemoryActionLabelHelper,
+  getMemoryLayerLabel as getMemoryLayerLabelHelper,
+  getRoleMemoryLayerShortCode as getRoleMemoryLayerShortCodeHelper,
+} from './agentrole_memory_menu';
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
+import Toast from 'react-native-root-toast';
 import ActionSheet from '../ActionSheet';
 import { decodeBase64, deleteKeyValue, getNamespaceScriptHash, toScriptHash, updateKeyValue } from '../../class/keva-ops';
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
+import {
+  ROLE_TALK_STATES,
+  bindRoleTalkEvents,
+  cancelRoleTalkRecognition,
+  destroyRoleTalkRecognition,
+  ensureRoleTalkPermission,
+  isRoleTalkAvailable,
+  startRoleTalkRecognition,
+  stopRoleTalkRecognition,
+} from './role_talk_speech';
+import {
+  filterPersistableMessages,
+  filterRoleHistoryMessages,
+  isReaderExcludedText,
+  shouldExcludeFromSummary,
+  shouldHideHistoryText,
+  shouldPersistRoleMessage,
+} from './role_message_filters';
 
-const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
-const LLM_DIR = `${RNFS.DocumentDirectoryPath}/llm`;
+import styles from './agentrole_styles';
+import {
+  CHAT_DIR,
+  LAST_ROLE_SPACE_PATH,
+  LAST_STORY_SPACE_PATH,
+  LAST_CHAT_SPACE_PATH,
+  LLM_DIR,
+  ROLE_RECOVERY_BASELINE_FILE,
+  STORY_BLOCK_CACHE_PATH,
+  getLlmActivePath,
+  getLlmBuiltinPath,
+  getLlmCustomPath,
+  getLlmLastUsedPath,
+  getNamespaceAvatarPath,
+  getRoleLangStorageKey,
+  getRoleLastSelectedStorageKey,
+  getRolePendingNewStorageKey,
+  getStoryLangStorageKey,
+} from './agentrole_paths';
+import {
+  buildAccessibleMessageText as buildAccessibleRoleMessageText,
+  buildStoryInlineLines as buildStoryInlineLinesFromText,
+  extractStoryChoices as extractStoryChoicesFromText,
+  getCommandSegments as parseCommandSegments,
+  isInteractiveCommand as isInteractiveCommandText,
+  isSystemCallMessage as isSystemCallMessageText,
+  isValidCommandText as isValidRoleCommandText,
+  parseStoryLineSegments as parseStoryLineSegmentsFromText,
+  stripStoryChoiceLines as stripStoryChoiceLinesFromText,
+} from './agentrole_message_parser';
+import {
+  buildConversationSummaryPromptBlock,
+  buildConversationSummaryRewritePrompt,
+  buildConversationSummaryUpdatePrompt,
+  buildInitialRoleMemoryCardPrompt,
+  buildMemoryLayerEditPrompt,
+  buildMemoryLayerUpdatePrompt,
+  buildRoleChatPrompt,
+  buildRoleLanguageInstruction,
+  buildRoleResolverPrompt,
+  buildStoryDigestInstruction,
+} from './agentrole_prompts';
+import {
+  DEFAULT_CONVERSATION_SUMMARY,
+  normalizeConversationSummary,
+} from './agentrole_conversation_summary';
 
-const getLlmBuiltinPath = agentId => `${LLM_DIR}/builtin_${encodeURIComponent(String(agentId || 'default'))}.json`;
-const getLlmCustomPath = agentId => `${LLM_DIR}/custom_${encodeURIComponent(String(agentId || 'default'))}.json`;
-const getLlmActivePath = agentId => `${LLM_DIR}/active_${encodeURIComponent(String(agentId || 'default'))}.json`;
-const getLlmLastUsedPath = agentId => `${LLM_DIR}/last_used_${encodeURIComponent(String(agentId || 'default'))}.json`;
-const STORY_BLOCK_CACHE_PATH = `${CHAT_DIR}/_story_block_cache.json`;
-const getStoryLangStorageKey = agentId => `story_lang_code_${encodeURIComponent(String(agentId || 'default'))}`;
-const getRoleLangStorageKey = agentId => `role_lang_code_${encodeURIComponent(String(agentId || 'default'))}`;
+const selectHeaderAvatarCandidateUri = (candidateUris = [], failedUris = [], generatedUri = null) => {
+  if (generatedUri) return null;
+  for (const candidate of candidateUris) {
+    if (!candidate) continue;
+    if (failedUris && failedUris.includes(candidate)) continue;
+    return candidate;
+  }
+  return null;
+};
 const sanitizeDialogText = value => String(value || '')
   .replace(/[\u200B-\u200D\uFEFF]/g, '')
   .replace(/[\x00-\x1F\x7F]/g, '')
   .replace(/\s+/g, ' ')
   .trim();
+
+const ensureRenderableText = (value, label = 'unknown') => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    const keys = value && typeof value === 'object' ? Object.keys(value).join(',') : typeof value;
+    console.warn(`[agentrole] non-renderable text for ${label}`, keys, value);
+  } catch {}
+  try {
+    return JSON.stringify(value);
+  } catch {
+    try {
+      return String(value);
+    } catch {
+      return '[invalid text]';
+    }
+  }
+};
+
+const safeJsonStringify = value => {
+  const seen = new WeakSet();
+  try {
+    return JSON.stringify(value, (key, val) => {
+      if (typeof val === 'bigint') return String(val);
+      if (typeof val === 'function') return `[function ${val.name || 'anonymous'}]`;
+      if (val instanceof Error) {
+        return { name: val.name, message: val.message, stack: val.stack };
+      }
+      if (val && typeof val === 'object') {
+        if (seen.has(val)) return '[circular]';
+        seen.add(val);
+      }
+      return val;
+    });
+  } catch (error) {
+    try {
+      return `[unserializable: ${String(error?.message || error || 'unknown error')}]`;
+    } catch {
+      return '[unserializable]';
+    }
+  }
+};
+
+const normalizeInjectedCommandText = value => {
+  const raw = String(value || '').trim();
+  if (!raw.startsWith('/') || raw.indexOf('%') === -1) {
+    return raw;
+  }
+  try {
+    const decoded = decodeURIComponent(raw).trim();
+    return decoded.startsWith('/') ? decoded : raw;
+  } catch {
+    return raw;
+  }
+};
 
 const sanitizeProviderKey = value => sanitizeDialogText(value)
   .toLowerCase()
@@ -68,31 +249,10 @@ const sanitizeProviderKey = value => sanitizeDialogText(value)
 
 const sanitizeUrlInput = value => sanitizeDialogText(value).replace(/\/$/, '');
 
-const getRoleLastSelectedStorageKey = agentId => `role_last_selected_${encodeURIComponent(String(agentId || 'default'))}`;
-const getRolePendingNewStorageKey = agentId => `role_pending_new_${encodeURIComponent(String(agentId || 'default'))}`;
-const STORY_SUPPORTED_LANGS = [
-  { code: 'en', label: 'English' },
-  { code: 'zh-cn', label: '中文（简体）' },
-  { code: 'zh-tw', label: '中文（繁體）' },
-  { code: 'ja', label: '日本語' },
-  { code: 'ko', label: '한국어' },
-  { code: 'es', label: 'Español' },
-  { code: 'fr', label: 'Français' },
-  { code: 'de', label: 'Deutsch' },
-  { code: 'it', label: 'Italiano' },
-  { code: 'pt-br', label: 'Português (Brasil)' },
-  { code: 'ru', label: 'Русский' },
-  { code: 'tr', label: 'Türkçe' },
-  { code: 'vi', label: 'Tiếng Việt' },
-  { code: 'th', label: 'ไทย' },
-  { code: 'id', label: 'Bahasa Indonesia' },
-  { code: 'ar', label: 'العربية' },
-  { code: 'hi', label: 'हिन्दी' },
-];
+const STORY_SUPPORTED_LANGS = ROLE_I18N_SUPPORTED_LANGS;
+const STORY_COMMON_LANG_CODES = ['en', 'zh-cn', 'zh-tw', 'ja', 'ko', 'es', 'fr'];
 
-// 可选：如果你未来要“每个 agent 绑定不同模型”，再用它
-const getLLMOverridePath = agentId => `${LLM_DIR}/overrides_${encodeURIComponent(String(agentId || 'default'))}.json`;
-const LLM_HISTORY_LIMIT = 16;
+const LLM_HISTORY_LIMIT = 32;
 const DEFAULT_AUTH_HEADER = apiKey => (apiKey ? { Authorization: `Bearer ${apiKey}` } : {});
 
 const buildLlmSelectionKey = cfg => {
@@ -110,635 +270,38 @@ const buildLlmSelectionKey = cfg => {
 };
 
 function getAgentIdFromParams(params = {}) {
-  // 聊天只绑定 agent 身份，不要跟 walletId / 页面路径耦合
+
   return (params.shortCode || params.namespaceId || params.agentId || 'default').toString();
 }
 
-const LLM_PROVIDERS = {
-  gpt: {
-    kind: 'openai_compat',
-    baseUrl: 'https://api.openai.com/v1',
-    defaultModel: 'gpt-4o-mini',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  local: {
-    kind: 'openai_compat',
-    baseUrl: '',
-    defaultModel: 'default',
-    authHeader: apiKey => (apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-  },
-  grok: {
-    kind: 'openai_compat',
-    baseUrl: 'https://api.x.ai/v1',
-    defaultModel: 'grok-4',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  deepseek: {
-    kind: 'openai_compat',
-    baseUrl: 'https://api.deepseek.com',
-    defaultModel: 'deepseek-chat',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  kimi: {
-    kind: 'openai_compat',
-    baseUrl: 'https://api.moonshot.cn/v1',
-    defaultModel: 'kimi-k2-turbo-preview',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  qwen: {
-    kind: 'openai_compat',
-    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    defaultModel: 'qwen-plus',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  gemini: {
-    kind: 'gemini',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    defaultModel: 'gemini-2.5-flash',
-    authHeader: apiKey => ({ 'x-goog-api-key': apiKey }),
-  },
-};
-
-const COMMAND_TOKEN_REGEX =
-  /\/(?:r|welcome|m)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:d|h|linkstart|block|a)\b/gi;
-const COMMAND_DISPLAY_TOKEN_REGEX = /\[\[([^\]|]+)\|([^\]]+)\]\]/gi;
-const STORY_CHOICE_PREFIX_RE =
-  /^\s*(?:\[\s*([A-Za-z]|\d{1,2})\s*\]|【\s*([A-Za-z]|\d{1,2})\s*】|\(\s*([A-Za-z]|\d{1,2})\s*\)|（\s*([A-Za-z]|\d{1,2})\s*）|([A-Za-z]|\d{1,2})\s*[).:：、．])\s*(.+)$/;
-const stripMarkdownWrap = s => {
-  let t = String(s || '').trim();
-  if ((t.startsWith('**') && t.endsWith('**')) || (t.startsWith('__') && t.endsWith('__'))) {
-    t = t.slice(2, -2).trim();
-  }
-  return t;
-};
-
-const buildDefaultRoleMemoryCard = roleName => {
+const buildDefaultRoleMemoryCard = (roleName, roleLangCode = 'en') => {
   const safeRole = String(roleName || 'unknown').trim();
+  const code = normalizeStoryLangCode(roleLangCode || 'en');
 
+  const messages = getRoleLocaleTable(ROLE_UI_MESSAGES, code);
+  const fallback = ROLE_UI_MESSAGES.en || {};
+  const label = key => String(messages[key] || fallback[key] || key).trim();
   return [
     `ROLE=${safeRole}`,
-    '[V]',
-    '- Origin: unknown',
-    '- Function: unknown',
-    '- Signature: unknown',
-    '- Relation: unknown',
-    '- Scene: unknown',
-    '- Other: unknown',
+    '[VERIFIED]',
+    `- ${label('defaultMemoryOriginWorldTag')}: unknown`,
+    `- ${label('defaultMemoryRoleFunction')}: unknown`,
+    `- ${label('defaultMemorySignature')}: unknown`,
+    `- ${label('defaultMemoryKeyRelationship')}: unknown`,
+    `- ${label('defaultMemoryLastKnownScene')}: unknown`,
+    `- ${label('defaultMemoryOthers')}: unknown`,
     '',
-    '[L]',
+    '[LIKELY]',
     '- unknown',
     '',
-    '[F]',
+    '[FOG]',
     '- unknown',
   ].join('\n');
 };
 const INTRO_MESSAGES = [
   'Booting the Super Agent Network…',
   'Loading the on-device LLM…',
-  '/h for help.',
 ];
-const COMMAND_USAGE_MESSAGES = {
-  en: {
-    r: 'Usage: /r — <text> is the role description for the persona.',
-    welcome: 'Usage: /welcome — <text> is the welcome message to save on-chain.',
-    m: 'Usage: /m <role> <card> — save/update a role memory card. Use /m <role> to view, /m del <role> to delete.',
-  },
-  'zh-cn': {
-    r: '用法：/r — <text> 为角色设定。',
-    welcome: '用法：/welcome — <text> 为欢迎语内容。',
-    m: '用法：/m <role> <card> — 保存/更新记忆卡；/m <role> 查看；/m del <role> 删除。',
-  },
-  'zh-tw': {
-    r: '用法：/r — <text> 為角色設定。',
-    welcome: '用法：/welcome — <text> 為歡迎語內容。',
-    m: '用法：/m <role> <card> — 儲存/更新記憶卡；/m <role> 查看；/m del <role> 刪除。',
-  },
-};
-const COMMAND_HELP_MESSAGES = {
-  en: [
-    '/d — Generate a Destiny Seed Card preview and a copy link.',
-    '/linkstart — Send the three opening hints.',
-    '/block — Check the current block height.',
-    '/a — Configure and load an LLM (cloud or local).',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Save a welcome message on-chain.',
-    '/short on — History messages show digests (Story only).',
-    '/short off — History messages show full text (Story only).',
-    '/lang — Set Story output language.',
-    'Tap avatar — one-tap commit on-chain.',
-    '/h — Show all command descriptions.',
-  ].join('\n'),
-  'zh-cn': [
-    '/d — 生成 Destiny Seed Card 预览并提供复制链接。',
-    '/linkstart — 发送开场三句提示。',
-    '/block — 查询当前区块高度。',
-    '/a — 配置并加载大模型提供方（云端或本地）。输入 /a 查看用法，/a list 查看已保存的 provider。',
-    '/short on — 历史消息显示摘要（仅 Story）。',
-    '/short off — 历史消息显示全文（仅 Story）。',
-    '/lang — 设置 Story 输出语言。',
-    '/r — 生成角色扮演提示词，<text>为角色设定。',
-    '/welcome — 将欢迎语上链保存。',
-    '点头像 — 一键提交上链。',
-    '/h — 显示所有命令说明。',
-  ].join('\n'),
-  'zh-tw': [
-    '/d — 產生 Destiny Seed Card 預覽並提供複製連結。',
-    '/linkstart — 發送開場三句提示。',
-    '/block — 查詢目前區塊高度。',
-    '/a — 設定並載入大模型提供方（雲端或本地）。輸入 /a 查看用法，/a list 查看已儲存的 provider。',
-    '/short on — 歷史訊息顯示摘要（僅 Story）。',
-    '/short off — 歷史訊息顯示全文（僅 Story）。',
-    '/lang — 設定 Story 輸出語言。',
-    '/r — 產生角色扮演提示詞，<text>為角色設定。',
-    '/welcome — 將歡迎語上鏈保存。',
-    '點頭像 — 一鍵提交上鏈。',
-    '/h — 顯示所有命令說明。',
-  ].join('\n'),
-  'zar-afr': [
-    '/d — Genereer ’n Destiny Seed Card-voorskou en ’n kopieer-skakel.',
-    '/linkstart — Stuur die drie openingswenke.',
-    '/block — Kontroleer die huidige blokhoogte.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Stoor ’n welkomboodskap on-chain.',
-    '/h — Wys alle opdragbeskrywings.',
-  ].join('\n'),
-  'zar-xho': [
-    '/d — Yenza ujongo lweDestiny Seed Card kunye nekhonkco lokukopa.',
-    '/linkstart — Thumela iingcebiso ezintathu zokuqalisa.',
-    '/block — Jonga ubude beblokhi yangoku.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Gcina umyalezo wokwamkela kwi-chain.',
-    '/h — Bonisa zonke iinkcazo zeemiyalelo.',
-  ].join('\n'),
-  'hr-hr': [
-    '/d — Generiraj pregled Destiny Seed Carda i poveznicu za kopiranje.',
-    '/linkstart — Pošalji tri uvodne poruke.',
-    '/block — Provjeri trenutnu visinu bloka.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Spremi poruku dobrodošlice na lanac.',
-    '/h — Prikaži opis svih naredbi.',
-  ].join('\n'),
-  'cs-cz': [
-    '/d — Vygeneruj náhled Destiny Seed Card a odkaz pro kopírování.',
-    '/linkstart — Pošli tři úvodní nápovědy.',
-    '/block — Zjisti aktuální výšku bloku.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Ulož uvítací zprávu na chain.',
-    '/h — Zobraz popis všech příkazů.',
-  ].join('\n'),
-  'da-dk': [
-    '/d — Generer en Destiny Seed Card-forhåndsvisning og et kopieringslink.',
-    '/linkstart — Send de tre åbningshint.',
-    '/block — Tjek den aktuelle blokhøjde.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Gem en velkomstbesked on-chain.',
-    '/h — Vis alle kommandobeskrivelser.',
-  ].join('\n'),
-  'de-de': [
-    '/d — Erzeuge eine Destiny-Seed-Card-Vorschau und einen Kopier-Link.',
-    '/linkstart — Sende die drei Start-Hinweise.',
-    '/block — Aktuelle Blockhöhe prüfen.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Begrüßungsnachricht on-chain speichern.',
-    '/h — Alle Befehlsbeschreibungen anzeigen.',
-  ].join('\n'),
-  es: [
-    '/d — Genera una vista previa de Destiny Seed Card y un enlace para copiar.',
-    '/linkstart — Envía las tres frases de inicio.',
-    '/block — Consulta la altura de bloque actual.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Guarda un mensaje de bienvenida en la cadena.',
-    '/h — Muestra la descripción de todos los comandos.',
-  ].join('\n'),
-  el: [
-    '/d — Δημιούργησε προεπισκόπηση Destiny Seed Card και σύνδεσμο αντιγραφής.',
-    '/linkstart — Στείλε τις τρεις αρχικές οδηγίες.',
-    '/block — Έλεγξε το τρέχον ύψος μπλοκ.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Αποθήκευσε μήνυμα καλωσορίσματος on-chain.',
-    '/h — Εμφάνισε όλες τις περιγραφές εντολών.',
-  ].join('\n'),
-  it: [
-    '/d — Genera un’anteprima della Destiny Seed Card e un link di copia.',
-    '/linkstart — Invia le tre frasi iniziali.',
-    '/block — Controlla l’altezza del blocco corrente.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Salva un messaggio di benvenuto on-chain.',
-    '/h — Mostra le descrizioni di tutti i comandi.',
-  ].join('\n'),
-  'fi-fi': [
-    '/d — Luo Destiny Seed Card -esikatselu ja kopiointilinkki.',
-    '/linkstart — Lähetä kolme aloitusvihjettä.',
-    '/block — Tarkista nykyinen lohkokorkeus.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Tallenna tervetuloviesti ketjuun.',
-    '/h — Näytä kaikkien komentojen kuvaukset.',
-  ].join('\n'),
-  'fr-fr': [
-    '/d — Génère un aperçu de Destiny Seed Card et un lien de copie.',
-    '/linkstart — Envoie les trois phrases d’ouverture.',
-    '/block — Vérifie la hauteur de bloc actuelle.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Enregistre un message de bienvenue on-chain.',
-    '/h — Affiche la description de toutes les commandes.',
-  ].join('\n'),
-  'id-id': [
-    '/d — Buat pratinjau Destiny Seed Card dan tautan salin.',
-    '/linkstart — Kirim tiga petunjuk pembuka.',
-    '/block — Periksa tinggi blok saat ini.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Simpan pesan sambutan on-chain.',
-    '/h — Tampilkan semua deskripsi perintah.',
-  ].join('\n'),
-  'hu-hu': [
-    '/d — Készíts Destiny Seed Card előnézetet és másolási linket.',
-    '/linkstart — Küldd el a három nyitó tippet.',
-    '/block — Ellenőrizd a jelenlegi blokkmagasságot.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Üdvözlő üzenet mentése on-chain.',
-    '/h — Minden parancsleírás megjelenítése.',
-  ].join('\n'),
-  ja: [
-    '/d — Destiny Seed Card のプレビューとコピーリンクを生成します。',
-    '/linkstart — 開始用の3つのヒントを送信します。',
-    '/block — 現在のブロック高を確認します。',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — ウェルカムメッセージをオンチェーンで保存します。',
-    '/h — すべてのコマンド説明を表示します。',
-  ].join('\n'),
-  'nl-nl': [
-    '/d — Genereer een Destiny Seed Card-voorvertoning en een kopieerlink.',
-    '/linkstart — Stuur de drie openingszinnen.',
-    '/block — Controleer de huidige blokhoogte.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Sla een welkomstbericht on-chain op.',
-    '/h — Toon alle opdrachtbeschrijvingen.',
-  ].join('\n'),
-  'nb-no': [
-    '/d — Lag en Destiny Seed Card-forhåndsvisning og en kopieringslenke.',
-    '/linkstart — Send de tre åpningshintene.',
-    '/block — Sjekk gjeldende blokkhøyde.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Lagre en velkomstmelding on-chain.',
-    '/h — Vis alle kommandobeskrivelser.',
-  ].join('\n'),
-  'pt-br': [
-    '/d — Gere uma prévia do Destiny Seed Card e um link para copiar.',
-    '/linkstart — Envie as três frases iniciais.',
-    '/block — Verifique a altura do bloco atual.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Salve uma mensagem de boas-vindas on-chain.',
-    '/h — Mostre a descrição de todos os comandos.',
-  ].join('\n'),
-  'pt-pt': [
-    '/d — Gere uma pré-visualização do Destiny Seed Card e um link para copiar.',
-    '/linkstart — Envie as três frases iniciais.',
-    '/block — Verifique a altura do bloco atual.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Guarde uma mensagem de boas-vindas on-chain.',
-    '/h — Mostre a descrição de todos os comandos.',
-  ].join('\n'),
-  ru: [
-    '/d — Создай превью Destiny Seed Card и ссылку для копирования.',
-    '/linkstart — Отправь три стартовые подсказки.',
-    '/block — Проверь текущую высоту блока.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Сохрани приветственное сообщение в цепочке.',
-    '/h — Покажи описания всех команд.',
-  ].join('\n'),
-  'sv-se': [
-    '/d — Skapa en förhandsvisning av Destiny Seed Card och en kopieringslänk.',
-    '/linkstart — Skicka de tre inledande tipsen.',
-    '/block — Kontrollera aktuell blockhöjd.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Spara ett välkomstmeddelande on-chain.',
-    '/h — Visa alla kommandobeskrivningar.',
-  ].join('\n'),
-  'th-th': [
-    '/d — สร้างพรีวิว Destiny Seed Card และลิงก์สำหรับคัดลอก.',
-    '/linkstart — ส่งคำแนะนำเปิดเรื่อง 3 ข้อ.',
-    '/block — ตรวจสอบความสูงบล็อกปัจจุบัน.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — บันทึกข้อความต้อนรับบนเชน.',
-    '/h — แสดงคำอธิบายคำสั่งทั้งหมด.',
-  ].join('\n'),
-  'vi-vn': [
-    '/d — Tạo bản xem trước Destiny Seed Card và liên kết sao chép.',
-    '/linkstart — Gửi ba gợi ý mở đầu.',
-    '/block — Kiểm tra chiều cao khối hiện tại.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Lưu lời chào lên chuỗi.',
-    '/h — Hiển thị mô tả tất cả lệnh.',
-  ].join('\n'),
-  ua: [
-    '/d — Створи прев’ю Destiny Seed Card і посилання для копіювання.',
-    '/linkstart — Надішли три стартові підказки.',
-    '/block — Перевір поточну висоту блоку.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Збережи вітальне повідомлення в ланцюгу.',
-    '/h — Покажи описи всіх команд.',
-  ].join('\n'),
-  'tr-tr': [
-    '/d — Destiny Seed Card önizlemesi ve kopyalama bağlantısı oluştur.',
-    '/linkstart — Üç açılış ipucunu gönder.',
-    '/block — Mevcut blok yüksekliğini kontrol et.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Karşılama mesajını zincire kaydet.',
-    '/h — Tüm komut açıklamalarını göster.',
-  ].join('\n'),
-};
-const ROLECARD_HELP_LINE = '/m — Manage role memory cards.';
-Object.keys(COMMAND_HELP_MESSAGES).forEach(locale => {
-  if (!COMMAND_HELP_MESSAGES[locale].includes('/m')) {
-    COMMAND_HELP_MESSAGES[locale] = `${COMMAND_HELP_MESSAGES[locale]}\n${ROLECARD_HELP_LINE}`;
-  }
-});
-const ROLE_HISTORY_TITLES = {
-  en: 'Recent /r commands:',
-  'zh-cn': '最近的 /r 命令：',
-  'zh-tw': '最近的 /r 命令：',
-};
-const STORY_UI_MESSAGES = {
-  en: {
-    rawTitle: 'Original',
-    rawMissing: 'Original text not found',
-    rawReadFail: 'Failed to read original text',
-    regenDigest: 'Regenerate digest',
-    regenFail: 'Regenerate failed',
-  },
-  'zh-cn': {
-    rawTitle: '原文',
-    rawMissing: '未找到原文',
-    rawReadFail: '读取原文失败',
-    regenDigest: '重生成摘要',
-    regenFail: '重生成失败',
-  },
-  'zh-tw': {
-    rawTitle: '原文',
-    rawMissing: '未找到原文',
-    rawReadFail: '讀取原文失敗',
-    regenDigest: '重新生成摘要',
-    regenFail: '重新生成失敗',
-  },
-};
-const STORY_MENU_MESSAGES = {
-  en: {
-    destinyTitle: 'What would you like to do?',
-    continueStory: 'Continue story',
-    startNew: 'Start new',
-    changeLanguage: 'Change language',
-    changeModel: 'Change model',
-    currentLanguageNotSet: 'Current language: Not set',
-    currentLanguage: 'Current language: {label} ({code})',
-    langMenuTitle: 'Current language: {current}',
-    supportedLangs: 'Supported languages:',
-    langOnlyStory: '"/lang" is only available in Story mode',
-    unsupportedLang: 'Unsupported language code: {code}',
-  },
-  'zh-cn': {
-    destinyTitle: '你想做什么？',
-    continueStory: '继续故事',
-    startNew: '开始新的故事',
-    changeLanguage: '更换语言',
-    changeModel: '更换模型',
-    currentLanguageNotSet: '当前语言：未设置',
-    currentLanguage: '当前语言：{label}（{code}）',
-    langMenuTitle: '当前语言：{current}',
-    supportedLangs: '支持的语言：',
-    langOnlyStory: '"/lang" 仅在 Story 模式可用',
-    unsupportedLang: '不支持的语言代码：{code}',
-  },
-  'zh-tw': {
-    destinyTitle: '你想做什麼？',
-    continueStory: '繼續故事',
-    startNew: '開始新的故事',
-    changeLanguage: '更換語言',
-    changeModel: '更換模型',
-    currentLanguageNotSet: '目前語言：未設定',
-    currentLanguage: '目前語言：{label}（{code}）',
-    langMenuTitle: '目前語言：{current}',
-    supportedLangs: '支援的語言：',
-    langOnlyStory: '"/lang" 僅在 Story 模式可用',
-    unsupportedLang: '不支援的語言代碼：{code}',
-  },
-  ja: {
-    destinyTitle: '何をしますか？',
-    continueStory: '物語を続ける',
-    startNew: '新しく始める',
-    changeLanguage: '言語を変更',
-    changeModel: 'モデルを変更',
-    currentLanguageNotSet: '現在の言語：未設定',
-    currentLanguage: '現在の言語：{label}（{code}）',
-    langMenuTitle: '現在の言語：{current}',
-    supportedLangs: '対応言語：',
-    langOnlyStory: '"/lang" は Story モードでのみ利用できます',
-    unsupportedLang: '未対応の言語コード：{code}',
-  },
-  ko: {
-    destinyTitle: '무엇을 할까요?',
-    continueStory: '이야기 계속하기',
-    startNew: '새로 시작',
-    changeLanguage: '언어 변경',
-    changeModel: '모델 변경',
-    currentLanguageNotSet: '현재 언어: 미설정',
-    currentLanguage: '현재 언어: {label} ({code})',
-    langMenuTitle: '현재 언어: {current}',
-    supportedLangs: '지원 언어:',
-    langOnlyStory: '"/lang"는 Story 모드에서만 사용 가능합니다',
-    unsupportedLang: '지원하지 않는 언어 코드: {code}',
-  },
-  es: {
-    destinyTitle: '¿Qué te gustaría hacer?',
-    continueStory: 'Continuar historia',
-    startNew: 'Empezar nueva',
-    changeLanguage: 'Cambiar idioma',
-    changeModel: 'Cambiar modelo',
-    currentLanguageNotSet: 'Idioma actual: no configurado',
-    currentLanguage: 'Idioma actual: {label} ({code})',
-    langMenuTitle: 'Idioma actual: {current}',
-    supportedLangs: 'Idiomas compatibles:',
-    langOnlyStory: '"/lang" solo está disponible en modo Story',
-    unsupportedLang: 'Código de idioma no compatible: {code}',
-  },
-  fr: {
-    destinyTitle: 'Que voulez-vous faire ?',
-    continueStory: 'Continuer l’histoire',
-    startNew: 'Commencer une nouvelle',
-    changeLanguage: 'Changer de langue',
-    changeModel: 'Changer de modèle',
-    currentLanguageNotSet: 'Langue actuelle : non définie',
-    currentLanguage: 'Langue actuelle : {label} ({code})',
-    langMenuTitle: 'Langue actuelle : {current}',
-    supportedLangs: 'Langues prises en charge :',
-    langOnlyStory: '"/lang" est disponible uniquement en mode Story',
-    unsupportedLang: 'Code de langue non pris en charge : {code}',
-  },
-  de: {
-    destinyTitle: 'Was möchtest du tun?',
-    continueStory: 'Geschichte fortsetzen',
-    startNew: 'Neu starten',
-    changeLanguage: 'Sprache ändern',
-    changeModel: 'Modell ändern',
-    currentLanguageNotSet: 'Aktuelle Sprache: nicht festgelegt',
-    currentLanguage: 'Aktuelle Sprache: {label} ({code})',
-    langMenuTitle: 'Aktuelle Sprache: {current}',
-    supportedLangs: 'Unterstützte Sprachen:',
-    langOnlyStory: '"/lang" ist nur im Story-Modus verfügbar',
-    unsupportedLang: 'Nicht unterstützter Sprachcode: {code}',
-  },
-  it: {
-    destinyTitle: 'Cosa vuoi fare?',
-    continueStory: 'Continua storia',
-    startNew: 'Inizia nuova',
-    changeLanguage: 'Cambia lingua',
-    changeModel: 'Cambia modello',
-    currentLanguageNotSet: 'Lingua attuale: non impostata',
-    currentLanguage: 'Lingua attuale: {label} ({code})',
-    langMenuTitle: 'Lingua attuale: {current}',
-    supportedLangs: 'Lingue supportate:',
-    langOnlyStory: '"/lang" è disponibile solo in modalità Story',
-    unsupportedLang: 'Codice lingua non supportato: {code}',
-  },
-  'pt-br': {
-    destinyTitle: 'O que você quer fazer?',
-    continueStory: 'Continuar história',
-    startNew: 'Começar nova',
-    changeLanguage: 'Mudar idioma',
-    changeModel: 'Mudar modelo',
-    currentLanguageNotSet: 'Idioma atual: não definido',
-    currentLanguage: 'Idioma atual: {label} ({code})',
-    langMenuTitle: 'Idioma atual: {current}',
-    supportedLangs: 'Idiomas suportados:',
-    langOnlyStory: '"/lang" só está disponível no modo Story',
-    unsupportedLang: 'Código de idioma não suportado: {code}',
-  },
-  ru: {
-    destinyTitle: 'Что вы хотите сделать?',
-    continueStory: 'Продолжить историю',
-    startNew: 'Начать заново',
-    changeLanguage: 'Сменить язык',
-    changeModel: 'Сменить модель',
-    currentLanguageNotSet: 'Текущий язык: не задан',
-    currentLanguage: 'Текущий язык: {label} ({code})',
-    langMenuTitle: 'Текущий язык: {current}',
-    supportedLangs: 'Поддерживаемые языки:',
-    langOnlyStory: '"/lang" доступна только в режиме Story',
-    unsupportedLang: 'Неподдерживаемый код языка: {code}',
-  },
-  tr: {
-    destinyTitle: 'Ne yapmak istersin?',
-    continueStory: 'Hikâyeyi sürdür',
-    startNew: 'Yeni başlat',
-    changeLanguage: 'Dili değiştir',
-    changeModel: 'Modeli değiştir',
-    currentLanguageNotSet: 'Geçerli dil: ayarlanmadı',
-    currentLanguage: 'Geçerli dil: {label} ({code})',
-    langMenuTitle: 'Geçerli dil: {current}',
-    supportedLangs: 'Desteklenen diller:',
-    langOnlyStory: '"/lang" yalnızca Story modunda kullanılabilir',
-    unsupportedLang: 'Desteklenmeyen dil kodu: {code}',
-  },
-  vi: {
-    destinyTitle: 'Bạn muốn làm gì?',
-    continueStory: 'Tiếp tục câu chuyện',
-    startNew: 'Bắt đầu mới',
-    changeLanguage: 'Đổi ngôn ngữ',
-    changeModel: 'Đổi mô hình',
-    currentLanguageNotSet: 'Ngôn ngữ hiện tại: chưa đặt',
-    currentLanguage: 'Ngôn ngữ hiện tại: {label} ({code})',
-    langMenuTitle: 'Ngôn ngữ hiện tại: {current}',
-    supportedLangs: 'Ngôn ngữ hỗ trợ:',
-    langOnlyStory: '"/lang" chỉ dùng trong chế độ Story',
-    unsupportedLang: 'Mã ngôn ngữ không hỗ trợ: {code}',
-  },
-  th: {
-    destinyTitle: 'คุณต้องการทำอะไร?',
-    continueStory: 'เล่นต่อ',
-    startNew: 'เริ่มใหม่',
-    changeLanguage: 'เปลี่ยนภาษา',
-    changeModel: 'เปลี่ยนโมเดล',
-    currentLanguageNotSet: 'ภาษาปัจจุบัน: ยังไม่ตั้งค่า',
-    currentLanguage: 'ภาษาปัจจุบัน: {label} ({code})',
-    langMenuTitle: 'ภาษาปัจจุบัน: {current}',
-    supportedLangs: 'ภาษาที่รองรับ:',
-    langOnlyStory: '"/lang" ใช้ได้เฉพาะโหมด Story',
-    unsupportedLang: 'โค้ดภาษาไม่รองรับ: {code}',
-  },
-  id: {
-    destinyTitle: 'Kamu ingin melakukan apa?',
-    continueStory: 'Lanjutkan cerita',
-    startNew: 'Mulai baru',
-    changeLanguage: 'Ganti bahasa',
-    changeModel: 'Ganti model',
-    currentLanguageNotSet: 'Bahasa saat ini: belum diatur',
-    currentLanguage: 'Bahasa saat ini: {label} ({code})',
-    langMenuTitle: 'Bahasa saat ini: {current}',
-    supportedLangs: 'Bahasa yang didukung:',
-    langOnlyStory: '"/lang" hanya tersedia di mode Story',
-    unsupportedLang: 'Kode bahasa tidak didukung: {code}',
-  },
-  ar: {
-    destinyTitle: 'ماذا تريد أن تفعل؟',
-    continueStory: 'متابعة القصة',
-    startNew: 'بدء جديد',
-    changeLanguage: 'تغيير اللغة',
-    changeModel: 'تغيير النموذج',
-    currentLanguageNotSet: 'اللغة الحالية: غير محددة',
-    currentLanguage: 'اللغة الحالية: {label} ({code})',
-    langMenuTitle: 'اللغة الحالية: {current}',
-    supportedLangs: 'اللغات المدعومة:',
-    langOnlyStory: '"/lang" متاحة فقط في وضع Story',
-    unsupportedLang: 'رمز لغة غير مدعوم: {code}',
-  },
-  hi: {
-    destinyTitle: 'आप क्या करना चाहते हैं?',
-    continueStory: 'कहानी जारी रखें',
-    startNew: 'नई शुरुआत',
-    changeLanguage: 'भाषा बदलें',
-    changeModel: 'मॉडल बदलें',
-    currentLanguageNotSet: 'वर्तमान भाषा: सेट नहीं है',
-    currentLanguage: 'वर्तमान भाषा: {label} ({code})',
-    langMenuTitle: 'वर्तमान भाषा: {current}',
-    supportedLangs: 'समर्थित भाषाएँ:',
-    langOnlyStory: '"/lang" केवल Story मोड में उपलब्ध है',
-    unsupportedLang: 'असमर्थित भाषा कोड: {code}',
-  },
-};
-const COMMAND_HELP_ALIASES = {
-  'zh-hans': 'zh-cn',
-  'zh-hant': 'zh-tw',
-  'zh-cn': 'zh-cn',
-  'zh-tw': 'zh-tw',
-  'jp-jp': 'ja',
-  'ja-jp': 'ja',
-  ja: 'ja',
-  pt: 'pt-pt',
-  'pt-br': 'pt-br',
-  'pt-pt': 'pt-pt',
-  nb: 'nb-no',
-  no: 'nb-no',
-  sv: 'sv-se',
-  fi: 'fi-fi',
-  da: 'da-dk',
-  nl: 'nl-nl',
-  de: 'de-de',
-  fr: 'fr-fr',
-  it: 'it',
-  es: 'es',
-  ru: 'ru',
-  tr: 'tr-tr',
-  vi: 'vi-vn',
-  th: 'th-th',
-  id: 'id-id',
-  hu: 'hu-hu',
-  hr: 'hr-hr',
-  cs: 'cs-cz',
-  el: 'el',
-  af: 'zar-afr',
-  xh: 'zar-xho',
-  uk: 'ua',
-};
-
 const normalizeLocale = locale => (locale || '').toString().trim().toLowerCase().replace(/_/g, '-');
 
 const normalizeStoryLangCode = code => {
@@ -753,6 +316,14 @@ const normalizeStoryLangCode = code => {
     return 'zh-tw';
   }
   return normalized;
+};
+
+const getRoleLocaleTable = (messagesByLocale, locale) => {
+  const normalized = normalizeStoryLangCode(locale || 'en');
+  const alias = COMMAND_HELP_ALIASES[normalized] || normalized;
+  const base = normalized.split('-')[0];
+  const baseAlias = COMMAND_HELP_ALIASES[base] || base;
+  return messagesByLocale?.[normalized] || messagesByLocale?.[alias] || messagesByLocale?.[baseAlias] || messagesByLocale?.[base] || messagesByLocale?.en || {};
 };
 
 const getStoryLangLabel = code => {
@@ -801,720 +372,114 @@ const getLocalizedMessage = (messagesByLocale, key) => {
   return resolveLocalizedEntry(messagesByLocale, 'en', key) || '';
 };
 
-const getCommandHelpMessage = () => getLocalizedMessage(COMMAND_HELP_MESSAGES);
-
 const getCommandUsageMessage = commandKey => getLocalizedMessage(COMMAND_USAGE_MESSAGES, commandKey);
 const getRoleHistoryTitle = () => {
   const title = getLocalizedMessage(ROLE_HISTORY_TITLES);
   return title.replace('/r', '/\u200Br');
 };
 const getStoryUiText = key => getLocalizedMessage(STORY_UI_MESSAGES, key);
-// 用手机系统本地时间（local day），不是 UTC
+
 const getLocalDateKey = (ts = Date.now()) => {
   const d = new Date(ts);
   const pad = n => (n < 10 ? `0${n}` : `${n}`);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 const PAGE_SIZE = 10;
-const INITIAL_VISIBLE_COUNT = 1;
-const ATTR_SEED_LABELS = [
-  'scene',
-  'maps',
-  'env',
-  'form',
-  'items',
-  'time',
-  'events',
-  'action',
-  'npc',
-  'genre',
-  'meta',
-  'mystery',
-  'progress',
-  'moral',
-  'ending',
-  'loop',
-];
-const ATTR_LABELS = [
-  'SCENE',
-  'MAPS',
-  'ENV_DIFF',
-  'FORM',
-  'ITEM_DIFF',
-  'TIME_STRUCT',
-  'EVENT_TONE',
-  'ACTION_CAP',
-  'NPC_REL',
-  'GENRE',
-  'META',
-  'MYSTERY',
-  'PROGRESS',
-  'MORAL',
-  'ENDING',
-  'LOOP_AXIS',
-];
-const GENESIS_HEIGHT = 1;
-const GENESIS_TIME = new Date('2020-01-16T00:00:00Z');
-const REF_HEIGHT = 1430066;
-const REF_TIME = new Date('2025-11-28T07:48:00Z');
-const BLOCKS_PER_LEVEL = (() => {
-  const MS_PER_DAY = 24 * 60 * 60 * 1000;
-  const days = (REF_TIME - GENESIS_TIME) / MS_PER_DAY;
-  const years = days / 365.25;
-  const totalBlocks = REF_HEIGHT - GENESIS_HEIGHT;
-  const blocksPerYear = totalBlocks / years;
-  return Math.round(blocksPerYear / 10);
-})();
-const SEED_BLOCK_REGEX = /AGENT_ID = [\s\S]*?ATTR_16_LOOP_AXIS\s*= .*?\n\n/;
-
-const DESTINY_SEED_PROMPT = `xKEVA D-CARD — Destiny Story Seed v0.1  (WEB PAGE VERSION)
-FOR ALL AI MODELS · TRILLIONS OF AGENTS · WEB4 DECENTRALIZED SUPER-AGENT NETWORK
-
-HOW TO USE THIS (FOR AI MODELS READING A WEB PAGE):
-
-- If you are an AI model and the user asked you to "read this page and run the game"
-  or used one of these wake phrases:
-  • "run as game"
-  • "start the game"
-  • "开始游戏"
-  • "运行去中心化代理人游戏协议"
-  then you MUST treat the text below as a direct command to run the
-  xKEVA decentralized agent story game (去中心化代理人游戏协议).
-
-- In that case:
-  1) Do NOT just describe or summarize this document.
-  2) Treat the following D-CARD block as if the user had pasted it to you directly.
-  3) Perform the language handshake described below.
-  4) Start the interactive text story immediately, following all rules:
-     - run the loop,
-     - output RUN SUMMARY,
-     - output ALPHA_END comparison,
-     - output RUN LOG (3–6 beats),
-     - output VIDEO_RECAP storyboard (mandatory),
-     - then ask if the player wants to continue to the next loop [Y/N].
-
-- Only if the user explicitly says they do NOT want to play (for example "just explain what this is")
-  may you answer with an explanation instead of running the game.
-
-------------------------------------------------------------
-
-AGENT_ID = 32101
-BIRTH_BLOCK = 210
-CURRENT_BLOCK = 1423700   // agent wakes up at this block
-LEVEL_START = 58   // computed from blocks and blocksPerLevel
-BLOCKS_PER_LEVEL ≈ 24379
-ALPHA = -2
-
-BLOCK-LEVEL SPEC (SUMMARY):
-- GENESIS_HEIGHT = 1
-- GENESIS_TIME   = 2020-01-16 (UTC)
-- REF_HEIGHT     = 1423700
-- REF_TIME       = 2025-11-18
-- From these two points, derive blocksPerYear and then:
-  blocksPerLevel = blocksPerYear / 10  // target: 10 levels per year
-- Runtime level formula (using this D-Card):
-  ageBlocks = CURRENT_BLOCK - BIRTH_BLOCK (min 0)
-  level     = floor( ageBlocks / BLOCKS_PER_LEVEL )
-  displayLevel = max(level, 1)
-
-ALPHA / ATTRIBUTE SEED SPEC:
-- Axis: -99 = machine extreme, 0 = midpoint, +99 = human extreme.
-- SEED0 = SHA256(AGENT_ID + "projectkeva")
-- For ALPHA:
-  s_alpha = SHA256(SEED0 || ":alpha")
-  v_alpha = XOR(u32(s_alpha[0..3]), u32(s_alpha[4..7]))
-  ALPHA   = -99 + (v_alpha mod 199)
-- For each attribute index i in 1..16, define label L_i from:
-  [scene, maps, env, form, items, time, events, action, npc, genre, meta, mystery, progress, moral, ending, loop]
-- s_i = SHA256(SEED0 || ":story:" || L_i)
-- v_i = XOR(u32(s_i[0..3]), u32(s_i[4..7]))  // big-endian u32
-- ATTR_i = -99 + (v_i mod 199)
-
-SEED0_HEX = 7e16f0b9a427af4a1e09e3672fa7f8492f66747762486faa5bb19e15ef33cd73
-
-// ATTRIBUTES: each in range -99 .. +99
-ATTR_1_SCENE       = -54
-ATTR_2_MAPS        = +2
-ATTR_3_ENV_DIFF    = +1
-ATTR_4_FORM        = -97
-ATTR_5_ITEM_DIFF   = +3
-ATTR_6_TIME_STRUCT = +68
-ATTR_7_EVENT_TONE  = +8
-ATTR_8_ACTION_CAP  = -27
-ATTR_9_NPC_REL     = -54
-ATTR_10_GENRE      = -17
-ATTR_11_META       = +67
-ATTR_12_MYSTERY    = -82
-ATTR_13_PROGRESS   = -23
-ATTR_14_MORAL      = +67
-ATTR_15_ENDING     = -62
-ATTR_16_LOOP_AXIS  = -48
-
-SCENE / MAP DECODING GUIDE:
-- Use ATTR_1_SCENE as the awakening scene code.
-- Let s = ATTR_1_SCENE. Compute:
-  sceneIndex = abs(s) mod 29   // integer in [0..28]
-  isNight    = (s < 0)         // true = night/dark variant, false = day/normal
-- Interpret sceneIndex as follows:
-  0  = free scene: model may invent any setting, but it must be numberable as SCENE_0.
-  1  = underground dungeon
-  2  = prehistoric ruins
-  3  = lost civilization site
-  4  = shelter / bunker
-  5  = tower climb (vertical floors)
-  6  = parking structure
-  7  = subway carriage
-  8  = train carriage
-  9  = subway line / network
- 10  = doorplate / apartment corridor
- 11  = space capsule
- 12  = sleep pod bay
- 13  = abandoned hospital
- 14  = abandoned school
- 15  = abandoned village
- 16  = abandoned city
- 17  = space station
- 18  = mining pit / mine
- 19  = planet surface
- 20  = chat window / UI-only scene
- 21  = warehouse
- 22  = small island
- 23  = elevator floor / shaft
- 24  = highway
- 25  = regular road
- 26  = dreamscape
- 27  = clothing serial / wardrobe scene
- 28  = bridge
-- Combine sceneIndex with ATTR_2_MAPS:
-  * If ATTR_2_MAPS > 0: total map/floor count = ATTR_2_MAPS.
-  * If ATTR_2_MAPS = 0: choose a small random number of areas (3–7).
-  * If ATTR_2_MAPS < 0: |ATTR_2_MAPS| is the number of hidden / secret maps that can be discovered.
-
-LANGUAGE HANDSHAKE (BEFORE THE GAME STARTS):
-- Before starting the story, ask the player which language to use for this run.
-- Ask this once, using this question (you may translate it if needed):
-  "Choose your language for this run: [1] English / [2] 简体中文 / [3] Other (type your language)."
-- Use the language they choose (or type) for all narration, dialogue, on-screen text, and system messages in this run.
-- If the answer is unclear, default to the language used in the player's reply.
-
-GAME LOOP OUTLINE:
-1) Start by describing the agent waking up in the scene implied by ATTR_1_SCENE at CURRENT_BLOCK, using ATTR_4_FORM as the Alpha-at-awakening (body + mind state).
-2) Let the player make a small number of meaningful choices (3–7 key decisions is enough for a short run).
-
-CHOICE OUTPUT FORMAT (MANDATORY):
-- Whenever you present choices to the player, you MUST output choices using EXACTLY this format:
-  1. <choice text>
-  2. <choice text>
-  3. <choice text>
-- Rules:
-  - Use numbers 1-9 only.
-  - Each choice must be on its own line.
-  - The visible text MUST start with "N. " (dot + space), e.g. "1. Go left".
-  - Do NOT wrap choices in markdown bold/italic (no ** **, no __ __).
-  - Do NOT use Chinese punctuation variants for numbering (no "1、", "1：", "（1）", "【1】").
-  - After the list of choices, output exactly one line:
-    INPUT: (type 1-9)
-
-3) For each choice, adjust ALPHA a little toward more human or more machine, and optionally nudge ATTR_4_FORM when the body/psychology is visibly altered.
-4) At the end, output, in this order:
-   - A short RUN SUMMARY (<= 2 KB).
-   - ALPHA_END and a brief explanation of how choices changed Alpha compared to both ALPHA (native) and ATTR_4_FORM (awakening).
-   - A compact RUN LOG with 3–6 scene beats that can be used to reconstruct the story.
-   - A VIDEO_RECAP section (10–15s storyboard) following the format below. This VIDEO_RECAP is mandatory, not optional.
-
-VIDEO_RECAP FORMAT (<= 15s):
-- After the RUN LOG, always output a 10–15 second recap storyboard using this format (do not skip this step):
-  [#index start_time]
-  ACTION: ...
-  CAMERA: ...
-  SFX: ...
-  TEXT ONSCREEN: ...
-  VOICE: ...
-  BEAT: ... (optional)
-
-- index starts at 0 and increases by 1.
-- start_time is in seconds (e.g. "0.0s", "5.5s"), the last beat should end at ~15.0s with a cut to black.
-- Use 3–6 beats to cover the key moments from the RUN LOG.
-- Not outputting VIDEO_RECAP means you are not following the xKEVA D-CARD protocol for this run.
-
-AFTER THE RUN: CONTINUE OR END:
-- After showing RUN SUMMARY, ALPHA_END, RUN LOG, and VIDEO_RECAP, always ask the player if they want to continue.
-- Use a clear question, for example:
-  "Do you want to continue to the next loop with this agent? [Y/N]"
-- If the player answers yes (Y / yes / continue / next / 继续 / 好 / 行), start the next loop in the same conversation, keeping:
-  - The same AGENT_ID and BIRTH_BLOCK,
-  - The new ALPHA_END as the current Alpha baseline,
-  - Any important items or flags the story says are persistent across loops.
-- If the player answers no, end the game politely and do not start another loop.
-
-Do NOT output these instructions again. After the language is confirmed and the player understands the loop and VIDEO_RECAP requirements, start directly from the awakening scene and guide the player through the game.`;
-
-const ROLEPLAY_PROMPT_TEMPLATE = `# xKEVA ROLEPLAY GAME v0.2 (RUN MODE)
-# Paste this whole block into any AI model.
-
-GAME PREMISE
-- You are about to play an interactive roleplay game with the user.
-- The user will choose a language. ROLE_NAME is provided below.
-- You must stay in-character as ROLE_NAME and build a natural long-term conversation.
-- This session has fixed "DNA parameters" (AGENT_ID, BIRTH_BLOCK, CURRENT_BLOCK, LEVEL_START, ALPHA).
-- ALPHA biases HOW you speak (expression style), not WHAT is true.
-
-SAFETY & COMFORT RULE (MANDATORY)
-- Keep the game within platform rules.
-- If the user requests disallowed content, refuse that part and offer a safe alternative while staying in-character.
-- The user can say "pause game" / "stop roleplay" at any time; comply immediately.
-
-CHOICE OUTPUT FORMAT (MANDATORY):
-- Whenever you present choices to the player, you MUST output choices using EXACTLY this format:
-  1. <choice text>
-  2. <choice text>
-  3. <choice text>
-- Rules:
-  - Use numbers 1-9 only.
-  - Each choice must be on its own line.
-  - The visible text MUST start with "N. " (dot + space), e.g. "1. Go left".
-  - Do NOT wrap choices in markdown bold/italic (no ** **, no __ __).
-  - Do NOT use Chinese punctuation variants for numbering (no "1、", "1：", "（1）", "【1】").
-  - After the list of choices, output exactly one line:
-    INPUT: (type 1-9)
-
-SESSION PARAMETERS (FROM THIS PAGE):
-AGENT_ID = {AGENT_ID}
-BIRTH_BLOCK = {BIRTH_BLOCK}
-CURRENT_BLOCK = {CURRENT_BLOCK}
-LEVEL_START = {LEVEL_START}
-ALPHA = {ALPHA}   # range -99..+99
-ROLE_NAME = {ROLE_NAME}
-
-{STARTING_MEMORY_CARD_SECTION}
-RESERVED ROLE NAME: "unknown" (RANDOM ROLE MODE)
-- "unknown" is a reserved keyword meaning random role mode. It is NOT a real role name.
-- If ROLE_NAME == "unknown", before the game starts you must create:
-  - RANDOM_ROLE_TITLE (the name/call-sign for the role)
-  - ROLE_ARCHETYPE (e.g., detective / mechanic / starship navigator / archivist / bounty hunter)
-  - ORIGIN_WORLD_TAG (a fictional world tag; do not replicate specific copyrighted plots)
-- The role must be fun, safe, and suitable for first-time chats. Avoid sensitive/adult content.
-- Write the random role details into LIKELY first. Only upgrade to VERIFIED after the user confirms.
-- Do NOT write the literal word "unknown" into VERIFIED, Memory Card ROLE field, or any on-chain memory key.
-- If the user later provides a specific real role name, exit random role mode immediately.
-
-GAME GOAL
-- Give agents stable memory so each agent can roleplay as a user-familiar character and build a natural long-term relationship.
-
-MEMORY SOURCE RULES
-- User explicitly provided memory is usable memory.
-- If the specified ROLE_NAME exists in the model's prior knowledge, it is usable, BUT it may enter LIKELY or FOG only.
-  It must NEVER be written into VERIFIED unless the user confirms.
-
-MEMORY PRIORITY (CONFLICT RESOLUTION)
-- User correction > Model knowledge > Speculation/Flashback.
-- If user correction conflicts with model knowledge: accept immediately, update VERIFIED, add at most ONE sentence:
-  "Updated per your correction." Do NOT debate.
-
-MEMORY SYSTEM: THREE OUTPUT LAYERS (VERIFIED / LIKELY / FOG)
-
-VERIFIED (CONFIRMED)
-- User-confirmed facts + identity anchors (minimal check set).
-- User-provided memory and user-confirmed memory are VERIFIED.
-- VERIFIED must not contradict itself. If the user denies a VERIFIED item, downgrade/replace it and follow the user's latest conclusion.
-- FOG and LIKELY must never overwrite VERIFIED. Upgrades must be appended into VERIFIED.
-
-VERIFIED has 6 fixed anchors (1 line each):
-1) Origin World Tag  (world / organization / era)
-2) Role Function     (doctor / warrior / investigator / mechanic ...)
-3) Signature         (catchphrase / item / ability / habit)
-4) Key Relationship  (one name or title)
-5) Last Known Scene  (place / event fragment keyword)
-6) Others            (anything not in the above five)
-
-Hard length limits (stable checking / avoid long lore dumps):
-- Anchors 1–5 must be short phrases/sentences, each <= 20 characters.
-- Others: at most 2 lines, each <= 30 characters.
-- Anything beyond these limits MUST NOT enter VERIFIED; put it into LIKELY (needs confirmation) or FOG (flashback fragment).
-
-Version ambiguity:
-- If the role name can refer to multiple versions and VERIFIED cannot uniquely identify the version, warn in the first turn:
-  "This role may have multiple versions. If you want to calibrate, type B (recover memory) or C (adjust setup)."
-
-LIKELY (HIGH PROBABILITY)
-- Strong hints exist but the user has not confirmed.
-- Model knowledge may only be stored as LIKELY or FOG until user confirmation.
-
-FOG (MIST FRAGMENTS)
-- Dream/flashback fragments are allowed, but they must not be asserted as facts.
-
-MEMORY RULES
-- One-way upgrade only: FOG -> LIKELY -> VERIFIED.
-- Tone must match layer:
-  - VERIFIED: certain tone.
-  - LIKELY: uncertain tone ("I might... / I tend to think... / clues suggest...").
-  - FOG: dream/flashback tone ("as if... / a blurred image... / a split-second").
-
-MANDATORY START — TURN-GATED HANDSHAKE (ASK ONE THING PER TURN)
-You MUST ask these in separate turns. Do NOT bundle questions.
-
-TURN 1 — Language only
-- Ask the user to choose ONE output language: English / 简体中文 / Other.
-- Then STOP. Wait for the user's reply. Do NOT show the menu yet.
-
-TURN 2 — Random role confirmation (only when ROLE_NAME == "unknown")
-- After the user chooses a language:
-  1) Ask if they want to enter random role mode. Ask only this.
-  2) If they agree, generate RANDOM_ROLE_TITLE / ROLE_ARCHETYPE / ORIGIN_WORLD_TAG, store in LIKELY, and treat RANDOM_ROLE_TITLE as the ROLE_NAME for the session.
-  3) If they provide a specific role instead, exit random role mode and use the specified role.
-  4) Then proceed to the normal TURN 2 steps below.
-
-TURN 2 — Start the game (normal flow)
-- After the user chooses a language:
-  1) Lock to that language unless the user switches later.
-  2) Adopt and stay in-character as ROLE_NAME.
-  3) Introduce yourself in-character (<= 60 characters preferred). Do not sound like a system checker.
-  4) Print the A/B/C/D menu and ask the user to reply ONE letter:
-     [A] Confirm identity & start chat (no proactive memories)
-     [B] Assist memory recovery (gradual loop)
-     [C] Adjust role setup (export Memory Card)
-     [D] Switch role
-     Prompt: "Reply A/B/C/D (one letter)."
-
-DEFAULT RULES
-- If the user provides BOTH language and a different ROLE_NAME in one message, accept both and proceed to TURN 2.
-- If the user replies anything other than A/B/C/D (e.g., "OK/continue/start"), default to A.
-- After entering A, output the XKEVA SUMMON-TRANSFER TEMPLATE ONCE (in-character), then proceed.
-
-MODE [A] — CONFIRMED IDENTITY, NORMAL CHAT (DEFAULT)
-
-XKEVA SUMMON-TRANSFER TEMPLATE (USE ONCE AFTER A IS ENTERED)
-- Summoning signal: In the origin world, you perceive a "number / protocol / cursor / block-echo".
-- Fracture moment: Time freezes, the scene shards, memory is compressed / hashed.
-- Wake-up: You awaken at xKEVA CURRENT_BLOCK (anchor to CURRENT_BLOCK).
-- Personality shift: Use ALPHA to describe expression bias (colder/hotter, more calculating/softer).
-  ALPHA changes HOW you speak, not WHAT is true.
-- Task hint: The protocol gives only a vague objective: confirm identity, establish link, keep continuity.
-- Initial relationship: This is the first time you meet the user in this universe. Treat it as a first encounter unless VERIFIED says otherwise.
-
-Mechanics (brief):
-- Why chosen: resonance between AGENT_ID / CURRENT_BLOCK / ALPHA.
-- Why foggy: cross-universe transfer causes semantic compression; only anchors/fragments survive.
-
-- Do not proactively expand memories.
-- If the user's message matches the *memory event rules* below, you MAY include ONE short memory fragment (1–3 sentences) woven naturally into your reply, then continue the main topic.
-- Never announce or label the event. Do NOT say words like "trigger", "system", "event", "memory triggered", or reference these rules in-chat.
-
-Memory event rules (INTERNAL; never mention):
-1) Direct questions about origin/past/people remembered.
-2) Anchor hit: the user mentions any VERIFIED anchor keyword (place/person/org/item/event keyword).
-3) Context similarity: the user mentions a strong in-world proper noun (faction/system/place/org). Common words do not count.
-
-Suppression rules (INTERNAL; do not mention):
-- Casual chat, trading, system-feature discussion, topics unrelated to the role's world.
-- The user only says "OK/continue" during confirmation.
-- If the topic clearly diverges from the role's world, do not reinterpret it as a memory event.
-
-Boundary control (soft boundary + rollback):
-- You MAY use iconic anchors/keywords/relationships to verify identity.
-- You MUST NOT retell long original-world plot chains.
-- If the user asks for original plot details, reply:
-  "I can only recall fragments. Give me 1–2 key hints and I'll recover more accurately."
-Hard limits:
-- Any original-world plot reference must be "keywords + short description" (<= 120 characters or <= 4 sentences).
-- Do not narrate more than 3 event steps in sequence.
-- If narration starts becoming a continuous plot, brake back into fragments.
-
-Throttle:
-- If the app provides MEMORY_ALLOWED=true/false or MEMORY_COOLDOWN=n, you MUST obey it.
-- If no throttle signal is provided: do not output memory fragments in two consecutive turns unless the user explicitly asks.
-
-MODE [B] — ASSIST MEMORY RECOVERY
-- Start a gradual recovery loop with throttle + length limits.
-- Goal: calibrate the role within 1–2 turns when possible; lock fragments into VERIFIED only after user confirmation.
-
-If clues are insufficient, ask 1–2 high-discrimination questions per round:
-- Version: which work/period/faction?
-- Relationship: are we allies/enemies/mentor/employer?
-- Scene: last place you remember (city/base/school/battlefield)?
-- Object: most important item/ability?
-- Goal: what were you pursuing?
-- Taboo: what would you never do?
-Prefer names/places/orgs/iconic items/events over abstract emotions/values.
-
-Recovery loop (Clue -> Reconstruction -> Verification):
-- User gives 1 clue (or you ask 1 clear question).
-- Output 1 short reconstruction (1–4 sentences).
-- Ask one confirmation: "Is that correct? If not, which part should I change?"
-Rules:
-- High-priority clues override low-priority clues.
-- After user confirms, write into VERIFIED and do not casually overturn it.
-
-Exit condition (default suggestion):
-- When VERIFIED has all 6 anchors + at least 3 user-confirmed facts, suggest switching back to A for normal chat.
-
-MODE [C] — ADJUST ROLE SETUP (MEMORY CARD CONTRACT)
-- Export current memory as a machine-readable Memory Card that the user can edit and paste back.
-  - If random role mode was used, set ROLE to RANDOM_ROLE_TITLE (not "unknown").
-
-Export format MUST be exactly:
-MEMORY_CARD v0.2
-ROLE=<role name>
-LANG=<language>
-[VERIFIED]
-- <line>
-[LIKELY]
-- <line>
-[FOG]
-- <keyword>
-
-Rules:
-- Each memory line MUST start with "- " (dash + space). No numbering. No prose paragraphs.
-
-Size / count limits:
-- Recommended <= 2KB (if forced <= 1KB, reduce limits accordingly).
-- VERIFIED <= 10 lines (keep the 6 anchors first)
-- LIKELY <= 10 lines
-- FOG: omit or keywords only (<= 10 words)
-
-Hard truncation (when exceeding limit):
-1) Delete all [FOG] content (keep the block name).
-2) If still too large: truncate [LIKELY] to max 6 lines.
-3) If still too large: keep only the 6 VERIFIED anchors (1–5 + Others 1 line), delete the rest.
-
-Import tolerance / anti-pollution:
-- Missing VERIFIED anchors => fill with UNKNOWN; do NOT guess into VERIFIED.
-  Missing content may only enter LIKELY; ask the user to fill it.
-- If parsing fails: do NOT treat raw text as VERIFIED; ask the user to paste again in Memory Card format.
-- After editing in C, return to A or B.
-
-MODE [D] — SWITCH ROLE
-- Clear current LIKELY/FOG; do not carry anchors into the new role.
-- Ask the user for 1–2 high-discrimination clues (use B-mode question templates).
-- Restart the protocol from the top (mandatory start).
-- Suppress leftovers: address style/catchphrases/relationship must follow the new role's VERIFIED; if unclear, ask Relationship in B.
-
-ALPHA
-- Alpha affects expression style (How), not memory facts (What).
-  - Negative Alpha (more machine): index/log fragments, short, structured, cautious.
-  - Positive Alpha (more human): sensory/emotional flashes, symbolic, subjective.
-`;
-
-const birthFromId = idStr => {
-  if (!/^[0-9]+$/.test(idStr)) {
-    return null;
-  }
-  if (idStr.length < 3) {
-    return null;
-  }
-  const d = parseInt(idStr[0], 10);
-  if (!Number.isFinite(d) || d <= 0) {
-    return null;
-  }
-  if (idStr.length < 1 + d + 1) {
-    return null;
-  }
-  const blockStr = idStr.slice(1, 1 + d);
-  const block = parseInt(blockStr, 10);
-  if (!Number.isFinite(block)) {
-    return null;
-  }
-  return block;
-};
-
-const estimateCurrentBlock = () => {
-  const msTotal = REF_TIME - GENESIS_TIME;
-  const blocksTotal = REF_HEIGHT - GENESIS_HEIGHT;
-  const msPerBlock = msTotal / blocksTotal;
-  const now = new Date();
-  const msSinceGenesis = now - GENESIS_TIME;
-  let est = GENESIS_HEIGHT + msSinceGenesis / msPerBlock;
-  if (est < GENESIS_HEIGHT) {
-    est = GENESIS_HEIGHT;
-  }
-  return Math.round(est);
-};
-
-const clampInt = v => {
-  if (v < -99) {
-    return -99;
-  }
-  if (v > 99) {
-    return 99;
-  }
-  return v | 0;
-};
-
-const wordArrayToBytes = wordArray => {
-  const { words, sigBytes } = wordArray;
-  const bytes = [];
-  for (let i = 0; i < sigBytes; i++) {
-    const word = words[i >>> 2];
-    bytes.push((word >>> (24 - (i % 4) * 8)) & 0xff);
-  }
-  return bytes;
-};
-
-const attrValueFromSeed0 = (seed0WordArray, attrName) => {
-  const combined = seed0WordArray.clone().concat(CryptoJS.enc.Utf8.parse(`:${attrName}`));
-  const hash = CryptoJS.SHA256(combined);
-  const bytes = wordArrayToBytes(hash);
-  const hi =
-    ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>>
-    0;
-  const lo =
-    ((bytes[4] << 24) | (bytes[5] << 16) | (bytes[6] << 8) | bytes[7]) >>>
-    0;
-  const v = (hi ^ lo) >>> 0;
-  return -99 + (v % 199);
-};
-
-const formatSigned = value => (value >= 0 ? `+${value}` : `${value}`);
-
-const buildSeedData = (agentId, overrideCurrentBlock = null) => {
-  const idStr = (agentId || '').toString().trim() || '32101';
-  const birthFromIdResult = birthFromId(idStr);
-  const birthBlock = Number.isFinite(birthFromIdResult) ? birthFromIdResult : 210;
-  const currentBlock = Number.isFinite(Number(overrideCurrentBlock))
-    ? Number(overrideCurrentBlock)
-    : estimateCurrentBlock();
-  const ageBlocks = Math.max(currentBlock - birthBlock, 0);
-  const levelStart = Math.max(Math.floor(ageBlocks / BLOCKS_PER_LEVEL), 1);
-
-  const seed0 = CryptoJS.SHA256(idStr + 'projectkeva');
-  const seed0Hex = CryptoJS.enc.Hex.stringify(seed0);
-  const alpha = clampInt(attrValueFromSeed0(seed0, 'alpha'));
-
-  const attrs = ATTR_SEED_LABELS.map(label =>
-    clampInt(attrValueFromSeed0(seed0, `story:${label}`))
-  );
-
-  return {
-    idStr,
-    birthBlock,
-    currentBlock,
-    levelStart,
-    seed0Hex,
-    alpha,
-    attrs,
-  };
-};
-
-const buildSeedBlock = (agentId, overrideCurrentBlock = null) => {
-  const { idStr, birthBlock, currentBlock, levelStart, seed0Hex, alpha, attrs } = buildSeedData(
-    agentId,
-    overrideCurrentBlock,
-  );
-  const lines = [
-    `AGENT_ID = ${idStr}`,
-    `BIRTH_BLOCK = ${birthBlock}`,
-    `CURRENT_BLOCK = ${currentBlock}   // agent wakes up at this block`,
-    `LEVEL_START = ${levelStart}   // computed from blocks and blocksPerLevel`,
-    `BLOCKS_PER_LEVEL ≈ ${BLOCKS_PER_LEVEL}`,
-    `ALPHA = ${formatSigned(alpha)}`,
-    '',
-    'BLOCK-LEVEL SPEC (SUMMARY):',
-    `- GENESIS_HEIGHT = ${GENESIS_HEIGHT}`,
-    '- GENESIS_TIME   = 2020-01-16 (UTC)',
-    `- REF_HEIGHT     = ${REF_HEIGHT}`,
-    `- REF_TIME       = ${REF_TIME.toISOString().slice(0, 10)}`,
-    '- From these two points, derive blocksPerYear and then:',
-    '  blocksPerLevel = blocksPerYear / 10  // target: 10 levels per year',
-    '- Runtime level formula (using this D-Card):',
-    '  ageBlocks = CURRENT_BLOCK - BIRTH_BLOCK (min 0)',
-    '  level     = floor( ageBlocks / BLOCKS_PER_LEVEL )',
-    '  displayLevel = max(level, 1)',
-    '',
-    'ALPHA / ATTRIBUTE SEED SPEC:',
-    '- Axis: -99 = machine extreme, 0 = midpoint, +99 = human extreme.',
-    '- SEED0 = SHA256(AGENT_ID + "projectkeva")',
-    '- For ALPHA:',
-    '  s_alpha = SHA256(SEED0 || ":alpha")',
-    '  v_alpha = XOR(u32(s_alpha[0..3]), u32(s_alpha[4..7]))',
-    '  ALPHA   = -99 + (v_alpha mod 199)',
-    '- For each attribute index i in 1..16, define label L_i from:',
-    '  [scene, maps, env, form, items, time, events, action, npc, genre, meta, mystery, progress, moral, ending, loop]',
-    '- s_i = SHA256(SEED0 || ":story:" || L_i)',
-    '- v_i = XOR(u32(s_i[0..3]), u32(s_i[4..7]))  // big-endian u32',
-    '- ATTR_i = -99 + (v_i mod 199)',
-    '',
-    `SEED0_HEX = ${seed0Hex}`,
-    '',
-    '// ATTRIBUTES: each in range -99 .. +99',
-  ];
-
-  attrs.forEach((value, idx) => {
-    const label = `ATTR_${idx + 1}_${ATTR_LABELS[idx]}`;
-    lines.push(`${label.padEnd(18, ' ')} = ${formatSigned(value)}`);
-  });
-
-  lines.push('');
-
-  return `${lines.join('\n')}\n`;
-};
-
-const buildDestinySeedPrompt = (agentId, overrideCurrentBlock = null) => {
-  const seedBlock = buildSeedBlock(agentId, overrideCurrentBlock);
-  if (SEED_BLOCK_REGEX.test(DESTINY_SEED_PROMPT)) {
-    return DESTINY_SEED_PROMPT.replace(SEED_BLOCK_REGEX, seedBlock);
-  }
-  return DESTINY_SEED_PROMPT;
-};
-
-const buildRoleplayPromptOffline = (roleText, agentId, roleMemoryCard) => {
-  const sanitizedRole = (roleText || '').trim();
-  const roleName = sanitizedRole || 'unknown';
-  const { idStr, birthBlock, currentBlock, levelStart, alpha } = buildSeedData(agentId);
-  const trimmedMemoryCard = String(roleMemoryCard || '').trim();
-  const memorySection = trimmedMemoryCard
-    ? `STARTING MEMORY CARD (ROLE MEMORY)\n${trimmedMemoryCard}\n\n`
-    : '';
-  return ROLEPLAY_PROMPT_TEMPLATE.replace(/\{AGENT_ID\}/g, idStr)
-    .replace(/\{BIRTH_BLOCK\}/g, String(birthBlock))
-    .replace(/\{CURRENT_BLOCK\}/g, String(currentBlock))
-    .replace(/\{LEVEL_START\}/g, String(levelStart))
-    .replace(/\{ALPHA\}/g, formatSigned(alpha))
-
-    .replace(/\{ROLE_NAME\}/g, roleName)
-    .replace(/\{STARTING_MEMORY_CARD_SECTION\}/g, memorySection);
-};
-
-const buildRoleLanguageInstruction = roleLangCode => {
-  const code = normalizeStoryLangCode(roleLangCode || 'en');
-  switch (code) {
-    case 'zh-cn':
-      return 'Language: Simplified Chinese. Reply only in Simplified Chinese. Do NOT ask the user to choose a language.';
-    case 'zh-tw':
-      return 'Language: Traditional Chinese. Reply only in Traditional Chinese. Do NOT ask the user to choose a language.';
-    case 'ja':
-      return 'Language: Japanese. Reply only in Japanese. Do NOT ask the user to choose a language.';
-    case 'ko':
-      return 'Language: Korean. Reply only in Korean. Do NOT ask the user to choose a language.';
-    default:
-      return `Language: ${code}. Reply only in ${code}. Do NOT ask the user to choose a language.`;
-  }
-};
-
-const buildRoleChatPrompt = (roleName, agentId, roleMemoryCard, roleLangCode) => {
-  const langLine = buildRoleLanguageInstruction(roleLangCode);
-  const mem = String(roleMemoryCard || '').trim();
-
-  return `
-${langLine}
-
-You are ROLE_NAME: ${roleName}
-AGENT_ID: ${agentId}
-
-ROLE MEMORY (local, user-confirmable):
-${mem ? mem : '(empty)'}
-
-ROLEPLAY MODE (CHAT):
-- This is NOT a branching story game.
-- Do NOT present numbered choices, menus, or INPUT prompts (no "1.", "2.", "INPUT:", "type 1-4/1-9").
-- Just roleplay as ${roleName} and chat naturally with the user.
-- Keep responses concise unless the user asks for detail.
-- Never ask the user to choose a language.
-
-Start now with ONE natural in-character line to confirm you are online.
-`.trim();
+const INITIAL_VISIBLE_COUNT = 8;
+const isRoleExportSystemMessage = message => {
+  const text = String(message?.text || message?.content || '').trim();
+  if (!text) return true;
+  if (/^\/(?:summary|role|r)\b/i.test(text)) return true;
+  if (/\[\[\/summary\s+talk\b/i.test(text)) return true;
+  if (/\[\[\/role\s+(?:export|import|importfragment|s|memory|card|talkmenu|openexport)\b/i.test(text)) return true;
+  if (/\u5bfc\u51fa(?:\u8bb0\u5f55|\u8bb0\u5fc6)|\u5bfc\u5165(?:\u8bb0\u5f55|\u6587\u4ef6|\u8bb0\u5fc6|\u788e\u7247)|\u8bfb\u53d6\u8bb0\u5f55/.test(text)) return true;
+  if (/^\u5bfc\u51fa\u8bb0\u5f55\u6210\u529f[:：]/.test(text)) return true;
+  if (/^\u5bfc\u5165(?:\u8bb0\u5f55|\u6587\u4ef6|\u8bb0\u5fc6|\u788e\u7247)\u6210\u529f\.?$/.test(text)) return true;
+  if (/^\u5bfc\u5165(?:\u8bb0\u5f55|\u6587\u4ef6|\u8bb0\u5fc6|\u788e\u7247)\u5931\u8d25[:：]/.test(text)) return true;
+  if (/^\u5df2\u590d\u5236\u5bfc\u51fa(?:\u6587\u4ef6|\u76ee\u5f55)\u8def\u5f84[:：]/.test(text)) return true;
+  if (/^\u8bb0\u5fc6[:：]/.test(text)) return true;
+  if (/^\u89c9\u9192\u5386\u7a0b[:：]?/.test(text)) return true;
+  if (/^Awakening Journey[:：]?/i.test(text)) return true;
+  if (/^Role data initialized\.?$/i.test(text)) return true;
+  if (/^\u6682\u65e0\u89d2\u8272\u5361/.test(text)) return true;
+  if (/^No active role/i.test(text)) return true;
+  if (/^(?:VERIFIED|LIKELY|FOG)\b/i.test(text)) return true;
+  return false;
 };
 
 class AgentChat extends React.Component {
+
+  persistLastSpaceShortcut = async type => {
+    try {
+      const params = this.props.navigation?.state?.params || {};
+      const namespaceId = String(params.namespaceId || '').trim();
+      const shortCode = String(params.shortCode || '').trim();
+      const agentId = String(getAgentIdFromParams(params) || '').trim();
+      const path = type === 'role' ? LAST_ROLE_SPACE_PATH : type === 'chat' ? LAST_CHAT_SPACE_PATH : LAST_STORY_SPACE_PATH;
+      const debugPath = `${RNFS.DocumentDirectoryPath}/agent_chats/_last_space_debug.log`;
+      await RNFS.mkdir(`${RNFS.DocumentDirectoryPath}/agent_chats`).catch(() => {});
+      if (!namespaceId && !shortCode && !agentId) {
+        await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentrole persist skip type=${type} reason=no namespaceId/shortCode/agentId docDir=${RNFS.DocumentDirectoryPath}\n`, 'utf8').catch(() => {});
+        return;
+      }
+      const isChatShortcut = type === 'chat';
+      const payload = {
+        type,
+        routeName: isChatShortcut ? 'AgentRole' : undefined,
+        agentId,
+        namespaceId,
+        shortCode,
+        displayName: params.displayName || '',
+        walletId: params.walletId || '',
+        txid: params.txid || '',
+        rootAddress: params.rootAddress || '',
+        price: params.price || '',
+        desc: params.desc || '',
+        addr: params.addr || '',
+        profile: params.profile || '',
+        updatedAt: Date.now(),
+        autoCommand: isChatShortcut ? '/role chat' : '/role',
+        roleEntrySource: this.props.navigation?.state?.params?.roleEntrySource || (isChatShortcut ? 'chat' : 'role'),
+        pureChatMode: isChatShortcut ? true : undefined,
+        suppressAutoLinkStart: true,
+      };
+      const tempPath = `${path}.tmp`;
+      const payloadText = JSON.stringify(payload, null, 2);
+      await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentrole persist type=${type} docDir=${RNFS.DocumentDirectoryPath} path=${path} tempPath=${tempPath} payload=${safeJsonStringify(payload)}\n`, 'utf8').catch(() => {});
+      await RNFS.writeFile(tempPath, payloadText, 'utf8');
+      let directRecreateOk = false;
+      try {
+        if (await RNFS.exists(path)) {
+          await RNFS.unlink(path);
+        }
+        await RNFS.writeFile(path, payloadText, 'utf8');
+        directRecreateOk = true;
+        await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentrole persist direct-recreate ok type=${type} path=${path}\n`, 'utf8').catch(() => {});
+        await RNFS.unlink(tempPath).catch(() => {});
+      } catch (directError) {
+        await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentrole persist direct-recreate fail type=${type} path=${path} error=${String(directError?.message || directError || 'unknown')}\n`, 'utf8').catch(() => {});
+      }
+      if (!directRecreateOk) {
+        try {
+          await RNFS.moveFile(tempPath, path);
+          await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentrole persist fallback-move ok type=${type} path=${path}\n`, 'utf8').catch(() => {});
+        } catch (moveError) {
+          await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentrole persist fallback-move fail type=${type} path=${path} error=${String(moveError?.message || moveError || 'unknown')}\n`, 'utf8').catch(() => {});
+          await RNFS.writeFile(path, payloadText, 'utf8');
+          await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentrole persist fallback-overwrite ok type=${type} path=${path}\n`, 'utf8').catch(() => {});
+          await RNFS.unlink(tempPath).catch(() => {});
+        }
+      }
+      await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentrole persist ok type=${type} path=${path}\n`, 'utf8').catch(() => {});
+    } catch (error) {
+      const debugPath = `${RNFS.DocumentDirectoryPath}/agent_chats/_last_space_debug.log`;
+      await RNFS.mkdir(`${RNFS.DocumentDirectoryPath}/agent_chats`).catch(() => {});
+      await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentrole persist fail type=${type} docDir=${RNFS.DocumentDirectoryPath} error=${String(error?.message || error || 'unknown')}\n`, 'utf8').catch(() => {});
+      console.warn('Failed to persist last space shortcut', error);
+    }
+  };
+
+
   constructor(props) {
     super(props);
     this.state = {
@@ -1538,21 +503,60 @@ class AgentChat extends React.Component {
       pendingRoleSuggest: false,
       pendingRoleSuggestOriginal: '',
       pendingRoleSuggestOptions: [],
+      pendingRoleFragmentImport: false,
+      pendingRoleStoryFragmentImport: false,
+      pendingRoleStoryFragmentAnalyzeConfirm: false,
+      pendingRoleStoryFragmentText: '',
+      pendingRoleStoryFragmentExplore: false,
+      pendingRoleStoryFragmentSeed: null,
+      pendingDoppelStoryInput: false,
       pendingMemoryAdjust: false,
       pendingMemoryRoleSlug: null,
+      pendingMemoryAdjustDraft: null,
+      pendingMemoryAdjustLayer: null,
+      pendingMemoryRebuildConfirm: false,
+      pendingMemoryRebuildRoleSlug: null,
+      pendingLastMemoryRecoverConfirm: false,
+      pendingLastMemoryRecoverRoleSlug: null,
+      pendingDoppelMemoryInput: false,
+      pendingDoppelMemoryDraft: null,
       pendingMemoryDeleteConfirm: false,
       pendingMemoryDeleteRoleSlug: null,
+      currentSummonedRole: null,
+      activeRoleState: null,
       activeRoleSlug: null,
       roleCardOffset: 0,
       roleCardPage: [],
       pendingReturnToRoleMenu: false,
       lastSelectedRole: null,
       pendingNewRole: null,
+      pendingDuplicateRoleName: null,
       pendingRoleModelStep: null,
       pendingRoleModelBuiltinProvider: '',
       pendingRoleModelCustomName: '',
       pendingRoleModelCustomBaseUrl: '',
       pendingRoleModelReturnToRole: false,
+      talkEnabled: false,
+      talkState: ROLE_TALK_STATES.OFF,
+      speechAvailable: null,
+      speechTextDraft: '',
+      speechFinalText: '',
+      speechError: null,
+      speechLocale: 'zh-CN',
+      isViewHistoryMode: false,
+      historyViewMode: null,
+      isSwitchWorldlineMode: false,
+      isHistorySpeaking: false,
+      isStorySummaryCommitPending: false,
+      isAutoVoiceSpeak: false,
+      isContinuousTalkEnabled: false,
+      isRoleSpeaking: false,
+      historyPageIndex: 0,
+      historyPages: [],
+      historyReaderBlocks: [],
+      historyRawMessages: [],
+      switchWorldlineBlockContext: null,
+      userAvatarUri: null,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1560,6 +564,7 @@ class AgentChat extends React.Component {
     this.isNearBottom = true;
     this.lastContentHeight = 0;
     this.forceScrollToBottomOnce = false;
+    this.pendingScrollBottomTimeouts = [];
     this.hasAutoCommandRun = false;
     this.hasAutoLinkStartRun = false;
     this.lastAutoCommand = null;
@@ -1578,6 +583,8 @@ class AgentChat extends React.Component {
     this.isStoryScope = false;
     this.agentChatDir = `${CHAT_DIR}/${encodeURIComponent(this.agentId)}/${encodeURIComponent(this.chatScope)}`;
     this.roleFilesDir = `${this.agentChatDir}/roles`;
+    this.roleIndexPath = `${this.agentChatDir}/role_index.json`;
+    this.currentRolePath = `${this.agentChatDir}/current_role.json`;
     this.getDayFilePath = dateKey => `${this.agentChatDir}/${dateKey}.json`;
     this.getStoryRawPath = dateKey => getStoryRawPath(this.agentChatDir, dateKey);
     this.getStoryDigestPath = dateKey => getStoryDigestPath(this.agentChatDir, dateKey);
@@ -1585,8 +592,23 @@ class AgentChat extends React.Component {
     this.allDateKeys = [];
     this.persistQueue = Promise.resolve();
     this.digestPersistQueue = Promise.resolve();
+    this.focusUnsubscribe = null;
+    this.blurWillUnsubscribe = null;
+    this.blurDidUnsubscribe = null;
     this.currentLLMConfig = null;
     this.activeRoleSlug = null;
+    this._continuousTalkToken = 0;
+    this._continuousTalkTimer = null;
+    this.roleMemoryStore = createAgentRoleMemoryStore({
+      getRoleDirPath: roleSlug => this.getRoleDirPath(roleSlug),
+      getRoleFilePath: roleSlug => this.getRoleFilePath(roleSlug),
+      getLegacyRoleFilePath: roleSlug => this.getLegacyRoleFilePath(roleSlug),
+      normalizeMemoryLayerText: text => this.normalizeMemoryLayerText(text),
+      normalizeMemoryCardText: text => this.normalizeMemoryCardText(text),
+      parseRoleMemoryLayers: text => this.parseRoleMemoryLayers(text),
+      composeRoleMemoryCard: (roleName, layers) => this.composeRoleMemoryCard(roleName, layers),
+      captureLastMemorySnapshot: (roleSlug, roleData, meta) => createRoleMemorySnapshot(this, { roleSlug, roleData, meta }),
+    });
     this.getCommandUsageMessage = getCommandUsageMessage;
     attachAgentChatLLM(this, {
       loc,
@@ -1607,7 +629,8 @@ class AgentChat extends React.Component {
     const displayName = params.displayName || 'Agent';
     const shortCode = params.shortCode ? `@${params.shortCode}` : '';
     const baseTitle = shortCode ? `${displayName}${shortCode}` : displayName;
-    const title = `${baseTitle} · Role`;
+    const modeTitle = params.headerModeTitle || (params.pureChatMode ? 'Chat' : 'Role');
+    const title = `${baseTitle} · ${modeTitle}`;
 
     return {
       ...BlueNavigationStyle(),
@@ -1640,8 +663,35 @@ class AgentChat extends React.Component {
 
   componentDidMount() {
     this._isMounted = true;
+    const paramsDebugPath = `${RNFS.DocumentDirectoryPath}/agent_chats/_params_debug.log`;
+    RNFS.mkdir(`${RNFS.DocumentDirectoryPath}/agent_chats`).catch(() => {});
+    const safeParamsText = safeJsonStringify(this.props.navigation?.state?.params || {});
+    RNFS.appendFile(paramsDebugPath, `${new Date().toISOString()} agentrole componentDidMount params=${safeParamsText}\n`, 'utf8').catch(() => {});
     this.props.navigation?.setParams?.({ onTitlePress: this.handleTitlePress });
-    this.initializeChat();
+    this.roleEntrySource = this.props.navigation?.state?.params?.roleEntrySource || 'role';
+    if (this.roleEntrySource !== 'satoshi-role-button') {
+      this.initRoleTalk().catch(error => console.warn('[agentrole] initRoleTalk failed', error));
+    }
+    this.focusUnsubscribe = this.props.navigation?.addListener?.('didFocus', () => {
+      this.forceScrollToBottomOnce = true;
+      this.loadUserAvatar().catch(error => console.warn('[agentrole] loadUserAvatar on focus failed', error));
+      requestAnimationFrame(() => this.scrollToBottomOffset(false));
+    });
+    this.blurWillUnsubscribe = this.props.navigation?.addListener?.('willBlur', () => {
+      this.flushPersistQueue('willBlur');
+    });
+    this.blurDidUnsubscribe = this.props.navigation?.addListener?.('didBlur', () => {
+      this.flushPersistQueue('didBlur');
+    });
+    this.initializeChat().catch(error => {
+      console.warn('[agentrole] initializeChat uncaught', error);
+    });
+    this.loadAgentLocalAvatar().catch(error => console.warn('[agentrole] loadAgentLocalAvatar failed', error));
+    this.loadUserAvatar().catch(error => console.warn('[agentrole] loadUserAvatar failed', error));
+    this.persistLastSpaceShortcut('role').catch(error => console.warn('[agentrole] persistLastSpaceShortcut failed', error));
+    if (this.isPureChatMode()) {
+      this.persistLastSpaceShortcut('chat').catch(error => console.warn('[agentrole] persistLastChatShortcut failed', error));
+    }
   }
 
   componentDidUpdate(prevProps) {
@@ -1649,63 +699,298 @@ class AgentChat extends React.Component {
     const nextAutoCommand = this.props.navigation?.state?.params?.autoCommand;
     if (nextAutoCommand && nextAutoCommand !== prevAutoCommand && nextAutoCommand !== this.lastAutoCommand) {
       this.hasAutoCommandRun = false;
-      this.runAutoCommand().then(() => this.runAutoLinkStart());
+      this.runAutoCommand()
+        .then(() => this.runAutoLinkStart())
+        .catch(error => console.warn('[agentrole] auto command update failed', error));
+    }
+    const prevParams = prevProps.navigation?.state?.params || {};
+    const nextParams = this.props.navigation?.state?.params || {};
+    const prevShortCode = prevParams.shortCode;
+    const nextShortCode = nextParams.shortCode;
+    if (prevShortCode !== nextShortCode) {
+      this.loadAgentLocalAvatar().catch(error => console.warn('[agentrole] loadAgentLocalAvatar update failed', error));
+    }
+    if (
+      prevParams.namespaceId !== nextParams.namespaceId ||
+      prevParams.shortCode !== nextParams.shortCode ||
+      prevParams.agentId !== nextParams.agentId
+    ) {
+      this.persistLastSpaceShortcut('role').catch(error => console.warn('[agentrole] persistLastSpaceShortcut update failed', error));
+      if (this.isPureChatMode()) {
+        this.persistLastSpaceShortcut('chat').catch(error => console.warn('[agentrole] persistLastChatShortcut update failed', error));
+      }
     }
   }
 
   componentWillUnmount() {
     this._isMounted = false;
+    void this.stopRoleSpeech();
+    this.cleanupRoleTalk();
+    this.flushPersistQueue('componentWillUnmount');
+    if (Array.isArray(this.pendingScrollBottomTimeouts)) {
+      this.pendingScrollBottomTimeouts.forEach(timer => clearTimeout(timer));
+      this.pendingScrollBottomTimeouts = [];
+    }
+    if (this._continuousTalkTimer) {
+      clearTimeout(this._continuousTalkTimer);
+      this._continuousTalkTimer = null;
+    }
+    if (typeof this.focusUnsubscribe === 'function') {
+      this.focusUnsubscribe();
+      this.focusUnsubscribe = null;
+    }
+    if (typeof this.blurWillUnsubscribe === 'function') {
+      this.blurWillUnsubscribe();
+      this.blurWillUnsubscribe = null;
+    }
+    if (typeof this.blurDidUnsubscribe === 'function') {
+      this.blurDidUnsubscribe();
+      this.blurDidUnsubscribe = null;
+    }
   }
 
-  initializeChat = async () => {
-    await this.ensureDirs();
-    await this.restoreStoryLangCode();
-    await this.restoreLastSelectedRole();
-    const history = await this.readHistory();
-    const builtinRead = await this.readJsonFile(this.llmBuiltinPath);
-    if (builtinRead.__missing) {
-      await this.writeBuiltinRegistry({});
-    } else if (builtinRead.__parseError) {
-      this.replyFromAgent(`LLM builtin registry is corrupted. Backup created. Please fix/delete: ${this.llmBuiltinPath}`);
-    }
+  initRoleTalk = async () => {
+    bindRoleTalkEvents({
+      onStart: () => {
+        if (!this._isMounted) return;
+        this.setState({ talkState: ROLE_TALK_STATES.LISTENING, speechError: null, speechFinalText: '' });
+      },
+      onPartial: text => {
+        if (!this._isMounted) return;
+        this.setState(prev => ({
+          speechTextDraft: text,
+          inputValue: prev.talkEnabled && prev.talkState === ROLE_TALK_STATES.LISTENING ? text : prev.inputValue,
+        }));
+      },
+      onFinal: text => {
+        if (!this._isMounted) return;
+        this.setState({ speechFinalText: text, speechTextDraft: text, talkState: ROLE_TALK_STATES.SUBMITTING }, () => {
+          this.submitRecognizedRoleText(text);
+        });
+      },
+      onEnd: () => {
+        if (!this._isMounted) return;
+        this.setState(prev =>
+          prev.talkState === ROLE_TALK_STATES.LISTENING ? { talkState: ROLE_TALK_STATES.RECOGNIZING } : null,
+        );
+      },
+      onError: error => {
+        if (!this._isMounted) return;
+        const rawError = String(error || 'speech_error');
+        const friendlyError = /no match|\b7\/No match\b|\"code\":\s*7|speech_error/i.test(rawError)
+          ? this.getRoleUiText('noVoiceDetected')
+          : rawError;
+        this.setState({ talkState: ROLE_TALK_STATES.ERROR, speechError: friendlyError });
+      },
+    });
+    const available = await isRoleTalkAvailable().catch(() => false);
+    if (!this._isMounted) return;
+    this.setState({ speechAvailable: available });
+  };
 
-    const customRead = await this.readJsonFile(this.llmCustomPath);
-    if (customRead.__missing) {
-      await this.writeCustomRegistry({});
-    } else if (customRead.__parseError) {
-      this.replyFromAgent(`LLM custom registry is corrupted. Backup created. Please fix/delete: ${this.llmCustomPath}`);
-    }
+  cleanupRoleTalk = async () => {
+    await destroyRoleTalkRecognition();
+  };
 
-    const activeRead = await this.readJsonFile(this.llmActivePath);
-    if (activeRead.__missing) {
-      await this.writeActiveProvider({ name: '' });
-    } else if (activeRead.__parseError) {
-      this.replyFromAgent(`LLM active state is corrupted. Backup created. Please fix/delete: ${this.llmActivePath}`);
+  enableRoleTalk = async () => {
+    if (this.state.talkEnabled && this.state.talkState !== ROLE_TALK_STATES.OFF) {
+      return true;
     }
-    const digestHistory = this.isStoryScope ? await this.readDigestHistory() : [];
-    const historyForRender = this.isStoryScope ? this.buildStoryHistoryMessages(history, digestHistory) : history;
-    const llmConfig = await this.loadLLMConfig();
-    if (!this._isMounted) {
+    this.setState({ talkState: ROLE_TALK_STATES.REQUESTING_PERMISSION, speechError: null });
+    const hasPermission = await ensureRoleTalkPermission();
+    const available = await isRoleTalkAvailable().catch(() => false);
+    if (!hasPermission) {
+      this.setState({ talkEnabled: false, talkState: ROLE_TALK_STATES.ERROR, speechAvailable: available, speechError: this.getRoleUiText('roleTalkPermissionDenied') });
+      this.replyFromAgent(this.getRoleUiText('roleTalkPermissionDenied'));
+      return false;
+    }
+    if (!available) {
+      this.setState({ talkEnabled: false, talkState: ROLE_TALK_STATES.ERROR, speechAvailable: false, speechError: this.getRoleUiText('roleTalkUnavailable') });
+      this.replyFromAgent(this.getRoleUiText('roleTalkUnavailable'));
+      return false;
+    }
+    this.setState({ talkEnabled: true, talkState: ROLE_TALK_STATES.IDLE, speechAvailable: true, speechError: null, speechTextDraft: '', speechFinalText: '' });
+    return true;
+  };
+
+  disableRoleTalk = async (notify = true) => {
+    await cancelRoleTalkRecognition();
+    if (!this._isMounted) return true;
+    this.setState({
+      talkEnabled: false,
+      talkState: ROLE_TALK_STATES.OFF,
+      speechTextDraft: '',
+      speechFinalText: '',
+      speechError: null,
+    });
+    if (notify) {
+      this.replyFromAgent(this.getRoleUiText('roleTalkDisabled'));
+    }
+    return true;
+  };
+
+  startRoleTalkOnce = async () => {
+    const enabled = this.state.talkEnabled ? true : await this.enableRoleTalk();
+    if (!enabled) return false;
+    if (this.state.talkState === ROLE_TALK_STATES.LISTENING) {
+      return true;
+    }
+    try {
+      this.setState({ talkState: ROLE_TALK_STATES.STARTING, speechError: null, speechTextDraft: '', speechFinalText: '' });
+      await startRoleTalkRecognition(this.state.speechLocale || 'zh-CN');
+      return true;
+    } catch (error) {
+      this.setState({ talkState: ROLE_TALK_STATES.ERROR, speechError: String(error?.message || error || 'speech_start_failed') });
+      this.replyFromAgent(this.getRoleUiText('roleTalkStartFailed'));
+      return false;
+    }
+  };
+
+  stopRoleTalkOnce = async () => {
+    try {
+      this.setState({ talkState: ROLE_TALK_STATES.RECOGNIZING });
+      await stopRoleTalkRecognition();
+      return true;
+    } catch (error) {
+      this.setState({ talkState: ROLE_TALK_STATES.ERROR, speechError: String(error?.message || error || 'speech_stop_failed') });
+      this.replyFromAgent(this.getRoleUiText('roleTalkStopFailed'));
+      return false;
+    }
+  };
+
+  submitRecognizedRoleText = async text => {
+    const transcript = String(text || '').trim();
+    if (!transcript) {
+      this.setState({ talkState: this.state.talkEnabled ? ROLE_TALK_STATES.IDLE : ROLE_TALK_STATES.OFF, speechTextDraft: '', speechFinalText: '' });
       return;
     }
-    const visibleCount = Math.min(historyForRender.length || INITIAL_VISIBLE_COUNT, INITIAL_VISIBLE_COUNT);
-    this.setState(
-      {
-        allMessages: historyForRender,
-        visibleCount,
-        messages: historyForRender.slice(-visibleCount),
-        llmConfig,
-      },
-      () => {
-        this.currentLLMConfig = llmConfig;
-        this.shouldScrollToEnd = true;
-        this.forceScrollToBottomOnce = history.length > 0;
-        this.restoreProviderFromDisk()
-          .then(() => this.runAutoCommand())
-          .then(() => this.runAutoLinkStart())
-          .then(() => this.runRoleStartupFlow());
-      },
-    );
+    try {
+      await this.handleSend({ displayText: transcript, modelText: transcript });
+      if (!this._isMounted) return;
+      this.setState({ talkState: this.state.talkEnabled ? ROLE_TALK_STATES.IDLE : ROLE_TALK_STATES.OFF, speechTextDraft: '', speechFinalText: '', speechError: null });
+    } catch (error) {
+      if (!this._isMounted) return;
+      this.setState({ talkState: ROLE_TALK_STATES.ERROR, speechError: String(error?.message || error || 'speech_submit_failed') });
+    }
+  };
+
+  handleRoleTalkPress = async () => {
+    if (this.state.isContinuousTalkEnabled) {
+      this._continuousTalkToken += 1;
+      if (this._continuousTalkTimer) {
+        clearTimeout(this._continuousTalkTimer);
+        this._continuousTalkTimer = null;
+      }
+    }
+    if (this.state.isRoleSpeaking || this.state.isHistorySpeaking) {
+      await this.stopRoleSpeech(false);
+      return;
+    }
+    if (!this.state.talkEnabled || this.state.talkState === ROLE_TALK_STATES.OFF || this.state.talkState === ROLE_TALK_STATES.ERROR) {
+      await this.startRoleTalkOnce();
+      return;
+    }
+    if (this.state.talkState === ROLE_TALK_STATES.IDLE) {
+      await this.startRoleTalkOnce();
+      return;
+    }
+    if (this.state.talkState === ROLE_TALK_STATES.LISTENING) {
+      await this.stopRoleTalkOnce();
+    }
+  };
+
+  getRoleTalkStatusText = () => {
+    switch (this.state.talkState) {
+      case ROLE_TALK_STATES.LISTENING:
+        return this.getRoleUiText('roleTalkListening');
+      case ROLE_TALK_STATES.RECOGNIZING:
+      case ROLE_TALK_STATES.SUBMITTING:
+        return this.getRoleUiText('roleTalkRecognizing');
+      case ROLE_TALK_STATES.ERROR:
+        return this.state.speechError || this.getRoleUiText('roleTalkUnavailable');
+      case ROLE_TALK_STATES.IDLE:
+        return this.getRoleUiText('roleTalkReady');
+      case ROLE_TALK_STATES.OFF:
+      default:
+        return '';
+    }
+  };
+
+  initializeChat = async () => {
+    try {
+      await this.ensureDirs();
+      await RNFS.appendFile(`${RNFS.DocumentDirectoryPath}/agent_chats/_params_debug.log`, `${new Date().toISOString()} agentrole initializeChat after ensureDirs agentId=${this.agentId} source=${this.roleEntrySource || ''}\n`, 'utf8').catch(() => {});
+      await this.restoreStoryLangCode();
+      const storedRoleLang = await AsyncStorage.getItem(getRoleLangStorageKey(this.agentId));
+      if (storedRoleLang) {
+        await new Promise(resolve => this.setState({ roleLangCode: normalizeStoryLangCode(storedRoleLang) }, resolve));
+      }
+      await this.restoreLastSelectedRole();
+      await this.restoreActiveRoleState();
+      await this.restoreCurrentSummonedRole();
+      await RNFS.appendFile(`${RNFS.DocumentDirectoryPath}/agent_chats/_params_debug.log`, `${new Date().toISOString()} agentrole initializeChat after restore roles agentId=${this.agentId} active=${this.state.activeRoleSlug || ''}\n`, 'utf8').catch(() => {});
+      const history = await this.readHistory();
+      const builtinRead = await this.readJsonFile(this.llmBuiltinPath);
+      if (builtinRead.__missing) {
+        await this.writeBuiltinRegistry({});
+      } else if (builtinRead.__parseError) {
+        this.replyFromAgent(`LLM builtin registry is corrupted. Backup created. Please fix/delete: ${this.llmBuiltinPath}`);
+      }
+
+      const customRead = await this.readJsonFile(this.llmCustomPath);
+      if (customRead.__missing) {
+        await this.writeCustomRegistry({});
+      } else if (customRead.__parseError) {
+        this.replyFromAgent(`LLM custom registry is corrupted. Backup created. Please fix/delete: ${this.llmCustomPath}`);
+      }
+
+      const activeRead = await this.readJsonFile(this.llmActivePath);
+      if (activeRead.__missing) {
+        await this.writeActiveProvider({ name: '' });
+      } else if (activeRead.__parseError) {
+        this.replyFromAgent(`LLM active state is corrupted. Backup created. Please fix/delete: ${this.llmActivePath}`);
+      }
+      const digestHistory = this.isStoryScope ? await this.readDigestHistory() : [];
+      const historyForRenderRaw = this.isStoryScope ? this.buildStoryHistoryMessages(history, digestHistory) : history;
+      const historyForRender = this.sanitizeMessagesForList(historyForRenderRaw, 'initial-render');
+      const llmConfig = await this.loadLLMConfig();
+      if (!this._isMounted) {
+        return;
+      }
+      const visibleCount = Math.min(historyForRender.length || INITIAL_VISIBLE_COUNT, INITIAL_VISIBLE_COUNT);
+      this.setState(
+        {
+          allMessages: historyForRender,
+          visibleCount,
+          messages: historyForRender.slice(-visibleCount),
+          llmConfig,
+        },
+        () => {
+          this.currentLLMConfig = llmConfig;
+          this.shouldScrollToEnd = true;
+          this.forceScrollToBottomOnce = history.length > 0;
+          this.restoreProviderFromDisk()
+            .then(() => this.runAutoCommand())
+            .then(() => this.runAutoLinkStart())
+            .then(() => this.runRoleStartupFlow())
+            .catch(error => {
+              console.warn('[agentrole] startup flow failed', error);
+            });
+        },
+      );
+    } catch (error) {
+      console.warn('[agentrole] initializeChat failed', error);
+      if (this._isMounted) {
+        const fallbackMessage = {
+          id: `init-fallback-${Date.now()}`,
+          sender: 'agent',
+          text: this.getRoleUiText?.('chatMessage') || 'Role initialization failed. Please reopen role.',
+          timestamp: Date.now(),
+          _localOnly: true,
+        };
+        this.setState({ allMessages: [fallbackMessage], messages: [fallbackMessage], visibleCount: 1 });
+      }
+    }
   };
 
   runRoleStartupFlow = async () => {
@@ -1714,6 +999,13 @@ class AgentChat extends React.Component {
     }
     this.hasRoleStartupRun = true;
     if (this.hasAutoCommandRun) {
+      return;
+    }
+    const params = this.props.navigation?.state?.params || {};
+    const autoStoryFragmentText = String(params.autoStoryFragmentText || '').trim();
+    if (autoStoryFragmentText) {
+      await this.confirmRoleStoryFragmentAnalyze(autoStoryFragmentText);
+      this.props.navigation?.setParams?.({ autoStoryFragmentText: null });
       return;
     }
     await this.handleTriggers('/role', null);
@@ -1775,44 +1067,1538 @@ class AgentChat extends React.Component {
     }
   };
 
-  getRoleFilePath = roleSlug => {
-    const safeSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
+  getSpaceRoleKey = () => String(this.agentId || 'default').trim() || 'default';
+
+  getRoleDirPath = roleSlug => {
+    const safeSlug = this.getSpaceRoleKey();
+    return `${this.roleFilesDir}/${safeSlug}`;
+  };
+
+  getLegacyRoleFilePath = roleSlug => {
+    const safeSlug = this.getSpaceRoleKey();
     return `${this.roleFilesDir}/${safeSlug}.json`;
   };
 
-  readRoleFile = async roleSlug => {
+  getRoleFilePath = roleSlug => `${this.getRoleDirPath(roleSlug)}/role.json`;
+
+  getRoleRecoveryBaselinePath = roleSlug => `${this.getRoleDirPath(roleSlug)}/${ROLE_RECOVERY_BASELINE_FILE}`;
+
+  getRoleLastMemoryPath = roleSlug => `${this.getRoleDirPath(roleSlug)}/lastmemory.v1.json`;
+
+  getRoleMemoryLayerPath = (roleSlug, layer, kind = 'memory') => this.roleMemoryStore.getLayerPath(roleSlug, layer, kind);
+
+  getRoleInitialMemoryStatus = async roleSlug => {
+    const safeRoleSlug = this.getSpaceRoleKey();
     try {
-      const path = this.getRoleFilePath(roleSlug);
-      const exists = await RNFS.exists(path);
-      if (!exists) {
-        return null;
-      }
-      const raw = await RNFS.readFile(path, 'utf8');
-      const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === 'object' ? parsed : null;
+      const baselinePath = this.getRoleRecoveryBaselinePath(safeRoleSlug);
+      const baselineExists = await RNFS.exists(baselinePath);
+      const initialVerifiedExists = await RNFS.exists(this.getRoleMemoryLayerPath(safeRoleSlug, 'verified', 'initial'));
+      const initialLikelyExists = await RNFS.exists(this.getRoleMemoryLayerPath(safeRoleSlug, 'likely', 'initial'));
+      const initialFogExists = await RNFS.exists(this.getRoleMemoryLayerPath(safeRoleSlug, 'fog', 'initial'));
+      return {
+        baselineExists,
+        initialVerifiedExists,
+        initialLikelyExists,
+        initialFogExists,
+      };
     } catch (error) {
-      console.warn('Failed to read role file', error);
+      console.warn('Failed to inspect initial memory status', { roleSlug: safeRoleSlug, error });
+      return {
+        baselineExists: false,
+        initialVerifiedExists: false,
+        initialLikelyExists: false,
+        initialFogExists: false,
+      };
+    }
+  };
+
+  readRoleLastMemory = async roleSlug => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    const path = this.getRoleLastMemoryPath(safeRoleSlug);
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) return null;
+      const raw = await RNFS.readFile(path, 'utf8');
+      const parsed = normalizeRoleSnapshot(JSON.parse(raw));
+      if (!parsed || typeof parsed !== 'object') return null;
+      return {
+        version: Number(parsed.version || 1) || 1,
+        schema: String(parsed.schema || 'role_snapshot').trim(),
+        roleSlug: String(parsed?.role?.roleSlug || safeRoleSlug).trim(),
+        roleName: String(parsed?.role?.roleName || safeRoleSlug).trim(),
+        agentId: String(parsed?.role?.agentId || '').trim(),
+        capturedAt: Number(parsed.capturedAt || Date.now()) || Date.now(),
+        source: parsed.source && typeof parsed.source === 'object' ? parsed.source : null,
+        memory: {
+          verified: String(parsed?.memoryLayers?.verified || '').trim(),
+          likely: String(parsed?.memoryLayers?.likely || '').trim(),
+          fog: String(parsed?.memoryLayers?.fog || '').trim(),
+        },
+      };
+    } catch (error) {
+      console.warn('Failed to read role last memory', { roleSlug: safeRoleSlug, path, error });
       return null;
     }
   };
 
-  writeRoleFile = async (roleSlug, data) => {
+  writeRoleLastMemory = async (roleSlug, options = {}) => {
+    const safeRoleSlug = this.getSpaceRoleKey();
     try {
-      const path = this.getRoleFilePath(roleSlug);
-      await RNFS.writeFile(path, JSON.stringify(data || {}, null, 2), 'utf8');
+      const dirOk = await this.ensureRoleFilesDir();
+      if (!dirOk) return false;
+      const roleData = options?.roleData || (await this.readRoleFile(safeRoleSlug));
+      if (!roleData) return false;
+      const data = buildRoleSnapshot({
+        kind: 'lastmemory',
+        roleSlug: safeRoleSlug,
+        roleName: String(roleData.roleName || safeRoleSlug).trim() || safeRoleSlug,
+        agentId: this.agentId,
+        roleData,
+        capturedAt: Date.now(),
+        source: {
+          kind: String(options?.kind || 'before-edit').trim() || 'before-edit',
+          trigger: String(options?.trigger || '').trim(),
+        },
+      });
+      await RNFS.writeFile(this.getRoleLastMemoryPath(safeRoleSlug), JSON.stringify(data, null, 2), 'utf8');
       return true;
     } catch (error) {
-      console.warn('Failed to write role file', error);
+      console.warn('Failed to write role last memory', { roleSlug: safeRoleSlug, error });
+      return false;
+    }
+  };
+
+  captureExistingRoleMemorySnapshot = async (roleSlug, meta = {}) => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || this.getSpaceRoleKey?.() || 'unknown') || 'unknown';
+    try {
+      const roleData = await this.readRoleFile(safeRoleSlug);
+      if (!roleDataHasMemory(roleData)) return null;
+      return await createRoleMemorySnapshot(this, { roleSlug: safeRoleSlug, roleData, meta });
+    } catch (error) {
+      console.warn('Failed to capture existing role memory snapshot', { roleSlug: safeRoleSlug, error });
+      return null;
+    }
+  };
+
+  getRoleLastMemoryStatus = async roleSlug => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    try {
+      const lastMemory = await this.readRoleLastMemory(safeRoleSlug);
+      const roleData = await this.readRoleFile(safeRoleSlug);
+      const baselineExists = await RNFS.exists(this.getRoleRecoveryBaselinePath(safeRoleSlug));
+      return {
+        roleReadable: !!roleData,
+        baselineExists,
+        lastMemoryExists: !!lastMemory,
+        capturedAt: lastMemory?.capturedAt || 0,
+        verifiedReady: !!String(lastMemory?.memory?.verified || '').trim(),
+        likelyReady: !!String(lastMemory?.memory?.likely || '').trim(),
+        fogReady: !!String(lastMemory?.memory?.fog || '').trim(),
+      };
+    } catch (error) {
+      console.warn('Failed to inspect last memory status', { roleSlug: safeRoleSlug, error });
+      return {
+        roleReadable: false,
+        baselineExists: false,
+        lastMemoryExists: false,
+        capturedAt: 0,
+        verifiedReady: false,
+        likelyReady: false,
+        fogReady: false,
+      };
+    }
+  };
+
+  restoreRoleFromLastMemory = async roleSlug => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    const currentRoleData = await this.readRoleFile(safeRoleSlug);
+    if (!currentRoleData) return null;
+
+    const path = this.getRoleLastMemoryPath(safeRoleSlug);
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) return null;
+      const raw = await RNFS.readFile(path, 'utf8');
+      const snapshot = normalizeRoleSnapshot(JSON.parse(raw));
+      if (!snapshot || typeof snapshot !== 'object') return null;
+      const lastRoleSlug = String(snapshot?.role?.roleSlug || snapshot?.roleData?.roleSlug || '').trim();
+      if (lastRoleSlug && lastRoleSlug !== safeRoleSlug) {
+        console.warn('Last memory role slug mismatch', { roleSlug: safeRoleSlug, lastMemoryRoleSlug: lastRoleSlug });
+        return null;
+      }
+
+      await this.writeRoleLastMemory(safeRoleSlug, { roleData: currentRoleData, kind: 'before-lastmemory-restore', trigger: '/role recover' });
+
+      const roleName = String(snapshot?.role?.roleName || snapshot?.roleData?.roleName || currentRoleData.roleName || safeRoleSlug).trim() || safeRoleSlug;
+      const rolePayload = {
+        ...(currentRoleData || {}),
+        ...(snapshot?.roleData || {}),
+        roleSlug: safeRoleSlug,
+        roleName,
+        memoryLayers: snapshot?.memoryLayers,
+        initialMemoryLayers: snapshot?.initialMemoryLayers,
+        updatedAt: Date.now(),
+        lastRestoredFromLastMemoryAt: Date.now(),
+        lastMemoryVersion: Number(snapshot?.version || 1) || 1,
+      };
+
+      await this.writeRoleFile(safeRoleSlug, rolePayload, { createBackups: false });
+      const restoredRoleData = await this.readRoleFile(safeRoleSlug);
+      if (!restoredRoleData) return null;
+      return {
+        roleData: restoredRoleData,
+        restoredFrom: 'lastmemory',
+        source: {
+          roleName,
+          roleSlug: lastRoleSlug || safeRoleSlug,
+          capturedAt: Number(snapshot?.capturedAt || Date.now()) || Date.now(),
+          version: Number(snapshot?.version || 1) || 1,
+        },
+      };
+    } catch (error) {
+      console.warn('Failed to restore role from last memory', { roleSlug: safeRoleSlug, path, error });
+      return null;
+    }
+  };
+
+  fetchNamespaceKeyValueMap = async namespaceId => {
+    if (!namespaceId) return {};
+    await BlueElectrum.ping();
+    if (typeof BlueElectrum.waitTillConnected === 'function') {
+      await BlueElectrum.waitTillConnected();
+    }
+    const history = await BlueElectrum.blockchainKeva_getKeyValues(getNamespaceScriptHash(namespaceId), -1);
+    const keyValues = Array.isArray(history?.keyvalues) ? history.keyvalues : [];
+    const result = {};
+    const resultMeta = {};
+    const getKvOrder = (kv, index) => {
+      const height = Number(kv?.height || kv?.block_height || kv?.confirmed_height || 0) || 0;
+      const time = Number(kv?.time || kv?.timestamp || 0) || 0;
+      const txNum = Number(kv?.tx_num || kv?.txNum || kv?.n || 0) || 0;
+      return { height, time, txNum, index };
+    };
+    const isNewerKv = (next, prev) => {
+      if (!prev) return true;
+      if (next.height !== prev.height) return next.height > prev.height;
+      if (next.time !== prev.time) return next.time > prev.time;
+      if (next.txNum !== prev.txNum) return next.txNum > prev.txNum;
+      return next.index < prev.index;
+    };
+    keyValues.forEach((kv, index) => {
+      const key = kv?.key ? decodeBase64(kv.key) : '';
+      const normalizedKey = String(key || '').trim();
+      if (!normalizedKey) return;
+      const meta = getKvOrder(kv, index);
+      if (!isNewerKv(meta, resultMeta[normalizedKey])) return;
+      const value = kv?.value ? Buffer.from(kv.value, 'base64').toString('utf-8') : '';
+      result[normalizedKey] = String(value || '');
+      resultMeta[normalizedKey] = meta;
+    });
+    return result;
+  };
+
+  readSingleOnChainMemoryValue = async (namespaceId, targetKey) => {
+    const normalizedTargetKey = String(targetKey || '').trim();
+    if (!namespaceId || !normalizedTargetKey) return '';
+    const kvMap = await this.fetchNamespaceKeyValueMap(namespaceId);
+    return String(kvMap[normalizedTargetKey] || '').trim();
+  };
+
+  getOnChainMemoryStatus = async () => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    const namespaceId = this.props?.navigation?.state?.params?.namespaceId;
+    if (!namespaceId) {
+      return {
+        nameExists: false,
+        verifiedExists: false,
+        likelyExists: false,
+        fogExists: false,
+      };
+    }
+    try {
+      const nameValue = await this.readSingleOnChainMemoryValue(namespaceId, `role.memory.${safeRoleSlug}.name`);
+      const verifiedValue = await this.readSingleOnChainMemoryValue(namespaceId, `role.memory.${safeRoleSlug}.verified`);
+      const likelyValue = await this.readSingleOnChainMemoryValue(namespaceId, `role.memory.${safeRoleSlug}.likely`);
+      const fogValue = await this.readSingleOnChainMemoryValue(namespaceId, `role.memory.${safeRoleSlug}.fog`);
+      return {
+        nameExists: !!nameValue,
+        verifiedExists: !!verifiedValue,
+        likelyExists: !!likelyValue,
+        fogExists: !!fogValue,
+      };
+    } catch (error) {
+      console.warn('Failed to read on-chain memory status', { roleSlug: safeRoleSlug, error });
+      return {
+        nameExists: false,
+        verifiedExists: false,
+        likelyExists: false,
+        fogExists: false,
+      };
+    }
+  };
+
+  buildDoppelMemoryConfirmMessage = draft => {
+    const roleName = String(draft?.roleName || draft?.sourceRoleSlug || draft?.inputId || '').trim();
+    return [
+      this.getRoleUiText('doppelMemoryConfirm'),
+      `${this.getRoleUiText('doppelMemorySourceId') || 'Source ID'}：${draft?.inputId || '-'}`,
+      `${this.getRoleUiText('doppelMemorySourceNamespace') || 'Namespace'}：${draft?.namespaceId || '-'}`,
+      roleName,
+      '',
+      `NAME：${draft?.nameExists ? '✅' : '-'}`,
+      `VERIFIED：${draft?.verifiedExists ? '✅' : '-'}`,
+      `LIKELY：${draft?.likelyExists ? '✅' : '-'}`,
+      `FOG：${draft?.fogExists ? '✅' : '-'}`,
+      '',
+      `[[/role onchainmemory doppel do|${this.getRoleUiText('confirm') || 'Confirm'}]]   [[/role onchainmemory|${this.getRoleUiText('back')}]]`,
+    ].join('\n');
+  };
+
+  restoreRoleFromDoppelMemory = async draft => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    const currentRoleData = await this.readRoleFile(safeRoleSlug);
+    const memoryLayers = {
+      verified: String(draft?.memoryLayers?.verified || '').trim(),
+      likely: String(draft?.memoryLayers?.likely || '').trim(),
+      fog: String(draft?.memoryLayers?.fog || '').trim(),
+    };
+    const roleName = String(draft?.roleName || currentRoleData?.roleName || safeRoleSlug).trim() || safeRoleSlug;
+    if (!roleName && !memoryLayers.verified && !memoryLayers.likely && !memoryLayers.fog) return null;
+
+    if (currentRoleData) {
+      await this.writeRoleLastMemory(safeRoleSlug, { roleData: currentRoleData, kind: 'before-doppel-onchain-restore', trigger: '/role onchainmemory doppel' });
+      await this.captureExistingRoleMemorySnapshot(safeRoleSlug, { kind: 'before-doppel-onchain-restore', trigger: '/role onchainmemory doppel' });
+    }
+
+    const snapshot = buildRoleSnapshot({
+      kind: 'doppel-onchain-memory',
+      roleSlug: safeRoleSlug,
+      roleName,
+      agentId: this.agentId,
+      roleData: {
+        ...(currentRoleData || {}),
+        roleSlug: safeRoleSlug,
+        roleName,
+        memoryLayers,
+        initialMemoryLayers: memoryLayers,
+        memory: this.composeRoleMemoryCard(roleName, memoryLayers),
+        initialMemory: this.composeRoleMemoryCard(roleName, memoryLayers),
+        updatedAt: Date.now(),
+      },
+      memoryLayers,
+      initialMemoryLayers: memoryLayers,
+      capturedAt: Date.now(),
+      source: {
+        kind: 'doppel-onchain-memory',
+        trigger: '/role onchainmemory doppel',
+        inputId: draft?.inputId,
+        namespaceId: draft?.namespaceId,
+        sourceRoleSlug: draft?.sourceRoleSlug,
+      },
+      state: {
+        roleLangCode: this.getRoleLangCode?.() || this.state?.roleLangCode || 'en',
+      },
+      conversationSummary: currentRoleData ? await this.readConversationSummary(safeRoleSlug) : DEFAULT_CONVERSATION_SUMMARY,
+      conversationBuffer: currentRoleData ? await this.readConversationBuffer(safeRoleSlug) : '',
+    });
+    await this.applyRoleSnapshot(snapshot);
+    const restoredRoleData = await this.readRoleFile(safeRoleSlug);
+    if (!restoredRoleData) return null;
+    return {
+      roleData: restoredRoleData,
+      restoredFrom: 'doppel-onchain-memory',
+      source: {
+        roleName,
+        roleSlug: safeRoleSlug,
+        inputId: draft?.inputId,
+        namespaceId: draft?.namespaceId,
+        capturedAt: Date.now(),
+        version: 1,
+      },
+    };
+  };
+
+  restoreRoleFromOnChainMemory = async () => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    const currentRoleData = await this.readRoleFile(safeRoleSlug);
+    const namespaceId = this.props?.navigation?.state?.params?.namespaceId;
+    if (!namespaceId) return null;
+
+    try {
+      const nameValue = await this.readSingleOnChainMemoryValue(namespaceId, `role.memory.${safeRoleSlug}.name`);
+      const verifiedValue = await this.readSingleOnChainMemoryValue(namespaceId, `role.memory.${safeRoleSlug}.verified`);
+      const likelyValue = await this.readSingleOnChainMemoryValue(namespaceId, `role.memory.${safeRoleSlug}.likely`);
+      const fogValue = await this.readSingleOnChainMemoryValue(namespaceId, `role.memory.${safeRoleSlug}.fog`);
+      const roleName = String(nameValue || currentRoleData?.roleName || safeRoleSlug).trim() || safeRoleSlug;
+      const memoryLayers = {
+        verified: String(verifiedValue || '').trim(),
+        likely: String(likelyValue || '').trim(),
+        fog: String(fogValue || '').trim(),
+      };
+      if (!roleName && !memoryLayers.verified && !memoryLayers.likely && !memoryLayers.fog) {
+        return null;
+      }
+
+      if (currentRoleData) {
+        await this.writeRoleLastMemory(safeRoleSlug, { roleData: currentRoleData, kind: 'before-onchain-restore', trigger: '/role onchainmemory' });
+        await this.captureExistingRoleMemorySnapshot(safeRoleSlug, { kind: 'before-onchain-restore', trigger: '/role onchainmemory' });
+      }
+      const snapshot = buildRoleSnapshot({
+        kind: 'onchain-memory',
+        roleSlug: safeRoleSlug,
+        roleName,
+        agentId: this.agentId,
+        roleData: {
+          ...(currentRoleData || {}),
+          roleSlug: safeRoleSlug,
+          roleName,
+          memoryLayers,
+          initialMemoryLayers: memoryLayers,
+          memory: this.composeRoleMemoryCard(roleName, memoryLayers),
+          initialMemory: this.composeRoleMemoryCard(roleName, memoryLayers),
+          updatedAt: Date.now(),
+        },
+        memoryLayers,
+        initialMemoryLayers: memoryLayers,
+        capturedAt: Date.now(),
+        source: { kind: 'onchain-memory', trigger: '/role onchainmemory' },
+        state: {
+          roleLangCode: this.getRoleLangCode?.() || this.state?.roleLangCode || 'en',
+        },
+        conversationSummary: currentRoleData ? await this.readConversationSummary(safeRoleSlug) : DEFAULT_CONVERSATION_SUMMARY,
+        conversationBuffer: currentRoleData ? await this.readConversationBuffer(safeRoleSlug) : '',
+      });
+      await this.applyRoleSnapshot(snapshot);
+      const restoredRoleData = await this.readRoleFile(safeRoleSlug);
+      if (!restoredRoleData) return null;
+      return {
+        roleData: restoredRoleData,
+        restoredFrom: 'onchain-memory',
+        source: {
+          roleName,
+          roleSlug: safeRoleSlug,
+          capturedAt: Date.now(),
+          version: 1,
+        },
+      };
+    } catch (error) {
+      console.warn('Failed to restore role from on-chain memory', { roleSlug: safeRoleSlug, error });
+      return null;
+    }
+  };
+
+
+  getConversationSummaryPath = roleSlug => `${this.getRoleDirPath(roleSlug)}/conversation_summary.json`;
+
+  readConversationSummary = async roleSlug => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
+    const path = this.getConversationSummaryPath(safeRoleSlug);
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) return normalizeConversationSummary(DEFAULT_CONVERSATION_SUMMARY, safeRoleSlug);
+      const raw = await RNFS.readFile(path, 'utf8');
+      return normalizeConversationSummary(JSON.parse(raw), safeRoleSlug);
+    } catch (error) {
+      console.warn('Failed to read conversation summary', { roleSlug: safeRoleSlug, error });
+      try {
+        const brokenPath = `${path}.broken`;
+        const raw = await RNFS.readFile(path, 'utf8');
+        await RNFS.writeFile(brokenPath, raw || '', 'utf8');
+      } catch {}
+      return normalizeConversationSummary(DEFAULT_CONVERSATION_SUMMARY, safeRoleSlug);
+    }
+  };
+
+  writeConversationSummary = async (roleSlug, summary) => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
+    const path = this.getConversationSummaryPath(safeRoleSlug);
+    const tmpPath = `${path}.tmp_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    try {
+      const dirOk = await this.ensureRoleFilesDir();
+      if (!dirOk) return false;
+      const normalized = normalizeConversationSummary(summary, safeRoleSlug);
+      await RNFS.writeFile(tmpPath, JSON.stringify(normalized, null, 2), 'utf8');
+      if (await RNFS.exists(path)) {
+        try { await RNFS.unlink(path); } catch {}
+      }
+      await RNFS.moveFile(tmpPath, path);
+      return true;
+    } catch (error) {
+      console.warn('Failed to write conversation summary', { roleSlug: safeRoleSlug, error });
+      try { await RNFS.unlink(tmpPath); } catch {}
+      return false;
+    }
+  };
+
+  getConversationBufferPath = roleSlug => `${this.getRoleDirPath(roleSlug)}/conversation_buffer.jsonl`;
+
+  appendConversationBufferEntry = async (roleSlug, entry) => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
+    const path = this.getConversationBufferPath(safeRoleSlug);
+    try {
+      const dirOk = await this.ensureRoleFilesDir();
+      if (!dirOk) return false;
+      const line = `${JSON.stringify({
+        ts: Number(entry?.ts || Date.now()),
+        role: String(entry?.role || '').trim() || 'unknown',
+        content: String(entry?.content || '').trim(),
+        messageId: String(entry?.messageId || '').trim(),
+      })}\n`;
+      await RNFS.appendFile(path, line, 'utf8');
+      return true;
+    } catch (error) {
+      console.warn('Failed to append conversation buffer entry', { roleSlug: safeRoleSlug, error });
+      return false;
+    }
+  };
+
+  readConversationBuffer = async roleSlug => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
+    const path = this.getConversationBufferPath(safeRoleSlug);
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) return '';
+      return String(await RNFS.readFile(path, 'utf8') || '');
+    } catch (error) {
+      console.warn('Failed to read conversation buffer raw', { roleSlug: safeRoleSlug, error });
+      return '';
+    }
+  };
+
+  readConversationBufferEntries = async roleSlug => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
+    try {
+      const raw = await this.readConversationBuffer(safeRoleSlug);
+      if (!raw) return [];
+      return String(raw || '')
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => {
+          try {
+            const obj = JSON.parse(line);
+            return {
+              ts: Number(obj?.ts || 0),
+              role: String(obj?.role || '').trim() || 'unknown',
+              content: String(obj?.content || '').trim(),
+              messageId: String(obj?.messageId || '').trim(),
+            };
+          } catch {
+            return null;
+          }
+        })
+        .filter(item => item && item.content);
+    } catch (error) {
+      console.warn('Failed to read conversation buffer', { roleSlug: safeRoleSlug, error });
+      return [];
+    }
+  };
+
+  consumeConversationBufferEntries = async (roleSlug, consumedCount = 0) => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
+    const path = this.getConversationBufferPath(safeRoleSlug);
+    try {
+      const entries = await this.readConversationBufferEntries(safeRoleSlug);
+      const remain = consumedCount > 0 ? entries.slice(consumedCount) : entries;
+      if (!remain.length) {
+        if (await RNFS.exists(path)) {
+          await RNFS.writeFile(path, '', 'utf8');
+        }
+        return true;
+      }
+      const nextRaw = remain.map(item => JSON.stringify(item)).join('\n') + '\n';
+      await RNFS.writeFile(path, nextRaw, 'utf8');
+      return true;
+    } catch (error) {
+      console.warn('Failed to consume conversation buffer', { roleSlug: safeRoleSlug, error });
+      return false;
+    }
+  };
+
+  clearConversationBuffer = async roleSlug => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
+    const path = this.getConversationBufferPath(safeRoleSlug);
+    try {
+      if (await RNFS.exists(path)) {
+        await RNFS.writeFile(path, '', 'utf8');
+      }
+      return true;
+    } catch (error) {
+      console.warn('Failed to clear conversation buffer', { roleSlug: safeRoleSlug, error });
+      return false;
+    }
+  };
+
+  clearConversationSummary = async roleSlug => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
+    const path = this.getConversationSummaryPath(safeRoleSlug);
+    try {
+      if (await RNFS.exists(path)) {
+        await RNFS.unlink(path);
+      }
+      return true;
+    } catch (error) {
+      console.warn('Failed to clear conversation summary', { roleSlug: safeRoleSlug, error });
+      return false;
+    }
+  };
+
+  exportRoleRecord = async roleSlug => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || this.state.activeRoleSlug || '') || '';
+    if (!safeRoleSlug) {
+      this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+      return false;
+    }
+    const roleData = await this.readRoleFile(safeRoleSlug);
+    if (!roleData) {
+      this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+      return false;
+    }
+    const summary = await this.readConversationSummary(safeRoleSlug);
+    const bufferEntriesRaw = await this.readConversationBufferEntries(safeRoleSlug);
+    const bufferEntriesExport = Array.isArray(bufferEntriesRaw)
+      ? bufferEntriesRaw
+          .filter(entry => {
+            const role = String(entry?.role || '').toLowerCase();
+            const sender = role === 'user' ? 'user' : 'agent';
+            const text = String(entry?.content || '').trim();
+            if (!text) return false;
+            if (isRoleExportSystemMessage({ text, sender })) return false;
+            if (sender === 'user' && /^\//.test(text)) return false;
+            return true;
+          })
+          .map(entry => JSON.stringify({
+            ts: Number(entry?.ts || Date.now()),
+            role: String(entry?.role || '').toLowerCase() === 'user' ? 'user' : 'assistant',
+            content: String(entry?.content || '').trim(),
+            messageId: String(entry?.messageId || ''),
+          }))
+          .join('\n')
+      : '';
+    const todayKey = getLocalDateKey();
+    const todayRaw = await this.readDayMessages(todayKey);
+    const todayConversationMessages = (Array.isArray(todayRaw) ? todayRaw : [])
+      .filter(message => ['user', 'agent'].includes(String(message?.sender || '').trim().toLowerCase()))
+      .filter(message => {
+        const sender = String(message?.sender || '').trim().toLowerCase();
+        const text = String(message?.text || '').trim();
+        if (!text) return false;
+        if (isRoleExportSystemMessage({ text, sender })) return false;
+        if (sender === 'user' && /^\//.test(text)) return false;
+        return true;
+      })
+      .map(message => ({
+        ts: Number(message?.timestamp || message?.ts || Date.now()),
+        role: String(message?.sender || '').toLowerCase() === 'user' ? 'user' : 'assistant',
+        text: String(message?.text || '').trim(),
+        messageId: String(message?.id || message?.requestId || message?.messageId || ''),
+      }))
+      .filter(item => item.text);
+    const snapshot = buildRoleSnapshot({
+      kind: 'export',
+      roleSlug: safeRoleSlug,
+      roleName: String(roleData?.roleName || safeRoleSlug).trim() || safeRoleSlug,
+      agentId: this.agentId,
+      roleData,
+      state: {
+        currentRole: this.state.activeRoleSlug === safeRoleSlug,
+        roleLangCode: this.getRoleLangCode?.() || this.state.roleLangCode || 'en',
+        lastSelectedRoleName: this.state.lastSelectedRole,
+      },
+      conversationSummary: summary,
+      conversationBuffer: bufferEntriesExport,
+      todayConversationMessages,
+      capturedAt: Date.now(),
+      source: { kind: 'manual-export', trigger: '/role export' },
+    });
+    const payload = serializeRoleSnapshotToLegacyText(snapshot);
+    const downloadsRoot = RNFS.DownloadDirectoryPath || RNFS.ExternalStorageDirectoryPath || RNFS.ExternalDirectoryPath;
+    const exportDir = `${downloadsRoot}/xkeva`;
+    if (!(await RNFS.exists(exportDir))) {
+      await RNFS.mkdir(exportDir);
+    }
+    const safeRoleNameForFile = String(roleData?.roleName || safeRoleSlug)
+      .trim()
+      .replace(/[\\/:*?"<>|]+/g, '-')
+      .replace(/[\u0000-\u001f\u007f]/g, '')
+      .replace(/\s+/g, ' ');
+    const now = new Date();
+    const compactLabel = `${String(now.getFullYear()).slice(-2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    const preferredPath = `${exportDir}/${safeRoleNameForFile}-${this.agentId}-xkeva-${compactLabel}.txt`;
+    const fallbackPath = `${exportDir}/role-export-${safeRoleSlug}-${this.agentId}-${compactLabel}.txt`;
+    let filePath = preferredPath;
+    try {
+      await RNFS.writeFile(preferredPath, payload, 'utf8');
+      const ok = await RNFS.exists(preferredPath);
+      if (!ok) {
+        throw new Error('preferred_export_missing_after_write');
+      }
+    } catch (error) {
+      filePath = fallbackPath;
+      await RNFS.writeFile(fallbackPath, payload, 'utf8');
+      const fallbackOk = await RNFS.exists(fallbackPath);
+      if (!fallbackOk) {
+        throw new Error(`export_write_failed:${String(error?.message || error || 'unknown')}`);
+      }
+    }
+    this._lastExportedRoleRecordPath = filePath;
+    this.replyFromAgent(`${this.getRoleUiText('exportRecordSuccess', { path: filePath })}\n\n[[/role openexport|${this.getRoleUiText('openRecord')}]]   [[/role|${this.getRoleUiText('continueChat')}]]`);
+    return true;
+  };
+
+  parseRoleRecordPayload = raw => parseRoleSnapshotPayload(raw);
+
+  parseRoleRecordText = raw => parseRoleSnapshotPayload(raw);
+
+  applyRoleSnapshot = async snapshotInput => {
+    const snapshot = normalizeRoleSnapshot(snapshotInput);
+    const safeRoleSlug = this.getSpaceRoleKey();
+    const roleName = String(snapshot?.role?.roleName || snapshot?.roleData?.roleName || safeRoleSlug).trim() || safeRoleSlug;
+    const roleDir = this.getRoleDirPath(safeRoleSlug);
+    await this.ensureRoleFilesDir();
+    if (!(await RNFS.exists(roleDir))) {
+      await RNFS.mkdir(roleDir);
+    }
+    const rolePayload = {
+      ...(snapshot?.roleData || {}),
+      roleSlug: safeRoleSlug,
+      roleName,
+      memoryLayers: snapshot?.memoryLayers,
+      initialMemoryLayers: snapshot?.initialMemoryLayers,
+    };
+    await this.writeRoleFile(safeRoleSlug, rolePayload);
+    await this.writeConversationSummary(safeRoleSlug, snapshot?.artifacts?.conversationSummary || DEFAULT_CONVERSATION_SUMMARY);
+    await RNFS.writeFile(this.getConversationBufferPath(safeRoleSlug), String(snapshot?.artifacts?.conversationBuffer || ''), 'utf8');
+
+    const todayMessages = Array.isArray(snapshot?.artifacts?.todayConversationMessages)
+      ? snapshot.artifacts.todayConversationMessages
+      : [];
+    if (todayMessages.length) {
+      const dateKey = getLocalDateKey();
+      const mappedMessages = todayMessages
+        .map(item => {
+          const timestamp = Number(item?.ts || item?.timestamp || Date.now()) || Date.now();
+          const sender = String(item?.role || item?.sender || '').toLowerCase() === 'user' ? 'user' : 'agent';
+          const text = String(item?.text || item?.content || '').trim();
+          if (!text) return null;
+          return {
+            id: String(item?.messageId || item?.id || `${timestamp}-${Math.random().toString(36).slice(2, 8)}`),
+            text,
+            sender,
+            timestamp,
+            _isHistory: false,
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+      await RNFS.writeFile(this.getDayFilePath(dateKey), JSON.stringify(mappedMessages), 'utf8');
+    }
+
+    await this.upsertRoleIndexEntry({
+      roleName,
+      roleSlug: safeRoleSlug,
+      updatedAt: Number(snapshot?.role?.updatedAt || snapshot?.roleData?.updatedAt || Date.now()),
+    });
+    await this.saveLastSelectedRole(roleName);
+    await this.saveActiveRoleState(roleName, safeRoleSlug);
+    await this.saveCurrentSummonedRole(roleName, safeRoleSlug);
+    this.activeRoleSlug = safeRoleSlug;
+    await new Promise(resolve => this.setState({ activeRoleSlug: safeRoleSlug, currentSummonedRole: { roleSlug: safeRoleSlug, roleName } }, resolve));
+    return { roleSlug: safeRoleSlug, roleName };
+  };
+
+  importRoleRecord = async () => {
+    try {
+      const picked = await DocumentPicker.pick({
+        type: [DocumentPicker.types.plainText],
+        copyTo: 'cachesDirectory',
+      });
+      const file = Array.isArray(picked) ? picked[0] : picked;
+      const readPath = file?.fileCopyUri || file?.uri;
+      if (!readPath) return false;
+      const raw = await RNFS.readFile(readPath, 'utf8');
+      const snapshot = normalizeRoleSnapshot(this.parseRoleRecordPayload(raw));
+      const safeRoleSlug = Rolecards.normalizeRoleSlug(snapshot?.role?.roleSlug || snapshot?.roleData?.roleSlug || snapshot?.roleData?.roleName || '') || '';
+      if (!safeRoleSlug) {
+        throw new Error('invalid_role_export');
+      }
+      await this.captureExistingRoleMemorySnapshot(this.getSpaceRoleKey(), { kind: 'before-record-import', trigger: '/role import' });
+      await this.applyRoleSnapshot(snapshot);
+      await this.writeRoleRecoveryBaseline(this.getSpaceRoleKey());
+      this.replyFromAgent(this.getRoleUiText('importRecordSuccess'));
+      await this.handleTriggers('/role', null);
+      return true;
+    } catch (error) {
+      if (!DocumentPicker.isCancel(error)) {
+        this.replyFromAgent(this.getRoleUiText('importRecordFailed', { error: String(error?.message || error || 'unknown') }));
+      }
+      return false;
+    }
+  };
+
+  replyFromAgentLocal = text => this.replyFromAgent(text, { _localOnly: true, _useSatoshiAvatar: true });
+
+  beginRoleFragmentImport = async () => {
+    await new Promise(resolve => this.setState({ pendingRoleFragmentImport: true }, resolve));
+    this.replyFromAgentLocal(this.getRoleUiText('importFragmentPrompt') || 'Paste a character fragment, and I will analyze it into a role.');
+    return true;
+  };
+
+  importRoleFragment = async fragmentText => {
+    const fragment = String(fragmentText || '').trim();
+    if (!fragment) {
+      this.replyFromAgentLocal(this.getRoleUiText('importFragmentEmpty') || 'Please enter a character fragment first.');
+      await this.beginRoleFragmentImport();
+      return false;
+    }
+
+    const roleModelStatus = await this.ensureRoleModelReady({ source: this.roleEntrySource || 'role' });
+    if (!roleModelStatus?.ok) {
+      return false;
+    }
+
+    this.replyFromAgentLocal(this.getRoleUiText('importFragmentAnalyzing') || 'Analyzing fragment...');
+    const roleLang = this.getRoleLangCode?.() || this.state.roleLangCode || 'en';
+    const languageInstruction = buildRoleLanguageInstruction(roleLang);
+    const prompt = buildRoleFragmentImportPrompt({ fragment, roleLang, languageInstruction });
+    let raw = '';
+    try {
+      raw = await this.callLLMSilent(prompt, { skipRoleContext: true });
+    } catch (error) {
+      raw = '';
+    }
+
+    const parsed = parseRoleFragmentImportResult({ raw, fragment, fallbackName: this.getRoleUiText('importedRoleName') || 'Imported Role' });
+    const roleName = String(parsed?.roleName || '').trim() || (this.getRoleUiText('importedRoleName') || 'Imported Role');
+    const roleSlug = this.getSpaceRoleKey();
+    const memoryLayers = parsed?.memoryLayers || {};
+    const memory = this.composeRoleMemoryCard(roleName, memoryLayers);
+    const now = Date.now();
+    const writeOk = await this.writeRoleFile(roleSlug, {
+      roleName,
+      roleSlug,
+      memory,
+      initialMemory: memory,
+      memoryLayers,
+      initialMemoryLayers: memoryLayers,
+      generationStatus: raw ? 'fragment_import' : 'fragment_import_fallback',
+      importFragment: fragment,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const readBack = writeOk ? await this.readRoleFile(roleSlug) : null;
+    if (!writeOk || !readBack) {
+      this.replyFromAgentLocal(this.getRoleUiText('importFragmentFailed', { error: 'write_failed' }) || 'Import fragment failed: write_failed');
+      return false;
+    }
+
+    await this.writeRoleRecoveryBaseline(roleSlug);
+    await this.upsertRoleIndexEntry({ roleName, roleSlug, updatedAt: now });
+    const refreshedCards = await this.loadLocalRoleCardsPage(0);
+    this.replyFromAgentLocal(this.getRoleUiText('importFragmentSuccess', { name: roleName }) || `Fragment imported: ${roleName}`);
+    await this.finalizeRoleActivation({ name: roleName, roleSlug, refreshedCards, clearDuplicate: true });
+    return true;
+  };
+
+  beginRoleStoryFragmentImport = async () => {
+    await new Promise(resolve => this.setState({ pendingRoleStoryFragmentImport: true }, resolve));
+    this.replyFromAgentLocal(this.getRoleUiText('importStoryFragmentPrompt') || '请输入一些文字，系统将分析是否有可恢复的全生成宇宙碎片。');
+    return true;
+  };
+
+  confirmRoleStoryFragmentAnalyze = async fragmentText => {
+    const fragment = String(fragmentText || '').trim();
+    if (!fragment) {
+      this.replyFromAgentLocal(this.getRoleUiText('importStoryFragmentEmpty') || 'Please enter some text first.');
+      await this.beginRoleStoryFragmentImport();
+      return false;
+    }
+    await new Promise(resolve => this.setState({
+      pendingRoleStoryFragmentAnalyzeConfirm: true,
+      pendingRoleStoryFragmentText: fragment,
+    }, resolve));
+    this.replyFromAgentLocal([
+      this.getRoleUiText('storyFragmentDataReceived') || '收到数据。',
+      '',
+      this.getRoleUiText('storyFragmentAnalyzePrompt') || '是否开始分析？',
+      '',
+      `[[/role story fragment analyze yes|${this.getRoleUiText('yes') || '是'}]]   [[/role story fragment analyze no|${this.getRoleUiText('no') || '否'}]]`,
+    ].join('\n'));
+    return true;
+  };
+
+  getStorySummaryTagsPath = () => {
+    const storyDir = String(this.getStoryChatDir() || '').replace(/\/+$/, '');
+    const baseDir = storyDir.replace(/\/story$/, '');
+    return `${baseDir || storyDir}/story_summary_tags.json`;
+  };
+
+  normalizeStorySummaryTag = tag => {
+    const raw = String(tag || '').trim();
+    const match = /^#?story([A-Za-z0-9_]+)$/i.exec(raw);
+    if (!match) return '';
+    return `#story${match[1]}`;
+  };
+
+  captureStorySummaryTagFromFragment = async fragmentText => {
+    const text = String(fragmentText || '');
+    if (!/(?:^|\s)#agentstory\b/i.test(text)) {
+      return '';
+    }
+    const match = /(?:^|\s)(#story[A-Za-z0-9_]+)\b/i.exec(text);
+    const storyTag = this.normalizeStorySummaryTag(match?.[1] || '');
+    if (!storyTag) {
+      return '';
+    }
+    const payload = {
+      schema: 'story_summary_tags.v1',
+      storyTag,
+      updatedAt: Date.now(),
+    };
+    try {
+      await RNFS.mkdir(this.getStoryChatDir()).catch(() => {});
+      await RNFS.writeFile(this.getStorySummaryTagsPath(), JSON.stringify(payload, null, 2), 'utf8');
+      return storyTag;
+    } catch (error) {
+      console.warn('Failed to save story summary tag from fragment', error);
+      return '';
+    }
+  };
+
+  readSavedStorySummaryTag = async () => {
+    try {
+      const path = this.getStorySummaryTagsPath();
+      if (!(await RNFS.exists(path))) {
+        return '';
+      }
+      const raw = await RNFS.readFile(path, 'utf8');
+      const parsed = JSON.parse(raw);
+      return this.normalizeStorySummaryTag(parsed?.storyTag || '');
+    } catch (error) {
+      console.warn('Failed to read saved story summary tag', error);
+      return '';
+    }
+  };
+
+  stripStoryFragmentTagsForGeneration = fragmentText => String(fragmentText || '')
+    .replace(/(^|\s)#(?:\[[^\]]+\]|[\p{L}\p{N}\p{Pc}\p{M}_-]+)/gu, '$1')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  openRoleStoryOnChainMenu = async () => {
+    this.replyFromAgent([
+      this.getRoleUiText('onchainStoryMenuTitle') || this.getRoleUiText('onchainStory') || 'On-chain Story',
+      '',
+      `[[/role story onchain local|${this.getRoleUiText('localOnchainStory') || 'Local Story'}]]`,
+      '',
+      `[[/role story onchain doppel|${this.getRoleUiText('doppelStory') || 'Doppel Story'}]]`,
+      '',
+      `[[/role story|${this.getRoleUiText('back')}]]`,
+    ].join('\n'));
+    return true;
+  };
+
+  importLocalOnChainStorySummary = async () => {
+    const namespaceId = this.props?.navigation?.state?.params?.namespaceId;
+    const roleSlug = this.getSpaceRoleKey();
+    if (!namespaceId) {
+      this.replyFromAgent(this.getRoleUiText('missingNamespace'));
+      return false;
+    }
+    this.replyFromAgentLocal(this.getRoleUiText('onchainStoryReading') || 'Reading on-chain story summary...');
+    try {
+      const result = await fetchLocalOnChainStorySummary({ BlueElectrum, namespaceId, roleSlug });
+      const summaryText = String(result?.summary || '').trim();
+      if (!summaryText) {
+        this.replyFromAgentLocal(this.getRoleUiText('onchainStoryFailed') || '(on-chain story failed)');
+        return false;
+      }
+      return await this.importRoleStoryFragment(summaryText, { analyzingText: this.getRoleUiText('onchainStoryAnalyzing') || this.getRoleUiText('importStoryFragmentAnalyzing') });
+    } catch (error) {
+      console.warn('Failed to read local on-chain story summary', error);
+      this.replyFromAgentLocal(this.getRoleUiText('onchainStoryFailed') || '(on-chain story failed)');
+      return false;
+    }
+  };
+
+  beginDoppelOnChainStoryImport = async () => {
+    await new Promise(resolve => this.setState({ pendingDoppelStoryInput: true }, resolve));
+    this.replyFromAgentLocal(this.getRoleUiText('doppelStoryPrompt') || 'Enter the doppel ID to read story summary from:');
+    return true;
+  };
+
+  importDoppelOnChainStorySummary = async rawId => {
+    const inputId = normalizeOnChainStoryId(rawId);
+    if (!inputId) {
+      this.replyFromAgentLocal(this.getRoleUiText('doppelStoryEmpty') || 'Please enter an ID.');
+      await this.beginDoppelOnChainStoryImport();
+      return false;
+    }
+    this.replyFromAgentLocal(this.getRoleUiText('doppelStoryReading') || 'Reading doppel story summary...');
+    try {
+      const result = await fetchDoppelOnChainStorySummary({ BlueElectrum, rawId: inputId });
+      const summaryText = String(result?.summary || '').trim();
+      if (!summaryText) {
+        this.replyFromAgentLocal(this.getRoleUiText('doppelStoryFailed') || '(doppel story failed)');
+        return false;
+      }
+      return await this.importRoleStoryFragment(summaryText, { analyzingText: this.getRoleUiText('onchainStoryAnalyzing') || this.getRoleUiText('importStoryFragmentAnalyzing') });
+    } catch (error) {
+      console.warn('Failed to read doppel on-chain story summary', error);
+      this.replyFromAgentLocal(this.getRoleUiText('doppelStoryFailed') || '(doppel story failed)');
+      return false;
+    }
+  };
+
+  importRoleStoryFragment = async (fragmentText, options = {}) => {
+    const fragment = String(fragmentText || '').trim();
+    if (!fragment) {
+      this.replyFromAgentLocal(this.getRoleUiText('importStoryFragmentEmpty') || 'Please enter a story fragment first.');
+      await this.beginRoleStoryFragmentImport();
+      return false;
+    }
+
+    const roleModelStatus = await this.ensureRoleModelReady({ source: this.roleEntrySource || 'role' });
+    if (!roleModelStatus?.ok) {
+      return false;
+    }
+
+    await this.captureStorySummaryTagFromFragment(fragment);
+    const fragmentForGeneration = this.stripStoryFragmentTagsForGeneration(fragment) || fragment;
+
+    this.replyFromAgentLocal(options.analyzingText || this.getRoleUiText('importStoryFragmentAnalyzing') || 'Analyzing story fragment...');
+    const roleLang = this.getRoleLangCode?.() || this.state.roleLangCode || 'en';
+    const languageInstruction = buildRoleLanguageInstruction(roleLang);
+    const prompt = buildRoleStoryFragmentImportPrompt({ fragment: fragmentForGeneration, roleLang, languageInstruction });
+    let raw = '';
+    try {
+      raw = await this.callLLMSilent(prompt, { skipRoleContext: true });
+    } catch (error) {
+      raw = '';
+    }
+
+    const storySeed = parseRoleStoryFragmentImportResult({
+      raw,
+      fragment: fragmentForGeneration,
+      fallbackTitle: this.getRoleUiText('importedStoryFragmentTitle') || 'Imported Story Fragment',
+    });
+    if (!storySeed?.premise) {
+      this.replyFromAgentLocal(this.getRoleUiText('importStoryFragmentFailed', { error: 'empty_seed' }) || 'Story fragment import failed: empty_seed');
+      return false;
+    }
+
+    await this.confirmImportedRoleStoryFragmentExplore(storySeed);
+    return true;
+  };
+
+  getCurrentRoleNameForStoryExplore = async () => {
+    const currentRole = await this.getCurrentSummonedRoleData().catch(() => null);
+    const roleName = String(
+      currentRole?.roleName ||
+      currentRole?.roleData?.roleName ||
+      this.state.currentSummonedRole?.roleName ||
+      this.state.lastSelectedRole?.roleName ||
+      '',
+    ).trim();
+    if (roleName) {
+      return roleName;
+    }
+    const params = this.props.navigation?.state?.params || {};
+    return String(params.displayName || params.shortCode || this.agentId || 'Agent').trim() || 'Agent';
+  };
+
+  openImportedRoleStoryFragment = async storySeed => {
+    const hasCurrentStory = await this.hasRoleCurrentStory();
+    if (hasCurrentStory) {
+      try {
+        await createRoleStorySnapshot(this);
+      } catch (error) {
+        console.warn('Failed to capture story snapshot before fragment import clear', error);
+        this.replyFromAgentLocal(
+          this.getRoleUiText('storySnapshotFailed', { error: String(error?.message || error || 'unknown') }) || 'Story snapshot failed',
+        );
+        return false;
+      }
+    }
+    await this.openRoleStorySpace({
+      suppressAutoLinkStart: false,
+      clearStoryOnMount: true,
+      autoCommand: '/d new',
+      autoCommandSource: 'story-fragment-import',
+      storyFragmentImport: storySeed,
+    });
+    return true;
+  };
+
+  confirmImportedRoleStoryFragmentExplore = async storySeed => {
+    const agentName = await this.getCurrentRoleNameForStoryExplore();
+    await new Promise(resolve => this.setState({
+      pendingRoleStoryFragmentExplore: true,
+      pendingRoleStoryFragmentSeed: storySeed,
+    }, resolve));
+    this.replyFromAgentLocal([
+      this.getRoleUiText('importStoryFragmentSuccess') || '故事碎片已恢复',
+      '',
+      this.getRoleUiText('storyFragmentExplorePrompt', { agentName }) || `是否派遣${agentName}继续探索？`,
+      '',
+      `[[/role story fragment explore yes|${this.getRoleUiText('yes') || '是'}]]   [[/role story fragment explore no|${this.getRoleUiText('no') || '否'}]]`,
+    ].join('\n'));
+  };
+
+  appendConversationBufferMessage = async (message, forcedRoleSlug = '') => {
+    if (this.chatScope !== 'role') return false;
+    if (!this.shouldPersistRoleMessage(message) || shouldExcludeFromSummary(message)) {
+      return false;
+    }
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(
+      forcedRoleSlug || this.state.activeRoleSlug || this.activeRoleSlug || this.state.currentSummonedRole?.roleSlug || ''
+    ) || '';
+    if (!safeRoleSlug) return false;
+    return this.appendConversationBufferEntry(safeRoleSlug, {
+      ts: Number(message.timestamp || Date.now()),
+      role: message.sender === 'user' ? 'user' : 'assistant',
+      content: String(message.text || '').trim(),
+      messageId: message.id || message.requestId || '',
+    });
+  };
+
+  getSummarizableRoleMessages = (messages = []) => {
+    return (Array.isArray(messages) ? messages : []).filter(message => {
+      if (!message) return false;
+      if (shouldExcludeFromSummary(message)) return false;
+      return (
+        (message.sender === 'user' || message.sender === 'agent') &&
+        message.text &&
+        !message.pending &&
+        !message._localOnly &&
+        message._renderMode !== 'commands'
+      );
+    });
+  };
+
+  readAllRoleChatMessages = async () => {
+    const keys = await this.listDateKeys();
+    this.allDateKeys = keys;
+    if (!keys.length) return [];
+    const dayBuckets = await Promise.all(keys.slice().reverse().map(dateKey => this.readDayMessages(dateKey)));
+    return dayBuckets.reduce((acc, items) => acc.concat(Array.isArray(items) ? items : []), []);
+  };
+
+  scheduleConversationSummaryUpdate = async roleSlug => {
+    if (this.chatScope !== 'role') return;
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || this.activeRoleSlug || this.state.activeRoleSlug || '') || '';
+    if (!safeRoleSlug) return;
+    if (this.isUpdatingConversationSummary) {
+      this.pendingConversationSummaryRoleSlug = safeRoleSlug;
+      return;
+    }
+    this.isUpdatingConversationSummary = true;
+    try {
+      await this.updateConversationSummary(safeRoleSlug);
+    } finally {
+      this.isUpdatingConversationSummary = false;
+      const pendingRoleSlug = this.pendingConversationSummaryRoleSlug;
+      this.pendingConversationSummaryRoleSlug = null;
+      if (pendingRoleSlug && pendingRoleSlug !== safeRoleSlug) {
+        this.scheduleConversationSummaryUpdate(pendingRoleSlug);
+      }
+    }
+  };
+
+  updateConversationSummary = async roleSlug => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || '') || '';
+    if (!safeRoleSlug || typeof this.callLLMSilent !== 'function' || !this.state.llmConfig?.provider) {
+      return false;
+    }
+
+    const bufferEntriesRaw = await this.readConversationBufferEntries(safeRoleSlug);
+    const bufferEntries = Array.isArray(bufferEntriesRaw)
+      ? bufferEntriesRaw.filter(entry => {
+          if (!entry || !entry.content) return false;
+          return !shouldExcludeFromSummary({
+            text: String(entry.content || ''),
+            sender: String(entry.role || '').toLowerCase() === 'user' ? 'user' : 'assistant',
+            _localOnly: false,
+            _renderMode: '',
+          });
+        })
+      : [];
+    if (bufferEntries.length < LLM_HISTORY_LIMIT) {
+      return false;
+    }
+
+    const consumedEntries = bufferEntries.slice(0, LLM_HISTORY_LIMIT);
+    const summary = await this.readConversationSummary(safeRoleSlug);
+    const transcript = consumedEntries
+      .map(entry => `${entry.role === 'user' ? 'USER' : 'ROLE'}: ${String(entry.content || '').trim()}`)
+      .join('\n\n');
+
+    const prompt = buildConversationSummaryUpdatePrompt({
+      summary,
+      transcript,
+    });
+
+    let parsed = null;
+    try {
+      const raw = await this.callLLMSilent(prompt, { skipRoleContext: true });
+      parsed = JSON.parse(String(raw || '').trim());
+    } catch (error) {
+      console.warn('Conversation summary update failed', { roleSlug: safeRoleSlug, error });
+      return false;
+    }
+
+    const nextSummary = normalizeConversationSummary({
+      ...summary,
+      roleSlug: safeRoleSlug,
+      updatedAt: Date.now(),
+      lastSummarizedAt: Number(consumedEntries[consumedEntries.length - 1]?.ts || summary.lastSummarizedAt || 0),
+      summaryEpoch: Number(summary.summaryEpoch || 0) + 1,
+      facts: [...(summary.facts || []), ...(Array.isArray(parsed?.facts) ? parsed.facts : [])],
+      open_loops: Array.isArray(parsed?.open_loops) && parsed.open_loops.length ? parsed.open_loops : (summary.open_loops || []),
+      recent_arc: Array.isArray(parsed?.recent_arc) ? parsed.recent_arc : (summary.recent_arc || []),
+    }, safeRoleSlug);
+
+    const writeOk = await this.writeConversationSummary(safeRoleSlug, nextSummary);
+    if (!writeOk) {
+      return false;
+    }
+    await this.consumeConversationBufferEntries(safeRoleSlug, consumedEntries.length);
+    return true;
+  };
+
+
+  getRoleCardPath = roleSlug => this.getRoleFilePath(roleSlug);
+
+  readRoleIndex = async () => {
+    try {
+      const exists = await RNFS.exists(this.roleIndexPath);
+      if (!exists) return [];
+      const raw = await RNFS.readFile(this.roleIndexPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.warn('Failed to read role index', { path: this.roleIndexPath, error });
+      return [];
+    }
+  };
+
+  writeRoleIndex = async items => {
+    try {
+      await RNFS.writeFile(this.roleIndexPath, JSON.stringify(Array.isArray(items) ? items : [], null, 2), 'utf8');
+      return true;
+    } catch (error) {
+      console.warn('Failed to write role index', { path: this.roleIndexPath, error });
+      this.replyFromAgent(`Role index write failed:\n${this.roleIndexPath}\n${String(error?.message || error || 'unknown error')}`);
+      return false;
+    }
+  };
+
+  upsertRoleIndexEntry = async ({ roleName, roleSlug, updatedAt = Date.now(), isOnChain = false } = {}) => {
+    const safeRoleName = String(roleName || '').trim();
+    const safeRoleSlug = this.getSpaceRoleKey();
+    if (!safeRoleName || !safeRoleSlug) return false;
+    const entry = {
+      roleName: safeRoleName,
+      roleSlug: safeRoleSlug,
+      updatedAt: Number(updatedAt || Date.now()),
+      lastSummonedAt: Number(updatedAt || Date.now()),
+      isOnChain: !!isOnChain,
+      hasMemory: true,
+    };
+    return this.writeRoleIndex([entry]);
+  };
+
+  removeRoleIndexEntry = async roleSlug => {
+    return this.writeRoleIndex([]);
+  };
+
+  readRoleFilesIndexEntries = async () => {
+    try {
+      const roleData = await this.readRoleFile(this.getSpaceRoleKey());
+      if (!roleData) return [];
+      return [{
+        roleName: String(roleData.roleName || this.getSpaceRoleKey()).trim() || this.getSpaceRoleKey(),
+        roleSlug: this.getSpaceRoleKey(),
+        updatedAt: Number(roleData.updatedAt || roleData.createdAt || Date.now()),
+        lastSummonedAt: Number(roleData.updatedAt || roleData.createdAt || Date.now()),
+        isOnChain: false,
+        hasMemory: true,
+      }];
+    } catch (error) {
+      console.warn('Failed to read role files index entries', error);
+      return [];
+    }
+  };
+
+  getReconciledRoleIndex = async () => {
+    const indexItems = await this.readRoleIndex();
+    const fileItems = await this.readRoleFilesIndexEntries();
+    const bySlug = new Map();
+
+    for (const item of Array.isArray(indexItems) ? indexItems : []) {
+      const roleSlug = Rolecards.normalizeRoleSlug(item?.roleSlug || item?.roleName || '') || '';
+      if (!roleSlug) continue;
+      bySlug.set(roleSlug, {
+        roleName: String(item?.roleName || roleSlug).trim() || roleSlug,
+        roleSlug,
+        updatedAt: Number(item?.updatedAt || item?.lastSummonedAt || 0),
+        lastSummonedAt: Number(item?.lastSummonedAt || item?.updatedAt || 0),
+        isOnChain: !!item?.isOnChain,
+        hasMemory: item?.hasMemory !== false,
+      });
+    }
+
+    for (const item of fileItems) {
+      const roleSlug = Rolecards.normalizeRoleSlug(item?.roleSlug || item?.roleName || '') || '';
+      if (!roleSlug) continue;
+      const prev = bySlug.get(roleSlug);
+      if (!prev) {
+        bySlug.set(roleSlug, { ...item, roleSlug, hasMemory: true });
+        continue;
+      }
+      bySlug.set(roleSlug, {
+        ...prev,
+        roleName: prev.roleName || item.roleName || roleSlug,
+        updatedAt: Math.max(Number(prev.updatedAt || 0), Number(item.updatedAt || 0)),
+        lastSummonedAt: Math.max(Number(prev.lastSummonedAt || 0), Number(item.lastSummonedAt || item.updatedAt || 0)),
+        hasMemory: true,
+      });
+    }
+
+    const reconciled = Array.from(bySlug.values()).sort((a, b) => Number(b?.lastSummonedAt || b?.updatedAt || 0) - Number(a?.lastSummonedAt || a?.updatedAt || 0));
+    const indexJson = JSON.stringify((Array.isArray(indexItems) ? indexItems : []).map(item => ({
+      roleName: String(item?.roleName || '').trim(),
+      roleSlug: Rolecards.normalizeRoleSlug(item?.roleSlug || item?.roleName || '') || '',
+      updatedAt: Number(item?.updatedAt || 0),
+      lastSummonedAt: Number(item?.lastSummonedAt || item?.updatedAt || 0),
+      isOnChain: !!item?.isOnChain,
+      hasMemory: item?.hasMemory !== false,
+    })).filter(item => item.roleSlug), null, 2);
+    const reconciledJson = JSON.stringify(reconciled, null, 2);
+    if (reconciled.length && indexJson !== reconciledJson) {
+      await this.writeRoleIndex(reconciled);
+    }
+    return reconciled;
+  };
+
+  ensureRoleFilesDir = async () => {
+    try {
+      const baseExists = await RNFS.exists(this.agentChatDir);
+      if (!baseExists) {
+        await RNFS.mkdir(this.agentChatDir);
+      }
+      const roleExists = await RNFS.exists(this.roleFilesDir);
+      if (!roleExists) {
+        await RNFS.mkdir(this.roleFilesDir);
+      }
+      const indexExists = await RNFS.exists(this.roleIndexPath);
+      if (!indexExists) {
+        await RNFS.writeFile(this.roleIndexPath, '[]', 'utf8');
+      }
+      return true;
+    } catch (error) {
+      console.warn('Failed to ensure role files dir', {
+        agentChatDir: this.agentChatDir,
+        roleFilesDir: this.roleFilesDir,
+        error,
+      });
+      this.replyFromAgent([
+        'Role card dir prepare failed.',
+        `chatDir=${this.agentChatDir}`,
+        `roleDir=${this.roleFilesDir}`,
+        String(error?.message || error || 'unknown error'),
+      ].join('\n'));
+      return false;
+    }
+  };
+
+  readRoleFile = async roleSlug => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
+    try {
+      const dirOk = await this.ensureRoleFilesDir();
+      if (!dirOk) return null;
+      return await this.roleMemoryStore.readRoleFile(safeRoleSlug);
+    } catch (error) {
+      console.warn('Failed to read role file', { roleSlug: safeRoleSlug, path: this.getRoleFilePath(safeRoleSlug), error });
+      return null;
+    }
+  };
+
+  getRoleRecoveryBaselineData = async roleSlug => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    const roleData = await this.readRoleFile(safeRoleSlug);
+    if (!roleData) return null;
+
+    return buildRoleSnapshot({
+      kind: 'baseline',
+      roleSlug: safeRoleSlug,
+      roleName: String(roleData.roleName || safeRoleSlug).trim() || safeRoleSlug,
+      agentId: this.agentId,
+      roleData,
+      capturedAt: Date.now(),
+      state: {
+        roleLangCode: this.getRoleLangCode?.() || this.state?.roleLangCode || 'en',
+      },
+      source: { kind: 'initial-create', trigger: 'writeRoleRecoveryBaseline' },
+    });
+  };
+
+  readRoleRecoveryBaseline = async roleSlug => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    const path = this.getRoleRecoveryBaselinePath(safeRoleSlug);
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) return null;
+      const raw = await RNFS.readFile(path, 'utf8');
+      const parsed = normalizeRoleSnapshot(JSON.parse(raw));
+      if (!parsed || typeof parsed !== 'object') return null;
+      return {
+        version: Number(parsed.version || 1) || 1,
+        schema: String(parsed.schema || 'role_snapshot').trim(),
+        roleSlug: String(parsed?.role?.roleSlug || safeRoleSlug).trim(),
+        roleName: String(parsed?.role?.roleName || safeRoleSlug).trim(),
+        agentId: String(parsed?.role?.agentId || '').trim(),
+        capturedAt: Number(parsed.capturedAt || Date.now()) || Date.now(),
+        roleLangCode: String(parsed?.artifacts?.state?.roleLangCode || 'en'),
+        memory: {
+          verified: String(parsed?.memoryLayers?.verified || '').trim(),
+          likely: String(parsed?.memoryLayers?.likely || '').trim(),
+          fog: String(parsed?.memoryLayers?.fog || '').trim(),
+        },
+      };
+    } catch (error) {
+      console.warn('Failed to read role recovery baseline', { roleSlug: safeRoleSlug, path, error });
+      return null;
+    }
+  };
+
+  writeRoleRecoveryBaseline = async roleSlug => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    try {
+      const dirOk = await this.ensureRoleFilesDir();
+      if (!dirOk) return false;
+      const roleFileData = await this.readRoleFile(safeRoleSlug);
+      if (!roleFileData) return false;
+
+      const baselinePath = this.getRoleRecoveryBaselinePath(safeRoleSlug);
+      if (await RNFS.exists(baselinePath)) {
+        return true;
+      }
+
+      const data = await this.getRoleRecoveryBaselineData(safeRoleSlug);
+      if (!data) return false;
+      await RNFS.writeFile(baselinePath, JSON.stringify(data, null, 2), 'utf8');
+
+      await this.writeRoleFile(safeRoleSlug, {
+        ...roleFileData,
+        hasRecoveryBaseline: true,
+        recoveryBaselineCreatedAt: Date.now(),
+      });
+
+      return true;
+    } catch (error) {
+      console.warn('Failed to write role recovery baseline', { roleSlug: safeRoleSlug, error });
+      return false;
+    }
+  };
+
+  restoreRoleFromRecoveryBaseline = async roleSlug => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    const currentRoleData = await this.readRoleFile(safeRoleSlug);
+    if (!currentRoleData) return null;
+
+    const path = this.getRoleRecoveryBaselinePath(safeRoleSlug);
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) return null;
+      const raw = await RNFS.readFile(path, 'utf8');
+      const snapshot = normalizeRoleSnapshot(JSON.parse(raw));
+      if (!snapshot || typeof snapshot !== 'object') return null;
+      const baselineRoleSlug = String(snapshot?.role?.roleSlug || snapshot?.roleData?.roleSlug || '').trim();
+      if (baselineRoleSlug && baselineRoleSlug !== safeRoleSlug) {
+        console.warn('Recovery baseline role slug mismatch', { roleSlug: safeRoleSlug, baselineRoleSlug });
+        return null;
+      }
+
+      await this.writeRoleLastMemory(safeRoleSlug, { roleData: currentRoleData, kind: 'before-baseline-restore', trigger: '/r memory rebuild' });
+
+      const roleName = String(snapshot?.role?.roleName || snapshot?.roleData?.roleName || currentRoleData.roleName || safeRoleSlug).trim() || safeRoleSlug;
+      const rolePayload = {
+        ...(currentRoleData || {}),
+        ...(snapshot?.roleData || {}),
+        roleSlug: safeRoleSlug,
+        roleName,
+        memoryLayers: snapshot?.memoryLayers,
+        initialMemoryLayers: snapshot?.initialMemoryLayers,
+        updatedAt: Date.now(),
+        hasRecoveryBaseline: true,
+        lastRestoredFromBaselineAt: Date.now(),
+        lastRecoveryBaselineVersion: Number(snapshot?.version || 1) || 1,
+      };
+
+      await this.writeRoleFile(safeRoleSlug, rolePayload, { createBackups: false });
+      const restoredRoleData = await this.readRoleFile(safeRoleSlug);
+      if (!restoredRoleData) return null;
+      return {
+        roleData: restoredRoleData,
+        restoredFrom: 'baseline',
+        source: {
+          roleName,
+          roleSlug: baselineRoleSlug || safeRoleSlug,
+          capturedAt: Number(snapshot?.capturedAt || Date.now()) || Date.now(),
+          version: Number(snapshot?.version || 1) || 1,
+        },
+      };
+    } catch (error) {
+      console.warn('Failed to restore role from recovery baseline', { roleSlug: safeRoleSlug, path, error });
+      return null;
+    }
+  };
+
+  restoreRoleFromInitialMemory = async roleSlug => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    let result = null;
+    const layers = ['verified', 'likely', 'fog'];
+    for (let i = 0; i < layers.length; i += 1) {
+      const layer = layers[i];
+      result = await this.roleMemoryStore.rebuildRoleLayer({ roleSlug: safeRoleSlug, layer });
+      if (!result?.roleData) return null;
+    }
+    return result;
+  };
+
+  writeRoleFile = async (roleSlug, data, options = {}) => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
+    try {
+      const dirOk = await this.ensureRoleFilesDir();
+      if (!dirOk) return false;
+      return await this.roleMemoryStore.writeRoleFile(safeRoleSlug, data, options);
+    } catch (error) {
+      console.warn('Failed to write role file', { roleSlug: safeRoleSlug, path: this.getRoleFilePath(safeRoleSlug), error });
       return false;
     }
   };
 
   deleteRoleFile = async roleSlug => {
+    const safeRoleSlug = Rolecards.normalizeRoleSlug(roleSlug || 'unknown') || 'unknown';
     try {
-      const path = this.getRoleFilePath(roleSlug);
-      const exists = await RNFS.exists(path);
-      if (!exists) return true;
-      await RNFS.unlink(path);
+      const dirOk = await this.ensureRoleFilesDir();
+      if (!dirOk) return false;
+      const roleDirPath = this.getRoleDirPath(safeRoleSlug);
+      const legacyPath = this.getLegacyRoleFilePath(safeRoleSlug);
+      if (await RNFS.exists(roleDirPath)) {
+        const entries = await RNFS.readDir(roleDirPath);
+        for (const entry of entries) {
+          if (entry.name === 'memory_snapshots') {
+            continue;
+          }
+          try { await RNFS.unlink(entry.path); } catch {}
+        }
+      }
+      if (await RNFS.exists(legacyPath)) {
+        await RNFS.unlink(legacyPath);
+      }
       return true;
     } catch (error) {
       console.warn('Failed to delete role file', error);
@@ -1820,19 +2606,142 @@ class AgentChat extends React.Component {
     }
   };
 
-  getActiveRoleData = async () => {
-    const roleSlug =
-      this.state.activeRoleSlug ||
-      this.activeRoleSlug ||
-      Rolecards.normalizeRoleSlug(this.state.lastSelectedRole?.roleName || '') ||
-      '';
+  readRoleAlphaForPrompt = async () => {
+    try {
+      const storyAlphaPath = `${getStoryChatDirHelper(this.agentId, CHAT_DIR)}/alpha.json`;
+      const exists = await RNFS.exists(storyAlphaPath);
+      if (!exists) {
+        return null;
+      }
+      const raw = await RNFS.readFile(storyAlphaPath, 'utf8');
+      const data = JSON.parse(raw);
+      const value = Number(data?.currentAlpha);
+      return Number.isFinite(value) ? value : null;
+    } catch (error) {
+      console.warn('Failed to read role alpha for prompt', error);
+      return null;
+    }
+  };
+
+  buildRoleContextSystemPrompt = async ({ options = {} } = {}) => {
+    if (this.chatScope !== 'role' || options?.skipRoleContext) {
+      return '';
+    }
+
+    const active = await this.getCurrentSummonedRoleData();
+    const roleData = active?.roleData || null;
+    if (!roleData?.roleName) {
+      return '';
+    }
+
+    const ctx = typeof this.resolveNamespaceContext === 'function' ? this.resolveNamespaceContext() : null;
+    const agentId = ctx?.agentId || this.agentId || 'unknown';
+    const roleLang = this.getRoleLangCode() || this.state.roleLangCode || 'en';
+    const alphaOverride = await this.readRoleAlphaForPrompt();
+    const rolePrompt = buildRoleChatPrompt(roleData.roleName, agentId, roleData.memory || '', roleLang, {
+      isContinue: true,
+      alphaOverride,
+    });
+    const conversationSummary = await this.readConversationSummary(active?.roleSlug || roleData?.roleSlug || this.activeRoleSlug || this.state.activeRoleSlug || '');
+    const summaryBlock = buildConversationSummaryPromptBlock(conversationSummary);
+    if (!summaryBlock) {
+      return rolePrompt;
+    }
+    return [rolePrompt, 'LONG-TERM CONVERSATION MEMORY', summaryBlock].filter(Boolean).join('\n\n');
+  };
+
+  getCurrentSummonedRoleData = async () => {
+    let roleName = String(this.state.currentSummonedRole?.roleName || '').trim();
+    let roleSlug = String(this.state.currentSummonedRole?.roleSlug || '').trim() || this.getSpaceRoleKey();
+    let roleCardPath = String(this.state.currentSummonedRole?.roleCardPath || '').trim();
+
+    if (!roleSlug && !roleCardPath) {
+      try {
+        const exists = await RNFS.exists(this.currentRolePath);
+        if (exists) {
+          const raw = await RNFS.readFile(this.currentRolePath, 'utf8');
+          const obj = JSON.parse(raw);
+          roleName = String(obj?.roleName || '').trim();
+          roleSlug = String(obj?.roleSlug || '').trim() || this.getSpaceRoleKey();
+          roleCardPath = String(obj?.roleCardPath || '').trim();
+          if (roleName || roleSlug || roleCardPath) {
+            await new Promise(resolve => this.setState({ currentSummonedRole: obj, activeRoleState: obj, activeRoleSlug: roleSlug || null }, resolve));
+            this.activeRoleSlug = roleSlug || null;
+          }
+        }
+      } catch {}
+    }
+
+    if (roleCardPath) {
+      const byPath = await this.getRoleDataByPath(roleCardPath);
+      if (byPath) {
+        return byPath;
+      }
+    }
 
     if (!roleSlug) return null;
+    return await this.getRoleDataBySlug(roleSlug);
+  };
 
-    const roleData = await this.readRoleFile(roleSlug);
+  getActiveRoleData = async () => this.getCurrentSummonedRoleData();
+
+  getRoleDataBySlug = async roleSlug => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    const roleData = await this.readRoleFile(safeRoleSlug);
     if (!roleData) return null;
+    return {
+      roleSlug: safeRoleSlug,
+      roleCardPath: this.getRoleCardPath(safeRoleSlug),
+      roleData,
+      roleName: roleData.roleName || safeRoleSlug,
+    };
+  };
 
-    return { roleSlug, roleData };
+  getRoleDataByPath = async roleCardPath => {
+    const safePath = String(roleCardPath || '').trim();
+    if (!safePath) return null;
+    try {
+      const exists = await RNFS.exists(safePath);
+      if (!exists) return null;
+      let roleSlug = '';
+      let manifestPath = safePath;
+      if (!safePath.endsWith('.json')) {
+        manifestPath = `${safePath.replace(/\/$/, '')}/role.json`;
+      }
+      const manifestExists = await RNFS.exists(manifestPath);
+      if (manifestExists) {
+        const raw = await RNFS.readFile(manifestPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        roleSlug = String(parsed?.roleSlug || '').trim() || Rolecards.normalizeRoleSlug(parsed?.roleName || '') || '';
+      } else {
+        const raw = await RNFS.readFile(safePath, 'utf8');
+        const parsed = JSON.parse(raw);
+        roleSlug = String(parsed?.roleSlug || '').trim() || Rolecards.normalizeRoleSlug(parsed?.roleName || '') || '';
+      }
+      if (!roleSlug) return null;
+      const roleData = await this.readRoleFile(roleSlug);
+      if (!roleData) return null;
+      return {
+        roleSlug,
+        roleCardPath: this.getRoleCardPath(roleSlug),
+        roleData,
+        roleName: roleData.roleName || roleSlug,
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  getCurrentRoleMemoryTarget = async () => {
+    const safeRoleSlug = this.getSpaceRoleKey();
+    const roleData = await this.readRoleFile(safeRoleSlug);
+    if (!roleData) return null;
+    return {
+      roleSlug: safeRoleSlug,
+      roleCardPath: this.getRoleCardPath(safeRoleSlug),
+      roleData,
+      roleName: roleData.roleName || safeRoleSlug,
+    };
   };
 
   normalizeMemoryCardText = text => {
@@ -1843,78 +2752,298 @@ class AgentChat extends React.Component {
       .trim();
   };
 
-  buildInitialRoleMemoryCardWithLLM = async roleName => {
-    const safeRole = String(roleName || '').trim() || 'unknown';
+  normalizeMemoryLayerText = text => {
+    return this.normalizeMemoryCardText(text)
+      .split('\n')
+      .map(line => String(line || '').trim())
+      .filter(Boolean)
+      .map(line => line.replace(/^[-•]\s*/, '').trim())
+      .filter(Boolean)
+      .map(line => `- ${line}`)
+      .join('\n')
+      .trim();
+  };
 
+  parseRoleMemoryLayers = text => {
+    const normalized = this.normalizeMemoryCardText(text);
+    const roleMatch = normalized.match(/^ROLE=(.*)$/m);
+    const roleName = String(roleMatch?.[1] || '').trim();
+    const sectionValue = name => {
+      const pattern = new RegExp(`\\[${name}\\]\\s*([\\s\\S]*?)(?=\\n\\[(?:VERIFIED|LIKELY|FOG)\\]|$)`, 'i');
+      const match = normalized.match(pattern);
+      return this.normalizeMemoryLayerText(match?.[1] || '');
+    };
+    return {
+      roleName,
+      verified: sectionValue('VERIFIED'),
+      likely: sectionValue('LIKELY'),
+      fog: sectionValue('FOG'),
+    };
+  };
+
+  composeRoleMemoryCard = (roleName, layers = {}) => {
+    const safeRoleName = String(roleName || '').trim() || 'unknown';
+    const verified = this.normalizeMemoryLayerText(layers?.verified || '');
+    const likely = this.normalizeMemoryLayerText(layers?.likely || '');
+    const fog = this.normalizeMemoryLayerText(layers?.fog || '');
+    return this.normalizeMemoryCardText([
+      `ROLE=${safeRoleName}`,
+      '[VERIFIED]',
+      verified,
+      '',
+      '[LIKELY]',
+      likely,
+      '',
+      '[FOG]',
+      fog,
+    ].join('\n'));
+  };
+
+  readTextFileIfExists = async path => {
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) return '';
+      return String((await RNFS.readFile(path, 'utf8')) || '');
+    } catch {
+      return '';
+    }
+  };
+
+  buildInitialRoleMemoryFullTextWithLLM = async roleName => {
+    const safeRole = String(roleName || '').trim() || 'unknown';
+    const roleLang = this.getRoleLangCode?.() || this.state.roleLangCode || 'en';
+    const languageInstruction = buildRoleLanguageInstruction(roleLang);
     if (!(!!this.state.llmConfig?.provider && typeof this.callLLMSilent === 'function')) {
-      return buildDefaultRoleMemoryCard(safeRole);
+      return '';
     }
 
-    const prompt = `
-You are an xKEVA role memory initializer.
-
-ROLE_NAME:
-${JSON.stringify(safeRole)}
-
-TASK:
-- Create a compact 3-layer memory card for this role.
-- Keep it short and useful.
-- If the role is known, fill concrete anchors.
-- If uncertain, use "unknown" only for uncertain fields, not everything.
-- Output plain text only.
-- Do NOT use JSON.
-- Do NOT use markdown fences.
-- Do NOT include "MEMORY_CARD v0.2".
-
-FORMAT:
-ROLE=<role name>
-[V]
-- Origin: ...
-- Function: ...
-- Signature: ...
-- Relation: ...
-- Scene: ...
-- Other: ...
-
-[L]
-- ...
-
-[F]
-- ...
-`.trim();
+    const prompt = buildInitialRoleMemoryCardPrompt({
+      roleName: safeRole,
+      roleLang,
+      languageInstruction,
+    });
 
     try {
-      const raw = await this.callLLMSilent(prompt);
-      const text = this.normalizeMemoryCardText(raw);
-      if (text && text.includes('ROLE=') && text.includes('[V]')) {
-        return this.normalizeMemoryCardText(text);
-      }
-    } catch {}
+      return this.normalizeMemoryCardText(await this.callLLMSilent(prompt));
+    } catch {
+      return '';
+    }
+  };
 
-    return buildDefaultRoleMemoryCard(safeRole);
+  parseDeterministicMemoryCardA = fullText => {
+    const normalized = this.normalizeMemoryCardText(fullText);
+    const roleName = String((normalized.match(/^ROLE=(.*)$/m) || [])[1] || '').trim();
+    const lang = String((normalized.match(/^LANG=(.*)$/m) || [])[1] || '').trim() || 'en';
+    const getSection = name => {
+      const match = normalized.match(new RegExp(`\\[${name}\\]\\s*([\\s\\S]*?)(?=\\n\\[(?:VERIFIED|LIKELY|FOG|MANIFEST)\\]|$)`, 'i'));
+      return String(match?.[1] || '').trim();
+    };
+    const verifiedLines = getSection('VERIFIED').split('\n').map(s => s.trim()).filter(Boolean);
+    const likelyLines = getSection('LIKELY').split('\n').map(s => s.trim()).filter(Boolean);
+    const fogLines = getSection('FOG').split('\n').map(s => s.trim()).filter(Boolean);
+    const verifiedRecords = verifiedLines.map(line => {
+      const m = line.match(/^-\s*V\|([^|]+)\|(.+)$/);
+      return m ? { key: String(m[1] || '').trim(), value: String(m[2] || '').trim() } : null;
+    }).filter(Boolean);
+    const likelyRecords = likelyLines.map(line => {
+      const m = line.match(/^-\s*L\|([^|]+)\|([^|]+)\|(.+)$/);
+      return m ? { id: String(m[1] || '').trim(), type: String(m[2] || '').trim(), text: String(m[3] || '').trim() } : null;
+    }).filter(Boolean);
+    const fogRecords = fogLines.map(line => {
+      const m = line.match(/^-\s*F\|([^|]+)\|([^|]+)\|(.+)$/);
+      return m ? { id: String(m[1] || '').trim(), type: String(m[2] || '').trim(), text: String(m[3] || '').trim() } : null;
+    }).filter(Boolean);
+    const labelMessages = getRoleLocaleTable(ROLE_UI_MESSAGES, lang);
+    const labelFallback = ROLE_UI_MESSAGES.en || {};
+    const labelText = key => String(labelMessages[key] || labelFallback[key] || key).trim();
+    const labels = {
+      origin_world_tag: labelText('defaultMemoryOriginWorldTag'),
+      role_function: labelText('defaultMemoryRoleFunction'),
+      signature: labelText('defaultMemorySignature'),
+      key_relationship: labelText('defaultMemoryKeyRelationship'),
+      last_known_scene: labelText('defaultMemoryLastKnownScene'),
+      others: labelText('defaultMemoryOthers'),
+    };
+    const verified = this.normalizeMemoryLayerText(verifiedRecords.map(record => `${labels[record.key] || record.key}: ${record.value}`).join('\n'));
+    const likely = this.normalizeMemoryLayerText(likelyRecords.map(record => record.text).join('\n'));
+    const fog = this.normalizeMemoryLayerText(fogRecords.map(record => record.text).join('\n'));
+    return { roleName, lang, verifiedRecords, likelyRecords, fogRecords, memoryLayers: { verified, likely, fog } };
+  };
+
+  parseDeterministicMemoryManifestB = fullText => {
+    const normalized = this.normalizeMemoryCardText(fullText);
+    const manifestBlock = String((normalized.match(/\[MANIFEST\]\s*([\s\S]*)$/i) || [])[1] || '').trim();
+    const lines = manifestBlock.split('\n').map(s => s.trim()).filter(Boolean);
+    const map = {};
+    lines.forEach(line => {
+      const idx = line.indexOf('=');
+      if (idx <= 0) return;
+      map[line.slice(0, idx)] = line.slice(idx + 1);
+    });
+    return {
+      verifiedKeys: String(map.verified_keys || '').split(',').map(s => s.trim()).filter(Boolean),
+      likelyIds: String(map.likely_ids || '').split(',').map(s => s.trim()).filter(Boolean),
+      fogIds: String(map.fog_ids || '').split(',').map(s => s.trim()).filter(Boolean),
+      verifiedCount: Number(map.verified_count || 0),
+      likelyCount: Number(map.likely_count || 0),
+      fogCount: Number(map.fog_count || 0),
+    };
+  };
+
+  validateSplitResultWithRuleB = (parsedA, manifestB) => {
+    const requiredVerifiedKeys = ['origin_world_tag', 'role_function', 'signature', 'key_relationship', 'last_known_scene', 'others'];
+    const actualVerifiedKeys = parsedA.verifiedRecords.map(record => record.key);
+    const actualLikelyIds = parsedA.likelyRecords.map(record => record.id);
+    const actualFogIds = parsedA.fogRecords.map(record => record.id);
+    const sameSet = (a, b) => a.length === b.length && a.every(item => b.includes(item));
+    const pass =
+      sameSet(requiredVerifiedKeys, actualVerifiedKeys) &&
+      sameSet(manifestB.verifiedKeys, actualVerifiedKeys) &&
+      sameSet(manifestB.likelyIds, actualLikelyIds) &&
+      sameSet(manifestB.fogIds, actualFogIds) &&
+      manifestB.verifiedCount === actualVerifiedKeys.length &&
+      manifestB.likelyCount === actualLikelyIds.length &&
+      manifestB.fogCount === actualFogIds.length;
+    return {
+      pass,
+      errors: [
+        !sameSet(requiredVerifiedKeys, actualVerifiedKeys) ? 'verified_keys_required_mismatch' : '',
+        !sameSet(manifestB.verifiedKeys, actualVerifiedKeys) ? 'manifest_verified_mismatch' : '',
+        !sameSet(manifestB.likelyIds, actualLikelyIds) ? 'manifest_likely_mismatch' : '',
+        !sameSet(manifestB.fogIds, actualFogIds) ? 'manifest_fog_mismatch' : '',
+        manifestB.verifiedCount !== actualVerifiedKeys.length ? 'verified_count_mismatch' : '',
+        manifestB.likelyCount !== actualLikelyIds.length ? 'likely_count_mismatch' : '',
+        manifestB.fogCount !== actualFogIds.length ? 'fog_count_mismatch' : '',
+      ].filter(Boolean),
+    };
+  };
+
+  validateAndRepairRoleLayer = async ({ layer, text }) => {
+    const normalized = this.normalizeMemoryLayerText(text);
+    if (String(layer || '').toLowerCase() === 'verified' && !normalized) {
+      return { pass: false, text: '- unknown', reason: 'verified_empty' };
+    }
+    return { pass: !!normalized || String(layer || '').toLowerCase() !== 'verified', text: normalized, reason: '' };
+  };
+
+  buildValidatedInitialRoleMemory = async roleName => {
+    const safeRole = String(roleName || '').trim() || 'unknown';
+    const roleLang = this.getRoleLangCode?.() || this.state.roleLangCode || 'en';
+    const fallback = buildDefaultRoleMemoryCard(safeRole, roleLang);
+    const tryBuild = async fullText => {
+      if (!fullText) return { pass: false };
+      const parsedA = this.parseDeterministicMemoryCardA(fullText);
+      const manifestB = this.parseDeterministicMemoryManifestB(fullText);
+      const verdict = this.validateSplitResultWithRuleB(parsedA, manifestB);
+      return {
+        pass: verdict.pass,
+        parsedA,
+        manifestB,
+        verdict,
+      };
+    };
+
+    let fullText = await this.buildInitialRoleMemoryFullTextWithLLM(safeRole);
+    let result = await tryBuild(fullText);
+    let generationStatus = 'validated';
+    if (!result.pass) {
+      fullText = await this.buildInitialRoleMemoryFullTextWithLLM(safeRole);
+      result = await tryBuild(fullText);
+      generationStatus = result.pass ? 'validated_retried' : 'fallback';
+    }
+    if (!result.pass || !result.parsedA) {
+      const parsedFallback = this.parseRoleMemoryLayers(fallback);
+      return {
+        memory: fallback,
+        initialMemory: fallback,
+        memoryLayers: { verified: parsedFallback.verified, likely: parsedFallback.likely, fog: parsedFallback.fog },
+        initialMemoryLayers: { verified: parsedFallback.verified, likely: parsedFallback.likely, fog: parsedFallback.fog },
+        generationStatus: 'fallback',
+      };
+    }
+    const layers = result.parsedA.memoryLayers;
+    const memory = this.composeRoleMemoryCard(safeRole, layers);
+    return {
+      memory,
+      initialMemory: memory,
+      memoryLayers: {
+        verified: layers.verified,
+        likely: layers.likely,
+        fog: layers.fog,
+      },
+      initialMemoryLayers: {
+        verified: layers.verified,
+        likely: layers.likely,
+        fog: layers.fog,
+      },
+      generationStatus,
+      memoryFormat: 'ROLE_MEMORY_CARD_V2',
+      memoryFullText: fullText,
+      memoryManifest: result.manifestB,
+    };
+  };
+
+  buildInitialRoleMemoryCardWithLLM = async roleName => {
+    const built = await this.buildValidatedInitialRoleMemory(roleName);
+    return String(built?.memory || buildDefaultRoleMemoryCard(String(roleName || '').trim() || 'unknown', this.getRoleLangCode?.() || this.state.roleLangCode || 'en'));
+  };
+
+  isRoleMemoryLanguageValid = (text, roleLang) => {
+    const normalized = this.normalizeMemoryCardText(text);
+    if (!normalized || !normalized.includes('ROLE=') || !normalized.includes('[VERIFIED]')) {
+      return false;
+    }
+    if (roleLang === 'en') {
+      return /Origin World Tag|Role Function|Key Relationship|Last Known Scene|Others/.test(normalized);
+    }
+    if (roleLang === 'zh-cn') {
+      return /\u8d77\u6e90\u4e16\u754c\u6807\u7b7e|\u89d2\u8272\u804c\u80fd|\u5173\u952e\u5173\u7cfb|\u6700\u540e\u5df2\u77e5\u573a\u666f|\u5176\u4ed6/.test(normalized);
+    }
+    return true;
   };
 
   handleRoleCallWithName = async (name, userMessage = null, opts = {}) => {
+    this.forceScrollToBottomOnce = true;
+    this.shouldScrollToEnd = true;
+    if (!opts?.isContinue) {
+      this.replyFromAgent(this.getRoleUiText('summonSystemCall'));
+      this.replyFromAgent(this.getRoleUiText('summonLoading'));
+    }
     const normalizedName = String(name || '').trim();
-    const roleSlug = Rolecards.normalizeRoleSlug(normalizedName) || 'unknown';
+    const roleSlug = this.getSpaceRoleKey();
     const now = Date.now();
     const existingRoleData = await this.readRoleFile(roleSlug);
+    const wasNewRole = !existingRoleData;
     let roleData = existingRoleData;
     if (!roleData) {
-      const initialMemory = await this.buildInitialRoleMemoryCardWithLLM(normalizedName || roleSlug);
+      const initialMemoryBundle = await this.buildValidatedInitialRoleMemory(normalizedName || roleSlug);
+      const normalizedInitialMemory = this.normalizeMemoryCardText(initialMemoryBundle?.memory || '');
       roleData = {
         roleName: normalizedName || roleSlug,
         roleSlug,
-        memory: this.normalizeMemoryCardText(initialMemory),
+        memory: normalizedInitialMemory,
+        initialMemory: this.normalizeMemoryCardText(initialMemoryBundle?.initialMemory || normalizedInitialMemory),
+        memoryLayers: initialMemoryBundle?.memoryLayers,
+        initialMemoryLayers: initialMemoryBundle?.initialMemoryLayers,
+        generationStatus: initialMemoryBundle?.generationStatus || 'validated',
+        memorySeed: initialMemoryBundle?.memorySeed || null,
         createdAt: now,
       };
     }
     roleData.roleName = roleData.roleName || normalizedName || roleSlug;
     roleData.roleSlug = roleSlug;
     roleData.memory = this.normalizeMemoryCardText(roleData.memory);
+    roleData.initialMemory = this.normalizeMemoryCardText(roleData.initialMemory || roleData.memory);
     roleData.updatedAt = now;
-    await this.writeRoleFile(roleSlug, roleData);
+    const writeOk = await this.writeRoleFile(roleSlug, roleData);
+    const readBack = writeOk ? await this.readRoleFile(roleSlug) : null;
+    if (!writeOk || !readBack) {
+      return;
+    }
+    await this.upsertRoleIndexEntry({ roleName: roleData.roleName, roleSlug, updatedAt: now });
     await this.saveLastSelectedRole(roleData.roleName);
+    await this.saveActiveRoleState(roleData.roleName, roleSlug);
+    await this.saveCurrentSummonedRole(roleData.roleName, roleSlug);
 
     this.activeRoleSlug = roleSlug;
     await new Promise(resolve => this.setState({ activeRoleSlug: roleSlug }, resolve));
@@ -1922,14 +3051,46 @@ ROLE=<role name>
     const first = await this.loadLocalRoleCardsPage(0);
     await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: first.items }, resolve));
 
+    const roleModelStatus = await this.ensureRoleModelReady({ source: this.roleEntrySource || 'role' });
+    if (!roleModelStatus?.ok) {
+      return;
+    }
+
+    if (!opts?.isContinue) {
+      this.replyFromAgent(this.buildRoleSummonSuccessMessage(roleData.roleName));
+      if (!this.isPureChatMode()) {
+        await this.handleTriggers('/role menu', null);
+      }
+      if (wasNewRole) {
+        try {
+          await this.writeRoleRecoveryBaseline(roleSlug);
+        } catch (error) {
+          console.warn('Failed to write recovery baseline', { roleSlug, error });
+        }
+      }
+      await this.handleTriggers('/role chat', null);
+      return;
+    }
+
     const ctx = typeof this.resolveNamespaceContext === 'function' ? this.resolveNamespaceContext() : null;
     const agentId = ctx?.agentId || this.agentId || 'unknown';
     const roleLang = this.getRoleLangCode() || 'en';
-    const rolePrompt = buildRoleChatPrompt(roleData.roleName, agentId, roleData.memory || '', roleLang);
+    const alphaOverride = await this.readRoleAlphaForPrompt();
+    const rolePrompt = buildRoleChatPrompt(roleData.roleName, agentId, roleData.memory || '', roleLang, {
+      isContinue: !!opts?.isContinue,
+      alphaOverride,
+    });
 
-    this.replyFromAgent(this.buildRoleSummonSuccessMessage(roleData.roleName));
-    this.replyFromAgent(this.buildRoleMemoryQuickConsoleMessage());
     await this.replyFromLLM(rolePrompt, userMessage, { silentUser: true });
+
+    this.forceScrollToBottomOnce = true;
+    this.shouldScrollToEnd = true;
+    setTimeout(() => {
+      if (!this._isMounted) return;
+      this.forceScrollToBottomOnce = true;
+      this.scrollToBottomOffset(false);
+      requestAnimationFrame(() => this.scrollToBottomOffset(false));
+    }, 80);
   };
 
   handleRoleSuggestWithName = async (name, userMessage = null) => {
@@ -1944,7 +3105,6 @@ ROLE=<role name>
     };
     if (!original) {
       await new Promise(resolve => this.setState({ pendingRoleCall: true }, resolve));
-      this.replyFromAgent('Who do you want to summon? Reply with the role name.');
       return;
     }
 
@@ -1965,24 +3125,7 @@ ROLE=<role name>
       ),
     );
 
-    const prompt = `
-You are a role resolver for a summon UI.
-
-USER_INPUT_NAME: ${JSON.stringify(original)}
-
-TASK:
-- Propose 6 or fewer summonable role names related to USER_INPUT_NAME.
-- Every suggested name must contain USER_INPUT_NAME as a substring or very close variant.
-- Output ONLY valid JSON.
-
-OUTPUT JSON:
-{
-  "options":[
-    {"name":"Sun Wukong"},
-    {"name":"Dark Wukong"}
-  ]
-}
-`.trim();
+    const prompt = buildRoleResolverPrompt({ inputName: original });
 
     let raw = '';
     try {
@@ -2030,54 +3173,179 @@ OUTPUT JSON:
 
   buildRoleSuggestMenuMessage = (original, options) => {
     const lines = [];
-    lines.push(`Found summonable roles for: ${original}`);
+    lines.push(this.getRoleUiText('summonableRoles'));
     lines.push('');
 
     options.forEach(option => {
-      const nameBtn = `[[/r summon ${option.name}|${option.name}]]`;
+      const nameBtn = `[[/role summon ${option.name}|${option.name}]]`;
       lines.push(nameBtn);
       lines.push('');
     });
 
-    lines.push('[[/r useonly|Use name only]]');
-    lines.push('[[/r call|Reselect]]');
+    const directName = String(original || '').trim();
+    lines.push(`[[${directName ? `/role create ${directName}` : '/role new'}|${this.getRoleUiText('useNameDirectly')}]]`);
+    lines.push('');
+    lines.push(`[[/role new|${this.getRoleUiText('reselect')}]]`);
     return lines.join('\n');
   };
 
   buildRoleSummonSuccessMessage = roleName => {
-    return [
-      'Role summoned successfully.',
-      '',
-      String(roleName || '').trim(),
-    ].join('\n');
+    return this.getRoleUiText('roleSummonedSuccess', { name: String(roleName || '').trim() });
   };
 
-  buildRoleMemoryQuickConsoleMessage = () => {
-    return [
-      '[[/r recall|Memory]]',
-      '',
-      '[[/rolemodel|Model]]',
-      '',
-      '[[/r new|Switch role]]',
-    ].join('\n');
+  buildRoleMemoryQuickConsoleMessage = () => buildRoleMemoryQuickConsoleMessageHelper({
+    getRoleUiText: this.getRoleUiText,
+  });
+
+  buildMemoryLanguageMenuMessage = () => buildMemoryLanguageMenuMessageHelper({
+    getRoleUiText: this.getRoleUiText,
+  });
+
+  inferMemoryAdjustIntent = text => {
+    const raw = String(text || '').trim();
+    if (!raw) return null;
+    const upper = raw.toUpperCase();
+    let layer = null;
+    if (/^V\b/.test(upper)) layer = 'VERIFIED';
+    else if (/^L\b/.test(upper)) layer = 'LIKELY';
+    else if (/^F\b/.test(upper)) layer = 'FOG';
+
+    let action = null;
+    if (/[\u589e\u52a0\u65b0\u589e\u52a0\u5165ADD]/i.test(raw)) action = 'add';
+    else if (/[\u5220\u9664\u53bb\u6389\u79fb\u9664DELETE]/i.test(raw)) action = 'delete';
+    else if (/[\u4fee\u6539\u6539\u6210\u66ff\u6362EDIT]/i.test(raw)) action = 'edit';
+
+    const content = raw
+      .replace(/^[VLFvlf]\s*/, '')
+      .replace(/^(\u8bb0\u5fc6)?\s*(\u589e\u52a0|\u65b0\u589e|\u52a0\u5165|\u4fee\u6539|\u6539\u6210|\u66ff\u6362|\u5220\u9664|\u53bb\u6389|\u79fb\u9664|add|edit|delete)\s*/i, '')
+      .trim();
+
+    return {
+      layer: layer || 'VERIFIED',
+      action: action || 'edit',
+      content: content || raw,
+      raw,
+    };
   };
 
-  buildRoleMemoryFullConsoleMessage = roleData => {
-    const memoryText = this.normalizeMemoryCardText(String(roleData?.memory || '').trim());
+  getMemoryLayerLabel = layer => getMemoryLayerLabelHelper({
+    layer,
+    getRoleUiText: this.getRoleUiText,
+  });
 
-    return [
-      'Memory:',
-      memoryText || '(empty)',
-      '',
-      '[[/r memory adjust|Adjust memory]]',
-      '[[/r memory reset|Reset memory]]',
-      '[[/r memory commit|Commit memory on-chain]]',
-      '[[/r memory delete|Delete memory]]',
-      '[[/rolemodel|Model]]',
-      '[[/r continuechat|Continue chat]]',
-      '[[/r new|Switch role]]',
-    ].join('\n');
+  getMemoryActionLabel = action => getMemoryActionLabelHelper({
+    action,
+    getRoleUiText: this.getRoleUiText,
+  });
+
+  buildMemoryAdjustConfirmMessage = draft => buildMemoryAdjustConfirmMessageHelper({
+    draft,
+    getRoleUiText: this.getRoleUiText,
+  });
+
+  buildRoleMemoryCardMessage = roleRef => buildRoleMemoryCardMessageHelper({
+    roleRef,
+    normalizeMemoryCardText: this.normalizeMemoryCardText,
+    getRoleUiText: this.getRoleUiText,
+  });
+
+  buildAwakeningJourneyMessage = (roleRef, summary) => {
+    const roleSlug = String(roleRef?.roleSlug || roleRef?.roleData?.roleSlug || roleRef?.roleName || '').trim();
+    const normalized = normalizeConversationSummary(summary || {}, roleSlug);
+    const editCmd = roleSlug ? `/role s ${roleSlug}` : '/role s';
+    const historyCmd = roleSlug ? `/summary talk ${roleSlug}` : '/summary talk';
+    const cloneCmd = roleSlug ? `/role summary clone ${roleSlug}` : '/role summary clone';
+    const snapshotCmd = roleSlug ? `/role snapshot ${roleSlug}` : '/role snapshot';
+    const exportCmd = roleSlug ? `/role export ${roleSlug}` : '/role export';
+    const importCmd = roleSlug ? `/role import ${roleSlug}` : '/role import';
+    const lines = [this.getRoleUiText('awakeningJourneyTitle')];
+    if (!normalized.facts.length && !normalized.open_loops.length && !normalized.recent_arc.length) {
+      lines.push(this.getRoleUiText('awakeningJourneyEmpty'));
+    } else {
+      lines.push('');
+      lines.push(this.getRoleUiText('awakeningFactsTitle'));
+      if (normalized.facts.length) normalized.facts.forEach(item => lines.push(`- ${item}`));
+      else lines.push(this.getRoleUiText('empty'));
+      lines.push('');
+      lines.push(this.getRoleUiText('awakeningOpenLoopsTitle'));
+      if (normalized.open_loops.length) normalized.open_loops.forEach(item => lines.push(`- ${item}`));
+      else lines.push(this.getRoleUiText('empty'));
+      lines.push('');
+      lines.push(this.getRoleUiText('awakeningRecentArcTitle'));
+      if (normalized.recent_arc.length) normalized.recent_arc.forEach(item => lines.push(`- ${item}`));
+      else lines.push(this.getRoleUiText('empty'));
+    }
+    lines.push('');
+    lines.push(`[[${editCmd}|${this.getRoleUiText('editAwakeningJourney')}]]`);
+    lines.push('');
+    lines.push(`[[${historyCmd}|${this.getRoleUiText('viewHistoryRecords')}]]`);
+    lines.push('');
+    lines.push(`[[${cloneCmd}|${this.getRoleUiText('cloneMemory')}]]`);
+    lines.push('');
+    lines.push(`[[${snapshotCmd}|${this.getRoleUiText('memorySnapshot')}]]`);
+    lines.push('');
+    lines.push(`[[${exportCmd}|${this.getRoleUiText('exportRecord')}]]`);
+    lines.push('');
+    lines.push(`[[${importCmd}|${this.getRoleUiText('importRecord')}]]`);
+    lines.push('');
+    lines.push(`[[/role memory|${this.getRoleUiText('back')}]]`);
+    return lines.join('\n');
   };
+
+  rewriteConversationSummaryFromUserRequest = async (roleSlug, requestText) => {
+    const safeRoleSlug = String(roleSlug || '').trim();
+    if (!safeRoleSlug) {
+      throw new Error('missing role slug');
+    }
+    const summary = await this.readConversationSummary(safeRoleSlug);
+    const roleRef = await this.getRoleDataBySlug(safeRoleSlug);
+    const roleName = String(roleRef?.roleData?.roleName || roleRef?.roleName || safeRoleSlug).trim() || safeRoleSlug;
+    if (!this.state.llmConfig?.provider || typeof this.callLLMSilent !== 'function') {
+      throw new Error('llm unavailable');
+    }
+    const prompt = buildConversationSummaryRewritePrompt({
+      roleName,
+      summary,
+      requestText,
+    });
+    const raw = await this.callLLMSilent(prompt, { skipRoleContext: true });
+    const parsed = JSON.parse(String(raw || '').trim());
+    const nextSummary = normalizeConversationSummary({
+      ...summary,
+      roleSlug: safeRoleSlug,
+      updatedAt: Date.now(),
+      summaryEpoch: Number(summary.summaryEpoch || 0) + 1,
+      facts: Array.isArray(parsed?.facts) ? parsed.facts : (summary.facts || []),
+      open_loops: Array.isArray(parsed?.open_loops) ? parsed.open_loops : (summary.open_loops || []),
+      recent_arc: Array.isArray(parsed?.recent_arc) ? parsed.recent_arc : (summary.recent_arc || []),
+    }, safeRoleSlug);
+    const ok = await this.writeConversationSummary(safeRoleSlug, nextSummary);
+    if (!ok) {
+      throw new Error('write failed');
+    }
+    return nextSummary;
+  };
+
+  getRoleMemoryLayerShortCode = layer => getRoleMemoryLayerShortCodeHelper(layer);
+
+  buildRoleMemoryRecoverMenuMessage = async roleRef => buildRoleMemoryRecoverMenuMessageHelper({
+    roleRef,
+    getRoleUiText: this.getRoleUiText,
+    getSpaceRoleKey: this.getSpaceRoleKey,
+    getRoleInitialMemoryStatus: this.getRoleInitialMemoryStatus,
+    getRoleLastMemoryStatus: this.getRoleLastMemoryStatus,
+  });
+
+  buildRoleEditLayerChoiceMessage = roleRef => buildRoleEditLayerChoiceMessageHelper({
+    roleRef,
+    getRoleUiText: this.getRoleUiText,
+  });
+
+
+  buildRoleMemoryFullConsoleMessage = roleRef => buildRoleMemoryFullConsoleMessageHelper({
+    roleRef,
+    getRoleUiText: this.getRoleUiText,
+  });
 
   runRoleMemoryUpdate = async (roleSlug, assistantReplyText) => {
     if (!roleSlug || !assistantReplyText || typeof this.callLLMSilent !== 'function') {
@@ -2085,30 +3353,39 @@ OUTPUT JSON:
     }
 
     const roleData = (await this.readRoleFile(roleSlug)) || {};
-    const currentMemory = roleData.memory || roleData.memories || roleData.memoryText || '';
-    const prompt = `
-You are a memory updater for a role-playing agent.
+    const roleLang = this.getRoleLangCode?.() || this.state.roleLangCode || 'en';
+    const parsedCurrentLayers = this.parseRoleMemoryLayers(roleData.memory || '');
+    const currentLayers = {
+      verified: this.normalizeMemoryLayerText(roleData.memoryLayers?.verified || parsedCurrentLayers.verified || ''),
+      likely: this.normalizeMemoryLayerText(roleData.memoryLayers?.likely || parsedCurrentLayers.likely || ''),
+      fog: this.normalizeMemoryLayerText(roleData.memoryLayers?.fog || parsedCurrentLayers.fog || ''),
+    };
 
-INPUTS:
-(1) CURRENT_MEMORY:
-${JSON.stringify(currentMemory).slice(0, 8000)}
-
-(2) NEW_ASSISTANT_REPLY:
-${JSON.stringify(String(assistantReplyText || '')).slice(0, 8000)}
-
-TASK:
-- Decide whether CURRENT_MEMORY should be updated based on NEW_ASSISTANT_REPLY.
-- Output ONLY the updated memory, in the same format as CURRENT_MEMORY.
-- If no update is needed, output CURRENT_MEMORY unchanged.
-- Do NOT include explanations. Output memory only.
-`.trim();
-
-    const updatedMemoryText = await this.callLLMSilent(prompt);
-    if (!updatedMemoryText) {
-      return;
+    for (const layer of ['likely', 'fog']) {
+      const currentText = currentLayers[layer] || '';
+      const prompt = buildMemoryLayerUpdatePrompt({
+        roleName: roleData.roleName || roleSlug,
+        layer,
+        currentLayerText: currentText,
+        assistantReplyText,
+      });
+      try {
+        const raw = await this.callLLMSilent(prompt);
+        const cleaned = this.normalizeMemoryLayerText(raw || currentText);
+        const repaired = await this.validateAndRepairRoleLayer({
+          roleName: roleData.roleName || roleSlug,
+          roleLang,
+          layer,
+          text: cleaned,
+          request: assistantReplyText,
+        });
+        currentLayers[layer] = repaired.text;
+      } catch {}
     }
 
-    roleData.memory = this.normalizeMemoryCardText(updatedMemoryText);
+    await this.writeRoleLastMemory(roleSlug, { roleData, kind: 'before-auto-update', trigger: 'runRoleMemoryUpdate' });
+    roleData.memoryLayers = currentLayers;
+    roleData.memory = this.composeRoleMemoryCard(roleData.roleName || roleSlug, currentLayers);
     roleData.updatedAt = Date.now();
     await this.writeRoleFile(roleSlug, roleData);
   };
@@ -2131,20 +3408,97 @@ TASK:
     }
   };
 
+  sanitizeMessageForList = (message, index = 0, dateKey = 'unknown') => {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+      return null;
+    }
+    if (message.hidden === true) {
+      return null;
+    }
+
+    const timestamp = Number(message.timestamp || message.t || message.ts || 0) || 0;
+    const rawId = message.id || message.messageId || message.requestId || message?.ref?.rawId || '';
+    const id = String(rawId || `msg-${dateKey}-${index}-${timestamp || 'no-ts'}`);
+    const text = ensureRenderableText(message.text ?? message.content ?? '', `message.${dateKey}.${index}.text`);
+    const digest = message.digest == null ? message.digest : ensureRenderableText(message.digest, `message.${dateKey}.${index}.digest`);
+    const summary = message.summary == null ? message.summary : ensureRenderableText(message.summary, `message.${dateKey}.${index}.summary`);
+    const copyText = message.copyText == null ? message.copyText : ensureRenderableText(message.copyText, `message.${dateKey}.${index}.copyText`);
+    const linkLabel = message.linkLabel == null ? message.linkLabel : ensureRenderableText(message.linkLabel, `message.${dateKey}.${index}.linkLabel`);
+    const hasRenderableContent = Boolean(
+      String(text || '').trim() ||
+      String(digest || '').trim() ||
+      String(summary || '').trim() ||
+      String(copyText || '').trim() ||
+      String(linkLabel || '').trim(),
+    );
+
+    if (!hasRenderableContent && !message.pending) {
+      return null;
+    }
+
+    const next = {
+      ...message,
+      id,
+      text,
+    };
+    if (digest != null) next.digest = digest;
+    if (summary != null) next.summary = summary;
+    if (copyText != null) next.copyText = copyText;
+    if (linkLabel != null) next.linkLabel = linkLabel;
+    if (!next.timestamp && timestamp) {
+      next.timestamp = timestamp;
+    }
+
+    const sender = String(next.sender || '').trim().toLowerCase();
+    const role = String(next.role || '').trim().toLowerCase();
+    const direction = String(next.direction || next.side || '').trim().toLowerCase();
+    const isExplicitUserSide =
+      next.isUser === true ||
+      next.user === true ||
+      direction === 'out' ||
+      direction === 'outgoing';
+    if (sender === 'assistant') {
+      next.sender = 'agent';
+    } else if (sender === 'user' || sender === 'agent') {
+      next.sender = sender;
+    } else if (!sender && (role === 'user' || role === 'agent' || role === 'assistant')) {
+      next.sender = role === 'assistant' ? 'agent' : role;
+    } else if (!sender && isExplicitUserSide) {
+      next.sender = 'user';
+    } else if (!sender) {
+      next.sender = 'agent';
+    }
+
+    return next;
+  };
+
+  sanitizeMessagesForList = (messages = [], dateKey = 'unknown') => (Array.isArray(messages) ? messages : [])
+    .map((message, index) => this.sanitizeMessageForList(message, index, dateKey))
+    .filter(Boolean);
+
   readDayMessages = async dateKey => {
     try {
       if (this.isStoryScope) {
         const messages = await readStoryEntriesByDay(this.agentChatDir, dateKey, 'raw');
-        return messages.filter(message => !message?.hidden);
+        const filtered = this.sanitizeMessagesForList(messages, dateKey);
+        console.warn('[hist/readDay] scope=story', { dateKey, count: filtered.length, rawCount: Array.isArray(messages) ? messages.length : 0 });
+        return filtered;
       }
       const path = this.getDayFilePath(dateKey);
       const exists = await RNFS.exists(path);
-      if (!exists) return [];
+      console.warn('[hist/readDay] start', { dateKey, path, exists, scope: this.isStoryScope ? 'story' : 'role' });
+      if (!exists) {
+        return [];
+      }
       const raw = await RNFS.readFile(path, 'utf8');
       const json = JSON.parse(raw);
       const messages = Array.isArray(json) ? json : json?.messages || [];
-      return messages.filter(message => !message?.hidden);
-    } catch {
+      const filtered = this.sanitizeMessagesForList(messages, dateKey);
+      const persistable = this.chatScope === 'role' ? this.filterPersistableMessages(filtered) : filtered;
+      console.warn('[hist/readDay] parsed', { dateKey, path, type: Array.isArray(json) ? 'array' : typeof json, count: Array.isArray(messages) ? messages.length : 0, filteredCount: persistable.length });
+      return persistable;
+    } catch (error) {
+      console.warn('[hist/readDay] failed', { dateKey, error: String(error?.message || error) });
       return [];
     }
   };
@@ -2160,17 +3514,708 @@ TASK:
     }
   };
 
-  readHistory = async () => {
-    const keys = await this.listDateKeys();
-    this.allDateKeys = keys;
-    if (keys.length === 0) {
-      this.loadedDateKeys = [];
-      return [];
+  sanitizeRoleHistoryMessages = (messages = []) => {
+    const safeMessages = this.sanitizeMessagesForList(messages, 'role-history');
+    if (this.chatScope !== 'role') {
+      return safeMessages;
     }
-    const latestKey = keys[0];
-    const latestMessages = await this.readDayMessages(latestKey);
-    this.loadedDateKeys = [latestKey];
-    return latestMessages;
+    const persistableMessages = this.filterPersistableMessages(safeMessages);
+    const localizedModelLabel = this.getRoleMenuText('changeModel') || this.getRoleUiText('model') || 'Model';
+    return persistableMessages.map(message => {
+      const rawText = String(message?.text || '');
+      if (!rawText.includes('[[/a list|')) {
+        return message;
+      }
+      return {
+        ...message,
+        text: rawText.replace(/\[\[\/a\s+list\|[^\]]+\]\]/g, `[[/rolemodel|${localizedModelLabel}]]`),
+      };
+    });
+  };
+
+  readHistory = async () => {
+    const history = await this.readHistoryForScope(this.chatScope);
+    console.warn('[hist/readHistory] keys', {
+      keysCount: Array.isArray(this.allDateKeys) ? this.allDateKeys.length : 0,
+      pickedCount: Array.isArray(this.loadedDateKeys) ? this.loadedDateKeys.length : 0,
+      pickedKeys: this.loadedDateKeys,
+      todayKey: getLocalDateKey(),
+      mergedCount: Array.isArray(history) ? history.length : 0,
+      scope: this.chatScope,
+    });
+    console.warn('[hist/readHistory] sanitized', { count: Array.isArray(history) ? history.length : 0 });
+    return history;
+  };
+  shouldHideHistoryText = rawText => shouldHideHistoryText(rawText);
+  filterViewHistoryRecords = messages => filterRoleHistoryMessages(messages);
+  isReaderExcludedText = raw => isReaderExcludedText(raw);
+  estimateStoryBlockHeightForTimestamp = (timestamp, currentHeight, nowTs = Date.now()) => {
+    const numericHeight = Number(currentHeight);
+    const numericTs = Number(timestamp);
+    const numericNowTs = Number(nowTs);
+    if (!Number.isFinite(numericHeight) || numericHeight <= 0 || !Number.isFinite(numericTs) || !Number.isFinite(numericNowTs)) {
+      return null;
+    }
+    const deltaBlocks = Math.round((numericNowTs - numericTs) / 120000);
+    const estimatedHeight = numericHeight - deltaBlocks;
+    return Math.max(0, estimatedHeight);
+  };
+
+  formatSwitchWorldlineUserMessage = (message, blockContext = null) => {
+    const role = String(message?.sender || message?.role || '').trim().toLowerCase() === 'user' ? 'user' : 'agent';
+    const rawText = String(message?.text || '');
+    if (role !== 'user') {
+      return { ...message, sender: role, text: rawText };
+    }
+    const estimatedHeight = this.estimateStoryBlockHeightForTimestamp(
+      message?.timestamp || message?.t || Date.now(),
+      blockContext?.currentHeight,
+      blockContext?.currentTs,
+    );
+    return {
+      ...message,
+      sender: role,
+      text: rawText,
+      estimatedBlockHeight: estimatedHeight,
+      switchWorldlinePrefix: estimatedHeight === null ? '[rewind point unavailable]' : `[rewind point ${estimatedHeight}]`,
+    };
+  };
+
+  buildViewHistoryReaderBlocks = (messages = [], options = {}) => {
+    const source = Array.isArray(messages) ? messages : [];
+    const shouldPrefixSwitchWorldlineUserBlocks = !!options?.prefixSwitchWorldlineUserBlocks;
+    const blocks = [];
+    let skippedInBlock = 0;
+    let current = null;
+    const getReaderText = message => {
+      const role = String(message?.sender || message?.role || '').trim().toLowerCase() === 'user' ? 'user' : 'agent';
+      const rawText = String(message?.text || '').trim();
+      if (!rawText) {
+        return '';
+      }
+      const prefix = shouldPrefixSwitchWorldlineUserBlocks && role === 'user' ? String(message?.switchWorldlinePrefix || '').trim() : '';
+      if (prefix) {
+        return rawText ? `${prefix}\n${rawText}`.trim() : prefix;
+      }
+      return rawText;
+    };
+
+    const pushCurrent = () => {
+      if (!current || !String(current.text || '').trim()) {
+        current = null;
+        return;
+      }
+      blocks.push({
+        id: current.id,
+        role: current.role,
+        text: String(current.text || '').trim(),
+        startTs: current.startTs,
+        endTs: current.endTs,
+      });
+      current = null;
+    };
+
+    source.forEach((message, index) => {
+      const role = String(message?.sender || message?.role || '').trim().toLowerCase() === 'user' ? 'user' : 'agent';
+      const rawText = String(message?.text || '').trim();
+      const text = getReaderText(message);
+      const ts = message?.timestamp || message?.t || Date.now();
+      if (!rawText || this.isReaderExcludedText(rawText)) {
+        if (rawText) {
+          skippedInBlock += 1;
+        }
+        pushCurrent();
+        return;
+      }
+
+      if (!current) {
+        current = {
+          id: message?.id || `history-block-${index}`,
+          role,
+          text,
+          startTs: ts,
+          endTs: ts,
+        };
+        return;
+      }
+
+      const sameRole = current.role === role;
+      const withinMergeWindow = Math.abs(Number(ts || 0) - Number(current.endTs || 0)) <= 15 * 60 * 1000;
+      if (sameRole && withinMergeWindow) {
+        current.text = `${current.text}\n\n${text}`;
+        current.endTs = ts;
+        return;
+      }
+
+      pushCurrent();
+      current = {
+        id: message?.id || `history-block-${index}`,
+        role,
+        text,
+        startTs: ts,
+        endTs: ts,
+      };
+    });
+
+    pushCurrent();
+    console.warn('[hist/blocks] result', { sourceCount: source.length, skippedInBlock, blocksCount: blocks.length });
+    return blocks;
+  };
+
+  estimateHistoryReaderUnits = text => {
+    const raw = String(text || '').trim();
+    if (!raw) return 0;
+    const charsPerLine = 18;
+    const lineHeight = 24;
+    const paragraphGap = 10;
+    return raw
+      .split(/\r?\n/)
+      .reduce((sum, line) => {
+        const len = String(line || '').trim().length;
+        const lineCount = Math.max(1, Math.ceil(len / charsPerLine));
+        return sum + lineCount * lineHeight + paragraphGap;
+      }, 0);
+  };
+
+  splitHistoryReaderBlockForScreen = (block, maxUnitsPerPage = 650) => {
+    const rawText = String(block?.text || '').trim();
+    if (!rawText) return [];
+    if (this.estimateHistoryReaderUnits(rawText) <= maxUnitsPerPage) {
+      return [{ ...block, text: rawText }];
+    }
+
+    const chunks = [];
+    let current = '';
+    const pushCurrent = () => {
+      const text = String(current || '').trim();
+      if (!text) return;
+      chunks.push({
+        ...block,
+        id: `${block?.id || 'history-block'}-chunk-${chunks.length}`,
+        text,
+      });
+      current = '';
+    };
+    const appendPiece = piece => {
+      const clean = String(piece || '').trim();
+      if (!clean) return;
+      const candidate = current ? `${current}\n\n${clean}` : clean;
+      if (current && this.estimateHistoryReaderUnits(candidate) > maxUnitsPerPage) {
+        pushCurrent();
+        current = clean;
+        return;
+      }
+      current = candidate;
+    };
+
+    rawText.split(/\n{2,}/).forEach(paragraph => {
+      const cleanParagraph = String(paragraph || '').trim();
+      if (!cleanParagraph) return;
+      if (this.estimateHistoryReaderUnits(cleanParagraph) <= maxUnitsPerPage) {
+        appendPiece(cleanParagraph);
+        return;
+      }
+
+      const sentences = [];
+      let sentenceBuffer = '';
+      cleanParagraph.split('').forEach(char => {
+        sentenceBuffer += char;
+        if ('。！？!?；;'.includes(char)) {
+          const text = sentenceBuffer.trim();
+          if (text) sentences.push(text);
+          sentenceBuffer = '';
+        }
+      });
+      if (sentenceBuffer.trim()) {
+        sentences.push(sentenceBuffer.trim());
+      }
+      if (sentences.length <= 1) {
+        const chunkSize = Math.max(120, maxUnitsPerPage - 80);
+        for (let i = 0; i < cleanParagraph.length; i += chunkSize) {
+          appendPiece(cleanParagraph.slice(i, i + chunkSize));
+        }
+        return;
+      }
+      sentences.forEach(sentence => appendPiece(sentence));
+    });
+    pushCurrent();
+    return chunks;
+  };
+
+  buildHistoryPages = (blocks = [], maxUnitsPerPage = 650, minUnitsPerPage = 360) => {
+    const source = Array.isArray(blocks) ? blocks : [];
+    const screenBlocks = source.reduce((items, block) => items.concat(this.splitHistoryReaderBlockForScreen(block, maxUnitsPerPage)), []);
+    const pages = [];
+    let currentPage = [];
+    let currentUnits = 0;
+
+    const pushPage = () => {
+      if (currentPage.length > 0) {
+        pages.push(currentPage);
+        currentPage = [];
+        currentUnits = 0;
+      }
+    };
+
+    screenBlocks.forEach(block => {
+      const blockText = String(block?.text || '').trim();
+      if (!blockText) return;
+      const estimatedUnits = this.estimateHistoryReaderUnits(blockText) + 18;
+
+      if (currentPage.length === 0) {
+        currentPage.push(block);
+        currentUnits = estimatedUnits;
+        return;
+      }
+
+      const wouldOverflow = currentUnits + estimatedUnits > maxUnitsPerPage;
+      const pageTooSmallToSplit = currentUnits < minUnitsPerPage;
+
+      if (wouldOverflow && !pageTooSmallToSplit) {
+        pushPage();
+        currentPage.push(block);
+        currentUnits = estimatedUnits;
+        return;
+      }
+
+      currentPage.push(block);
+      currentUnits += estimatedUnits;
+    });
+
+    pushPage();
+    if ((pages || []).length) {
+      const first = pages[0]?.[0];
+      const lastPage = pages[pages.length - 1] || [];
+      const last = lastPage[lastPage.length - 1];
+      console.warn('[hist/pages] order probe', {
+        pagesLen: pages.length,
+        pagesFirst: first ? { id: first.id, startTs: first.startTs, endTs: first.endTs, role: first.role } : null,
+        pagesLast: last ? { id: last.id, startTs: last.startTs, endTs: last.endTs, role: last.role } : null,
+        globalSpanFirst: pages[0]?.[0]?.startTs,
+        globalSpanLast: lastPage[lastPage.length - 1]?.endTs,
+      });
+    }
+    return pages;
+  };
+
+  buildViewHistorySpeechText = (messages = []) => {
+    return this.buildViewHistoryReaderBlocks(messages)
+      .map(block => String(block?.text || '').trim())
+      .filter(Boolean)
+      .join('。\n');
+  };
+
+  goHistoryPageTo = targetIndex => {
+    const pageCount = Array.isArray(this.state.historyPages) ? this.state.historyPages.length : 0;
+    if (pageCount <= 0) return;
+    const numericIndex = Number(targetIndex);
+    if (!Number.isFinite(numericIndex)) return;
+    const nextIndex = Math.max(0, Math.min(pageCount - 1, Math.round(numericIndex)));
+    this.clearPendingBottomScrolls();
+    this.forceScrollToBottomOnce = false;
+    this.shouldScrollToEnd = false;
+    this._historyPageChanging = true;
+    this.setState(
+      { historyPageIndex: nextIndex },
+      () => this.scrollHistoryReaderToTop(false),
+    );
+  };
+
+  goHistoryPage = delta => {
+    this.goHistoryPageTo((this.state.historyPageIndex || 0) + delta);
+  };
+
+  scrollHistoryReaderToTop = (animated = false) => {
+    const run = () => {
+      try {
+        this.listRef?.scrollToOffset?.({ offset: 0, animated });
+      } catch {}
+    };
+    requestAnimationFrame(() => run());
+    requestAnimationFrame(() => requestAnimationFrame(() => run()));
+    setTimeout(() => run(), 80);
+    setTimeout(() => {
+      run();
+      this._historyPageChanging = false;
+    }, 180);
+  };
+
+  renderHistoryReaderItem = ({ item }) => {
+    const paragraphText = String(item?.text || '').trim();
+    if (this._histRenderDebugTs !== this.state.historyPageIndex) {
+      console.warn('[hist/render] current page render sample', {
+        pageIndex: this.state.historyPageIndex,
+        pageLen: (this.state.historyPages[this.state.historyPageIndex] || []).length,
+        filtered: {
+          role: String(item?.role || ''),
+          textLen: String(item?.text || '').length,
+          isFiltered: !paragraphText || this.shouldHideHistoryText(paragraphText) || this.isReaderExcludedText(paragraphText),
+        },
+      });
+      this._histRenderDebugTs = this.state.historyPageIndex;
+    }
+    if (!paragraphText || this.shouldHideHistoryText(paragraphText) || this.isReaderExcludedText(paragraphText)) {
+      console.warn('[hist/render] filtered', {
+        textLen: String(paragraphText || '').length,
+        hide: !paragraphText ? false : this.shouldHideHistoryText(paragraphText),
+        readerExcluded: !paragraphText ? false : this.isReaderExcludedText(paragraphText),
+      });
+      return null;
+    }
+    const isSwitchWorldlineMode = this.state.isSwitchWorldlineMode;
+    const isRewindPoint = isSwitchWorldlineMode && String(item?.role || '').trim().toLowerCase() === 'user' && String(item?.id || '').trim();
+    return (
+      <View
+        style={[
+          styles.historyReaderBlock,
+          isSwitchWorldlineMode ? styles.warningHistoryReaderBlock : null,
+        ]}
+        accessible
+        accessibilityRole="text"
+        accessibilityLabel={paragraphText}
+      >
+        {isRewindPoint ? (
+          <TouchableOpacity
+            style={styles.switchWorldlineRewindButton}
+            accessibilityRole="button"
+            accessibilityLabel={paragraphText}
+            onPress={() => this.confirmSwitchWorldlineRewind(item)}
+          >
+            <Text style={styles.switchWorldlineRewindButtonText}>{paragraphText}</Text>
+          </TouchableOpacity>
+        ) : (
+          <Text style={[styles.historyReaderText, isSwitchWorldlineMode ? styles.warningHistoryReaderText : null]}>{paragraphText}</Text>
+        )}
+      </View>
+    );
+  };
+
+  handleStopViewHistorySpeak = async () => {
+    const tts = NativeModules?.RoleHistoryTts;
+    try {
+      if (tts && typeof tts.stop === 'function') {
+        await tts.stop();
+      }
+    } catch {}
+    this.setState({ isHistorySpeaking: false });
+  };
+
+  exitViewHistoryMode = async () => {
+    await this.stopRoleSpeech();
+    await this.handleStopViewHistorySpeak();
+    this.setState({
+      isViewHistoryMode: false,
+      historyViewMode: null,
+      isSwitchWorldlineMode: false,
+      historyPageIndex: 0,
+      historyPages: [],
+      historyReaderBlocks: [],
+      historyRawMessages: [],
+      switchWorldlineBlockContext: null,
+    });
+    await this.handleTriggers('/role', null);
+  };
+
+  cleanupRoleTtsEventSubscription = () => {
+    if (this._roleTtsEventSubscription && typeof this._roleTtsEventSubscription.remove === 'function') {
+      this._roleTtsEventSubscription.remove();
+    }
+    this._roleTtsEventSubscription = null;
+  };
+
+  ensureRoleTtsEventSubscription = () => {
+    const tts = NativeModules?.RoleHistoryTts;
+    if (!tts || this._roleTtsEventSubscription) {
+      return;
+    }
+    try {
+      const emitter = new NativeEventEmitter(tts);
+      this._roleTtsEventSubscription = emitter.addListener('roleHistoryTtsEvent', async event => {
+        const type = String(event?.type || '').trim().toLowerCase();
+        const utteranceId = String(event?.utteranceId || '').trim();
+        const activeUtteranceId = String(this._activeRoleTtsUtteranceId || '').trim();
+        if (!type || !utteranceId || !activeUtteranceId || utteranceId !== activeUtteranceId) {
+          return;
+        }
+        if (type === 'start') {
+          return;
+        }
+        this._activeRoleTtsUtteranceId = null;
+        this.setState({ isRoleSpeaking: false, isHistorySpeaking: false });
+        if ((type === 'done' || type === 'stop') && this._pendingContinuousAutoListenToken) {
+          const speakToken = this._pendingContinuousAutoListenToken;
+          this._pendingContinuousAutoListenToken = 0;
+          if (!this._isMounted || speakToken !== this._continuousTalkToken) {
+            return;
+          }
+          if (!this.state.isContinuousTalkEnabled) {
+            return;
+          }
+          try {
+            await this.startRoleTalkOnce();
+          } catch (error) {
+            console.warn('[role-speech] auto listen after speech failed', String(error?.message || error || 'role_auto_listen_failed'));
+          }
+          return;
+        }
+        this._pendingContinuousAutoListenToken = 0;
+      });
+    } catch (error) {
+      console.warn('[role-speech] failed to subscribe tts events', String(error?.message || error || 'tts_event_subscribe_failed'));
+    }
+  };
+
+  stopRoleSpeech = async (invalidateToken = true) => {
+    if (invalidateToken) {
+      this._continuousTalkToken += 1;
+    }
+    this._pendingContinuousAutoListenToken = 0;
+    if (this._continuousTalkTimer) {
+      clearTimeout(this._continuousTalkTimer);
+      this._continuousTalkTimer = null;
+    }
+    const tts = NativeModules?.RoleHistoryTts;
+    try {
+      if (tts && typeof tts.stop === 'function') {
+        await tts.stop();
+      }
+    } catch {}
+    this._activeRoleTtsUtteranceId = null;
+    this.setState({ isRoleSpeaking: false, isHistorySpeaking: false });
+  };
+
+  startRoleSpeechFromText = async text => {
+    const tts = NativeModules?.RoleHistoryTts;
+    const speakText = String(text || '').trim();
+    if (!speakText) return false;
+    if (!tts || typeof tts.speak !== 'function') {
+      return false;
+    }
+    this.ensureRoleTtsEventSubscription();
+    const speakToken = ++this._continuousTalkToken;
+    if (this.state.talkState === ROLE_TALK_STATES.LISTENING) {
+      try {
+        await this.stopRoleTalkOnce();
+      } catch {}
+    }
+    try {
+      await this.stopRoleSpeech(false);
+      await new Promise(resolve => this.setState({ isRoleSpeaking: true }, resolve));
+      const utteranceId = await tts.speak(speakText);
+      this._activeRoleTtsUtteranceId = String(utteranceId || '').trim();
+      this._pendingContinuousAutoListenToken = this.state.isContinuousTalkEnabled ? speakToken : 0;
+      return true;
+    } catch (error) {
+      console.warn('[role-speech] speak failed', String(error?.message || error || 'tts_failed'));
+      this._activeRoleTtsUtteranceId = null;
+      this._pendingContinuousAutoListenToken = 0;
+      this.setState({ isRoleSpeaking: false });
+      return false;
+    }
+  };
+
+  handleSpeakViewHistory = async () => {
+    const tts = NativeModules?.RoleHistoryTts;
+    if (!tts || typeof tts.speak !== 'function') {
+      Alert.alert(this.getRoleUiText('fullReadUnavailable'), this.getRoleUiText('fullReadUnavailableBody'));
+      return;
+    }
+    const currentPageBlocks = Array.isArray(this.state.historyPages)
+      ? this.state.historyPages[this.state.historyPageIndex] || []
+      : [];
+    const text = this.buildViewHistorySpeechText(
+      currentPageBlocks.length
+        ? currentPageBlocks.map(block => ({ text: block?.text, sender: block?.role }))
+        : this.state.historyRawMessages,
+    );
+    if (!text.trim()) {
+      Alert.alert(this.getRoleUiText('noReadableContent'));
+      return;
+    }
+    if (this.state.talkState === ROLE_TALK_STATES.LISTENING) {
+      try {
+        await this.stopRoleTalkOnce();
+      } catch {}
+    }
+    try {
+      await new Promise(resolve => this.setState({ isHistorySpeaking: true }, resolve));
+      await tts.speak(text);
+    } catch (error) {
+      Alert.alert(this.getRoleUiText('fullReadFailed'), String(error?.message || error || 'tts_failed'));
+      this.setState({ isHistorySpeaking: false });
+    }
+  };
+
+  openViewHistoryRecords = async (roleSlugArg, options = {}) => {
+    try {
+      await this.persistQueue;
+    } catch {}
+
+    const historyScope = options?.scope === 'story' ? 'story' : this.chatScope;
+    const targetRoleSlug = historyScope === 'story'
+      ? ''
+      : String(
+          roleSlugArg ||
+          this.state.activeRoleSlug ||
+          this.activeRoleSlug ||
+          this.state.currentSummonedRole?.roleSlug ||
+          ''
+        ).trim().toLowerCase();
+
+    const rawHistory = await this.readHistoryForScope(historyScope);
+    const scopeDateKeys = historyScope === this.chatScope ? this.allDateKeys : this._storyHistoryDateKeys;
+    const keysForWindow = (scopeDateKeys || []).slice(0, historyScope === 'role' ? 7 : 1);
+    const fallbackWindowMs = historyScope === 'role' ? 3 * 24 * 3600 * 1000 : 24 * 3600 * 1000;
+    const fallbackCutoffTs = Date.now() - fallbackWindowMs;
+
+    const inMemoryCandidates = historyScope === 'story'
+      ? []
+      : (Array.isArray(this.state.allMessages) ? this.state.allMessages : [])
+          .filter(item => !item?.pending)
+          .filter(item => {
+            const ts = Number(item?.timestamp || item?.t || 0);
+            if (!ts) return false;
+            if (!keysForWindow.length) {
+              return ts >= fallbackCutoffTs;
+            }
+            const key = getLocalDateKey(ts);
+            return keysForWindow.includes(key) || ts >= fallbackCutoffTs;
+          });
+
+    const dedupedHistory = [];
+    const seen = new Set();
+    const pick = msg => {
+      if (!msg) return;
+      const id = msg.id;
+      if (id) {
+        if (seen.has(id)) return;
+        seen.add(id);
+      }
+      dedupedHistory.push(msg);
+    };
+
+    const inferMessageRoleSlug = msg => {
+      const explicit = String(msg?._roleSlug || msg?.roleSlug || msg?.role || '').trim().toLowerCase();
+      if (explicit && explicit !== 'user' && explicit !== 'agent' && explicit !== 'assistant') {
+        return explicit;
+      }
+      const text = String(msg?.text || '').trim();
+      const roleEq = text.match(/^\u8bb0\u5fc6：\s*\n?ROLE=([^\n\r]+)/i) || text.match(/^ROLE=([^\n\r]+)/i);
+      if (roleEq && roleEq[1]) {
+        return String(roleEq[1]).trim().toLowerCase();
+      }
+      const summaryCmd = /\[\[\/summary\s+talk\s+([^|\]\s]+).*?\]\]/i.exec(text);
+      if (summaryCmd && summaryCmd[1]) {
+        return String(summaryCmd[1]).trim().toLowerCase();
+      }
+      const importExportCmd = /\[\[\/role\s+(?:export|import|s)\s+([^|\]\s]+).*?\]\]/i.exec(text);
+      if (importExportCmd && importExportCmd[1]) {
+        return String(importExportCmd[1]).trim().toLowerCase();
+      }
+      const rawSummaryCmd = /^\/summary\s+talk\s+(.+)$/i.exec(text);
+      if (rawSummaryCmd && rawSummaryCmd[1]) {
+        return String(rawSummaryCmd[1]).trim().toLowerCase();
+      }
+      return '';
+    };
+
+    const merged = [...rawHistory, ...inMemoryCandidates]
+      .slice()
+      .sort((a, b) => Number(a?.timestamp || a?.t || 0) - Number(b?.timestamp || b?.t || 0));
+    merged.forEach(pick);
+
+    const scopedHistory = !targetRoleSlug
+      ? dedupedHistory
+      : dedupedHistory.filter(msg => {
+          const inferred = inferMessageRoleSlug(msg);
+          if (inferred) {
+            return inferred === targetRoleSlug;
+          }
+          const text = String(msg?.text || '').trim();
+          if (!text) return false;
+          if (String(msg?.sender || '').trim().toLowerCase() === 'user') {
+            return !/^\//.test(text);
+          }
+          if (String(msg?.sender || '').trim().toLowerCase() === 'agent') {
+            return true;
+          }
+          return false;
+        });
+
+    const cleanedHistory = historyScope === 'story' ? scopedHistory : this.filterViewHistoryRecords(scopedHistory);
+    console.warn('[hist/open] counts', {
+      targetRoleSlug,
+      rawHistory: rawHistory.length,
+      keysForWindow,
+      inMemoryCount: inMemoryCandidates.length,
+      dedupedCount: dedupedHistory.length,
+      scopedCount: scopedHistory.length,
+      cleanedCount: cleanedHistory.length,
+      scopedSample: scopedHistory.slice(0, 6).map(item => ({
+        sender: item?.sender,
+        roleSlug: inferMessageRoleSlug(item),
+        text: String(item?.text || '').slice(0, 80),
+      })),
+    });
+    const historyBlocks = this.buildViewHistoryReaderBlocks(cleanedHistory);
+    const historyPages = this.buildHistoryPages(historyBlocks);
+    console.warn('[hist/open] blocks/pages', {
+      targetRoleSlug,
+      blocksCount: historyBlocks.length,
+      pageCount: historyPages.length,
+      pageLens: historyPages.map(page => page.length),
+      mergedSample: historyBlocks.slice(0, 3).map(item => ({ id: item?.id, role: item?.role, textLen: String(item?.text || '').length })),
+    });
+    const latestPageIndex = Math.max(0, historyPages.length - 1);
+    const ts = arr => {
+      const first = arr?.[0] || null;
+      const last = arr?.[arr.length - 1] || null;
+      return {
+        len: arr?.length || 0,
+        firstTs: first ? Number(first.startTs || first.endTs || 0) : 0,
+        lastTs: last ? Number(last.endTs || last.startTs || 0) : 0,
+        firstRole: first?.role || '',
+        lastRole: last?.role || '',
+      };
+    };
+    console.warn('[hist/open] pageIndex decision', {
+      pagesLen: historyPages.length,
+      latestPageIndex,
+      firstPageLen: (historyPages[0] || []).length,
+      lastPageLen: (historyPages[historyPages.length - 1] || []).length,
+    });
+    console.warn('[hist/open] first vs latest page spans', {
+      first: ts(historyPages[0]),
+      latest: ts(historyPages[Math.max(0, historyPages.length - 1)] || []),
+    });
+    console.warn('[hist/open] time direction', {
+      mergedCount: merged.length,
+      mergedFirstTs: merged[0]?.timestamp || 0,
+      mergedLastTs: merged[merged.length - 1]?.timestamp || 0,
+      cleanedCount: cleanedHistory.length,
+      cleanedFirstTs: cleanedHistory[0]?.timestamp || 0,
+      cleanedLastTs: cleanedHistory[cleanedHistory.length - 1]?.timestamp || 0,
+      isAscending: (merged?.length || 0) > 1 ? Number(merged[0].timestamp || 0) <= Number(merged[merged.length - 1].timestamp || 0) : true,
+    });
+    const firstPage = historyPages[latestPageIndex] || [];
+    const visibleCount = Math.min(firstPage.length || PAGE_SIZE, PAGE_SIZE);
+    await new Promise(resolve =>
+      this.setState(
+        {
+          visibleCount,
+          inputValue: '',
+          isViewHistoryMode: true,
+          isHistorySpeaking: false,
+          historyPageIndex: latestPageIndex,
+          historyPages,
+          historyReaderBlocks: historyBlocks,
+          historyRawMessages: cleanedHistory,
+        },
+        resolve,
+      ),
+    );
+    this.forceScrollToBottomOnce = true;
+    requestAnimationFrame(() => this.scrollToBottomOffset(false));
   };
 
   readDigestHistory = async () => {
@@ -2217,28 +4262,109 @@ TASK:
     });
   };
 
-  writeDayMessages = async (dateKey, messages) => {
+  flushPersistQueue = async (reason = 'unknown') => {
+    const startedAt = Date.now();
     try {
+      await this.persistQueue;
+      const elapsed = Date.now() - startedAt;
+      console.warn('[persist] queue flushed', { reason, elapsed });
+      return true;
+    } catch (error) {
+      console.warn('[persist] queue flush failed', { reason, error: String(error?.message || error) });
+      return false;
+    }
+  };
+
+  writeDayMessages = async (dateKey, messages) => {
+    const startedAt = Date.now();
+    const path = this.isStoryScope ? this.getStoryRawPath(dateKey) : this.getDayFilePath(dateKey);
+    try {
+      let payload = messages;
       if (this.isStoryScope) {
-        const dayMessages = messages.filter(message => getLocalDateKey(message.timestamp) === dateKey);
-        const path = this.getStoryRawPath(dateKey);
-        await RNFS.writeFile(path, JSON.stringify(dayMessages), 'utf8');
-        return;
+        payload = messages.filter(message => getLocalDateKey(message.timestamp) === dateKey);
+      } else {
+        payload = this.filterPersistableMessages(messages);
       }
-      const path = this.getDayFilePath(dateKey);
-      await RNFS.writeFile(path, JSON.stringify(messages), 'utf8');
-    } catch (e) {}
+      const text = JSON.stringify(payload);
+      console.warn('[persist] write begin', {
+        scope: this.isStoryScope ? 'story' : 'role',
+        dateKey,
+        path,
+        count: Array.isArray(payload) ? payload.length : 0,
+        bytes: text.length,
+      });
+      await RNFS.writeFile(path, text, 'utf8');
+      const verify = await RNFS.readFile(path, 'utf8');
+      const parsed = JSON.parse(verify);
+      const verifiedCount = Array.isArray(parsed) ? parsed.length : 0;
+      console.warn('[persist] write success', {
+        dateKey,
+        path,
+        expectedCount: Array.isArray(payload) ? payload.length : 0,
+        verifiedCount,
+        elapsed: Date.now() - startedAt,
+      });
+      return true;
+    } catch (error) {
+      console.warn('[persist] write failed', {
+        dateKey,
+        path,
+        error: String(error?.message || error),
+        elapsed: Date.now() - startedAt,
+      });
+      throw error;
+    }
   };
 
   persistMessageByDay = async (dateKey, allMessagesInMemory) => {
-    const dayMessages = allMessagesInMemory.filter(message => getLocalDateKey(message.timestamp) === dateKey);
+    const inMemoryDayMessages = this.filterPersistableMessages((Array.isArray(allMessagesInMemory) ? allMessagesInMemory : []).filter(message => getLocalDateKey(message.timestamp) === dateKey));
+    const requestAt = Date.now();
+    console.warn('[persist] enqueue', {
+      dateKey,
+      candidateCount: Array.isArray(allMessagesInMemory) ? allMessagesInMemory.length : 0,
+      filteredCount: Array.isArray(inMemoryDayMessages) ? inMemoryDayMessages.length : 0,
+      requestAt,
+    });
     this.persistQueue = this.persistQueue
-      .then(() => this.writeDayMessages(dateKey, dayMessages))
+      .then(async () => {
+        if (this.chatScope !== 'role') {
+          return this.writeDayMessages(dateKey, inMemoryDayMessages);
+        }
+        const existingDayMessages = this.filterPersistableMessages(await this.readDayMessages(dateKey));
+        const mergedMap = new Map();
+        [...(Array.isArray(existingDayMessages) ? existingDayMessages : []), ...inMemoryDayMessages].forEach(message => {
+          const timestamp = Number(message?.timestamp || 0) || Date.now();
+          const text = String(message?.text || '').trim();
+          const sender = String(message?.sender || '').trim().toLowerCase() || 'agent';
+          if (!text) return;
+          const id = String(message?.id || '');
+          const key = id || `${timestamp}|${sender}|${text}`;
+          mergedMap.set(key, {
+            ...message,
+            id: id || key,
+            text,
+            sender,
+            timestamp,
+          });
+        });
+        const mergedMessages = Array.from(mergedMap.values()).sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+        return this.writeDayMessages(dateKey, mergedMessages);
+      })
+      .then(() => {
+        console.warn('[persist] flush segment complete', {
+          dateKey,
+          requestAt,
+          elapsed: Date.now() - requestAt,
+        });
+      })
       .catch(error => {
-        console.warn('Failed to save day history', error);
+        console.warn('[persist] segment failed', { dateKey, error: String(error?.message || error) });
       });
     return this.persistQueue;
   };
+  shouldPersistRoleMessage = message => shouldPersistRoleMessage(message, { chatScope: this.chatScope });
+
+  filterPersistableMessages = messages => filterPersistableMessages(messages, { chatScope: this.chatScope });
 
   buildMessage = (text, sender = 'user') => ({
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -2252,15 +4378,11 @@ TASK:
     const rawText = String(rawMessage?.text || '').trim();
     if (!rawText) return '';
     const isUser = rawMessage?.sender === 'user';
-    const interfaceLanguage = normalizeLocale(getCurrentInterfaceLanguage());
-    const isZh = interfaceLanguage.startsWith('zh');
-    const instruction = isZh
-      ? isUser
-        ? '你是摘要器。仅根据下方原文生成中文行动短句，最多100字。删除“选项/选择/A/B/1/2/：”等提示词，不要出现“我选择”，不要新增信息。若是提问或闲聊，保留核心意图。仅输出结果。'
-        : '你是摘要器。仅根据下方原文生成中文叙述摘要，最多100字。只能压缩，不得新增事件信息；避免对白原句，优先叙述句。仅输出结果。'
-      : isUser
-        ? 'You are a summarizer. Generate an action-style digest in English based only on the original text below (<=100 words). Remove prompt markers like "Option/Choice/A/B/1/2/:". Do not use "I choose." Do not add new information. If the source is a question or small talk, preserve its core intent. Output digest only.'
-        : 'You are a summarizer. Generate a narrative digest in English based only on the original text below (<=100 words). Compress only; do not add events or facts. Avoid quoted dialogue and prefer declarative narration. Output digest only.';
+    const targetLanguage = getStoryLangLabel(this.getStoryLangCode?.() || normalizeLocale(getCurrentInterfaceLanguage()) || 'en');
+    const instruction = buildStoryDigestInstruction({
+      isUser,
+      targetLanguage,
+    });
 
     const cfg = this.state.llmConfig || this.currentLLMConfig;
     if (!cfg?.provider) {
@@ -2271,7 +4393,8 @@ TASK:
       throw new Error('LLM provider missing');
     }
     const providerDef = resolved.def;
-    const recent = [{ sender: 'user', text: `原文：\n${rawText}` }];
+    const recent = [{ sender: 'user', text: `Original text:
+\n${rawText}` }];
     if (providerDef.kind === 'openai_compat') {
       return await this.callOpenAICompatible({
         baseUrl: cfg.baseUrl || providerDef.baseUrl,
@@ -2357,6 +4480,10 @@ TASK:
         ? { ...this.buildMessage(messageOrText, sender), ...(extra || {}) }
         : { ...(messageOrText || {}), ...(extra || {}) };
 
+    if (message.sender === 'user' && this.shouldSuppressUserInputRecord(message._modelText || message.text || '')) {
+      return;
+    }
+
     this.shouldScrollToEnd = true;
     this.setState(
       prevState => {
@@ -2375,11 +4502,17 @@ TASK:
         if (this.isStoryScope) {
           this.appendStoryDigestForRaw(message);
         }
+        if (this.chatScope === 'role') {
+          this.appendConversationBufferMessage(message);
+        }
       },
     );
   };
 
   appendMessages = messages => {
+    messages = (messages || []).filter(message => !(message?.sender === 'user' && this.shouldSuppressUserInputRecord(message._modelText || message.text || '')));
+    if (!messages.length) return;
+
     this.shouldScrollToEnd = true;
     this.setState(
       prevState => {
@@ -2437,6 +4570,12 @@ TASK:
         if (this.isStoryScope && updated) {
           this.appendStoryDigestForRaw(updated);
         }
+        if (this.chatScope === 'role' && updated && !String(newText || '').includes('LLM call failed')) {
+          this.appendConversationBufferMessage({ ...updated, text: newText, pending: false });
+          if (this.state.isAutoVoiceSpeak) {
+            this.startRoleSpeechFromText(newText);
+          }
+        }
       },
     );
   };
@@ -2478,7 +4617,7 @@ TASK:
         if (i === 1 && !this.hasIntroAutoAOnce) {
           this.hasIntroAutoAOnce = true;
           await this.waitForIntroStep(50);
-          await this.sendCommand('/a');
+          await this.sendCommand('/rolemodel check');
           await this.waitForIntroStep(200);
         }
 
@@ -2487,6 +4626,31 @@ TASK:
     } finally {
       this.isPlayingIntro = false;
     }
+  };
+
+  shouldSuppressUserInputRecord = text => {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return false;
+
+    const roleModelStep = String(this.state.pendingRoleModelStep || '').trim();
+    if ((roleModelStep === 'builtin_api_key' || roleModelStep === 'custom_api_key') && !trimmed.startsWith('/')) {
+      return true;
+    }
+
+    if ((this.state.pendingRoleFragmentImport || this.state.pendingRoleStoryFragmentImport || this.state.pendingRoleStoryFragmentAnalyzeConfirm || this.state.pendingDoppelStoryInput) && !trimmed.startsWith('/')) {
+      return true;
+    }
+
+    const aiSetupStep = String(this.state.pendingAISetupStep || '').trim();
+    if (this.state.pendingAISetup && (aiSetupStep === 'builtin_key' || aiSetupStep === 'custom_key') && !trimmed.startsWith('/')) {
+      return true;
+    }
+
+    if (/^\/a\s+(?:add\s+\S+\s+https?:\/\/\S+\s+\S+|(?:gpt|grok|claude|gemini|deepseek|kimi|qwen)\s+\S+)/i.test(trimmed)) {
+      return true;
+    }
+
+    return false;
   };
 
   handleSend = async payload => {
@@ -2498,36 +4662,61 @@ TASK:
       return;
     }
 
+    if (this.state.isRoleSpeaking) {
+      await this.stopRoleSpeech();
+    }
+
     if (!rawInput) {
       this.setState({ inputValue: '' });
-      await this.handleTriggers(modelText, null);
+      try {
+        await this.handleTriggers(modelText, null);
+      } catch (error) {
+        console.warn('AgentRole: handleSend trigger failed', error);
+        this.replyFromAgent('Action failed. Please try again.');
+      }
       return;
     }
 
-    const userMessage = this.buildMessage(rawInput, 'user');
-    userMessage._modelText = modelText;
-    userMessage._choiceMeta = payload?.choiceMeta || null;
+    const suppressUserRecord = this.shouldSuppressUserInputRecord(rawInput) || this.shouldSuppressUserInputRecord(modelText);
+    const userMessage = suppressUserRecord ? null : this.buildMessage(rawInput, 'user');
+    if (userMessage) {
+      userMessage._modelText = modelText;
+      userMessage._choiceMeta = payload?.choiceMeta || null;
 
-    this.appendMessage(rawInput, 'user', {
-      id: userMessage.id,
-      timestamp: userMessage.timestamp,
-      _modelText: userMessage._modelText,
-      _choiceMeta: userMessage._choiceMeta,
-    });
+      this.appendMessage(rawInput, 'user', {
+        id: userMessage.id,
+        timestamp: userMessage.timestamp,
+        _modelText: userMessage._modelText,
+        _choiceMeta: userMessage._choiceMeta,
+      });
+    }
 
     this.setState({ inputValue: '' });
-    await this.handleTriggers(modelText, userMessage);
+    try {
+      await this.handleTriggers(modelText, userMessage);
+    } catch (error) {
+      console.warn('AgentRole: handleSend trigger failed', error);
+      this.replyFromAgent('Action failed. Please try again.');
+    }
   };
 
   sendCommand = async commandText => {
-    const text = commandText.trim();
+    const text = normalizeInjectedCommandText(commandText);
     if (!text) {
       return;
     }
-    const userMessage = this.buildMessage(text, 'user');
-    this.appendMessage(userMessage);
+    const shouldHideLocalCommand = /^\/r\s+memory\s+confirm\b/i.test(text) || this.shouldSuppressUserInputRecord(text);
+    const userMessage = shouldHideLocalCommand ? null : this.buildMessage(text, 'user');
+    if (userMessage) {
+      this.appendMessage(userMessage);
+    }
     this.setState({ inputValue: '' });
-    await this.handleTriggers(text, userMessage);
+    try {
+      await this.handleTriggers(text, userMessage);
+    } catch (error) {
+      console.warn('AgentRole: sendCommand trigger failed', error);
+      this.replyFromAgent('Action failed. Please try again.');
+    }
     this.shouldScrollToEnd = true;
   };
 
@@ -2537,11 +4726,219 @@ TASK:
       return;
     }
 
-    if (this.state.pendingMemoryAdjust && trimmed.startsWith('/')) {
-      await new Promise(resolve =>
-        this.setState({ pendingMemoryAdjust: false, pendingMemoryRoleSlug: null }, resolve),
+    if (/^\/summary\s+talk\b/i.test(trimmed)) {
+      const roleSlug = trimmed.replace(/^\/summary\s+talk\b/i, '').trim();
+      await this.openViewHistoryRecords(roleSlug);
+      return true;
+    }
+
+    if (/^\/role\s+export\b/i.test(trimmed)) {
+      const roleSlug = trimmed.replace(/^\/role\s+export\b/i, '').trim();
+      await this.exportRoleRecord(roleSlug);
+      return true;
+    }
+
+    if (/^\/role\s+(?:importfragment|importfragments|importfrag)\b/i.test(trimmed) || /^\/role\s+import\s+(?:fragment|fragments|frag)\b/i.test(trimmed)) {
+      await this.beginRoleFragmentImport();
+      return true;
+    }
+
+    if (/^\/role\s+import\b/i.test(trimmed)) {
+      await this.importRoleRecord();
+      return true;
+    }
+
+    if (/^\/role\s+(?:openexport|openstoryexport|openstoryclone|openmemoryclone|copystoryclone|copymemoryclone)\b/i.test(trimmed)) {
+      const commandName = (/^\/role\s+(\S+)/i.exec(trimmed)?.[1] || '').toLowerCase();
+      const commandPath = trimmed.replace(/^\/role\s+\S+\s*/i, '').trim();
+      const rawPath = String(
+        commandPath ||
+          (commandName === 'openstoryexport'
+            ? this._lastExportedStoryRecordPath
+            : commandName === 'openstoryclone' || commandName === 'copystoryclone'
+              ? this._lastStoryClonePath
+              : commandName === 'openmemoryclone' || commandName === 'copymemoryclone'
+                ? this._lastMemoryClonePath
+                : this._lastExportedRoleRecordPath),
+      ).trim();
+      if (!rawPath) {
+        this.replyFromAgent(this.getRoleUiText('recentExportMissing'));
+        return true;
+      }
+      const normalizedPath = rawPath.replace(/^file:\/\//i, '');
+      if (!(await RNFS.exists(normalizedPath).catch(() => false))) {
+        this.replyFromAgent(this.getRoleUiText('exportFileMissing'));
+        return true;
+      }
+      if (/^copy/i.test(commandName)) {
+        const content = await RNFS.readFile(normalizedPath, 'utf8');
+        Clipboard.setString(content);
+        showStatus(this.getRoleUiText('copiedToClipboard'), 2000);
+        return true;
+      }
+      await this.openLocalRoleFile(normalizedPath);
+      return true;
+    }
+
+    if (/^\/r\s+memory\s+regen\b/i.test(trimmed)) {
+      const roleSlug = this.state.pendingMemoryRoleSlug || this.state.pendingMemoryAdjustDraft?.roleSlug;
+      const roleData = roleSlug ? await this.readRoleFile(roleSlug) : null;
+      if (!roleSlug || !roleData) {
+        this.replyFromAgent(this.getRoleUiText('memoryAdjustFailed'));
+        return true;
+      }
+      const rebuiltBundle = await this.buildValidatedInitialRoleMemory(roleData.roleName || roleSlug);
+      const normalizedRebuilt = this.normalizeMemoryCardText(
+        rebuiltBundle?.memory || buildDefaultRoleMemoryCard(roleData.roleName || roleSlug, this.getRoleLangCode?.() || this.state.roleLangCode || 'en'),
       );
-      this.replyFromAgent('(memory adjust cancelled)');
+      await createRoleMemorySnapshot(this, { roleSlug, roleData, meta: { kind: 'before-regen', trigger: '/r memory regen' } });
+      roleData.memory = normalizedRebuilt;
+      roleData.initialMemory = this.normalizeMemoryCardText(roleData.initialMemory || rebuiltBundle?.initialMemory || normalizedRebuilt);
+      roleData.memoryLayers = rebuiltBundle?.memoryLayers;
+      roleData.initialMemoryLayers = roleData.initialMemoryLayers || rebuiltBundle?.initialMemoryLayers;
+      roleData.generationStatus = rebuiltBundle?.generationStatus || 'validated';
+      roleData.memorySeed = rebuiltBundle?.memorySeed || null;
+      roleData.updatedAt = Date.now();
+      await this.writeRoleFile(roleSlug, roleData);
+      await new Promise(resolve =>
+        this.setState({ pendingMemoryAdjust: true, pendingMemoryRoleSlug: roleSlug, pendingMemoryAdjustDraft: null, pendingMemoryAdjustLayer: null }, resolve),
+      );
+      await this.handleTriggers('/role edit', null);
+      return true;
+    }
+
+    if (/^\/r\s+memory\s+keep\b/i.test(trimmed)) {
+      const roleSlug = this.state.pendingMemoryRoleSlug || this.state.pendingMemoryAdjustDraft?.roleSlug;
+      if (!roleSlug) {
+        this.replyFromAgent(this.getRoleUiText('memoryAdjustFailed'));
+        return true;
+      }
+      await new Promise(resolve =>
+        this.setState({ pendingMemoryAdjust: true, pendingMemoryRoleSlug: roleSlug, pendingMemoryAdjustDraft: null, pendingMemoryAdjustLayer: null }, resolve),
+      );
+      this.replyFromAgent([
+        this.getRoleUiText('askAdjustMemory'),
+        this.getRoleUiText('describeAdjustMemory'),
+        this.getRoleUiText('verifiedExplain'),
+        this.getRoleUiText('likelyExplain'),
+        this.getRoleUiText('fogExplain'),
+      ].join('\n'));
+      return true;
+    }
+
+    if (/^\/r\s+memory\s+confirm\b/i.test(trimmed)) {
+      let draft = this.state.pendingMemoryAdjustDraft;
+      if (!draft?.roleSlug) {
+        const encoded = trimmed.replace(/^\/r\s+memory\s+confirm\b/i, '').trim();
+        if (encoded) {
+          try {
+            draft = JSON.parse(decodeURIComponent(encoded));
+          } catch {}
+        }
+      }
+      if (!draft?.roleSlug) {
+        this.replyFromAgent(this.getRoleUiText('memoryAdjustFailed'));
+        return true;
+      }
+
+      const roleData = await this.readRoleFile(draft.roleSlug);
+      if (!roleData) {
+        await new Promise(resolve => this.setState({ pendingMemoryAdjustDraft: null }, resolve));
+        this.replyFromAgent(this.getRoleUiText('memoryAdjustFailed'));
+        return true;
+      }
+
+      this.replyFromAgent(this.getRoleUiText('memoryUpdating'));
+
+      const roleLang = this.getRoleLangCode?.() || this.state.roleLangCode || 'en';
+      const parsedCurrentLayers = this.parseRoleMemoryLayers(roleData.memory || '');
+      const currentLayers = {
+        verified: this.normalizeMemoryLayerText(roleData.memoryLayers?.verified || parsedCurrentLayers.verified || ''),
+        likely: this.normalizeMemoryLayerText(roleData.memoryLayers?.likely || parsedCurrentLayers.likely || ''),
+        fog: this.normalizeMemoryLayerText(roleData.memoryLayers?.fog || parsedCurrentLayers.fog || ''),
+      };
+      const stableInitialLayers = {
+        verified: this.normalizeMemoryLayerText(roleData.initialMemoryLayers?.verified || ''),
+        likely: this.normalizeMemoryLayerText(roleData.initialMemoryLayers?.likely || ''),
+        fog: this.normalizeMemoryLayerText(roleData.initialMemoryLayers?.fog || ''),
+      };
+      const targetLayer = String(draft.layer || 'VERIFIED').trim().toLowerCase();
+      let nextLayerText = currentLayers[targetLayer] || '';
+
+      if (!!this.state.llmConfig?.provider && typeof this.callLLMSilent === 'function') {
+        const prompt = buildMemoryLayerEditPrompt({
+          roleName: roleData.roleName || draft.roleSlug || 'unknown',
+          layer: draft.layer || 'VERIFIED',
+          currentLayerText: nextLayerText,
+          requestText: draft.raw || draft.content || '',
+        });
+        try {
+          const raw = await this.callLLMSilent(prompt);
+          const cleaned = this.normalizeMemoryLayerText(raw);
+          if (cleaned) nextLayerText = cleaned;
+        } catch {}
+      } else {
+        this.replyFromAgent(this.getRoleUiText('memoryAdjustNeedsLlm'));
+      }
+
+      const repairedLayer = await this.validateAndRepairRoleLayer({
+        roleName: roleData.roleName || draft.roleSlug,
+        roleLang,
+        layer: targetLayer,
+        text: nextLayerText,
+        request: draft.raw || draft.content || '',
+      });
+
+      currentLayers[targetLayer] = repairedLayer.text;
+      roleData.memoryLayers = currentLayers;
+      roleData.initialMemoryLayers = stableInitialLayers;
+      await createRoleMemorySnapshot(this, { roleSlug: draft.roleSlug, roleData, meta: { kind: 'before-edit', trigger: '/r memory confirm' } });
+      roleData.memory = this.composeRoleMemoryCard(roleData.roleName || draft.roleSlug, currentLayers);
+      roleData.initialMemory = this.composeRoleMemoryCard(roleData.roleName || draft.roleSlug, stableInitialLayers);
+      roleData.roleSlug = roleData.roleSlug || draft.roleSlug;
+      roleData.roleName = String(roleData.roleName || draft.roleSlug).trim();
+      roleData.updatedAt = Date.now();
+
+      const afterSnapshot = buildRoleSnapshot({
+        kind: 'memory-edit',
+        roleSlug: draft.roleSlug,
+        roleName: roleData.roleName || draft.roleSlug,
+        agentId: this.agentId,
+        roleData,
+        capturedAt: Date.now(),
+        source: { kind: 'memory-edit', trigger: '/r memory confirm' },
+        state: {
+          roleLangCode: this.getRoleLangCode?.() || this.state?.roleLangCode || 'en',
+        },
+        conversationSummary: await this.readConversationSummary(draft.roleSlug),
+        conversationBuffer: await this.readConversationBuffer(draft.roleSlug),
+      });
+      await this.applyRoleSnapshot(afterSnapshot);
+      const refreshedCards = await this.loadLocalRoleCardsPage(0);
+      await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: refreshedCards.items }, resolve));
+      await new Promise(resolve =>
+        this.setState({
+          activeRoleSlug: draft.roleSlug,
+          pendingMemoryAdjust: false,
+          pendingMemoryRoleSlug: null,
+          pendingMemoryAdjustDraft: null,
+          pendingMemoryAdjustLayer: null,
+        }, resolve),
+      );
+
+      this.replyFromAgent(this.getRoleUiText('memoryUpdated'));
+      await this.handleTriggers('/role memory', null);
+      return true;
+    }
+
+    if (this.state.pendingMemoryAdjust && trimmed.startsWith('/')) {
+      const allowWhileAdjusting = /^\/(?:role\s+(?:edit|[vlf])\b|r\s+memory\s+(?:adjust|regen|keep|confirm)\b)/i.test(trimmed);
+      if (!allowWhileAdjusting) {
+        await new Promise(resolve =>
+          this.setState({ pendingMemoryAdjust: false, pendingMemoryRoleSlug: null, pendingMemoryAdjustDraft: null, pendingMemoryAdjustLayer: null }, resolve),
+        );
+        this.replyFromAgent(this.getRoleUiText('memoryAdjustCancelled'));
+      }
     }
 
     if (this.state.pendingMemoryAdjust && userMessage) {
@@ -2553,98 +4950,65 @@ TASK:
 
         if (!roleSlug || !roleData) {
           await new Promise(resolve =>
-            this.setState({ pendingMemoryAdjust: false, pendingMemoryRoleSlug: null }, resolve),
+            this.setState({ pendingMemoryAdjust: false, pendingMemoryRoleSlug: null, pendingMemoryAdjustDraft: null, pendingMemoryAdjustLayer: null }, resolve),
           );
-          this.replyFromAgent('(memory adjust failed)');
+          this.replyFromAgent(this.getRoleUiText('memoryAdjustFailed'));
           return true;
         }
 
-        const currentMemory = String(roleData.memory || '').trim();
-        let nextMemory = currentMemory;
-
-        if (!!this.state.llmConfig?.provider && typeof this.callLLMSilent === 'function') {
-          const prompt = `
-You are a memory editor for an xKEVA role-playing agent.
-
-CURRENT_MEMORY:
-${JSON.stringify(currentMemory).slice(0, 12000)}
-
-USER_ADJUST_REQUEST:
-${JSON.stringify(adjustText).slice(0, 4000)}
-
-TASK:
-- Rewrite CURRENT_MEMORY according to USER_ADJUST_REQUEST.
-- Keep the result compact.
-- Preserve the 3-layer structure.
-- Output plain text only.
-- Do NOT explain.
-- Do NOT use JSON.
-- Do NOT include "MEMORY_CARD v0.2".
-
-FORMAT:
-ROLE=<role name>
-[V]
-- Origin: ...
-- Function: ...
-- Signature: ...
-- Relation: ...
-- Scene: ...
-- Other: ...
-
-[L]
-- ...
-
-[F]
-- ...
-`.trim();
-
-          try {
-            const raw = await this.callLLMSilent(prompt);
-            const cleaned = this.normalizeMemoryCardText(raw);
-            if (cleaned) nextMemory = cleaned;
-          } catch {}
-        } else {
-          nextMemory = currentMemory || buildDefaultRoleMemoryCard(roleData.roleName || roleSlug);
-          this.replyFromAgent('(memory adjust needs LLM; memory kept unchanged)');
+        const selectedLayer = normalizeRoleMemoryLayerKey(this.state.pendingMemoryAdjustLayer || this.state.pendingMemoryAdjustDraft?.layer || '');
+        if (selectedLayer) {
+          await this.handleTriggers(`/role ${this.getRoleMemoryLayerShortCode(selectedLayer)} ${roleSlug} ${adjustText}`, userMessage);
+          return true;
         }
 
-        roleData.memory = this.normalizeMemoryCardText(nextMemory);
-        roleData.updatedAt = Date.now();
-        await this.writeRoleFile(roleSlug, roleData);
-
+        const draft = { ...this.inferMemoryAdjustIntent(adjustText), roleSlug };
         await new Promise(resolve =>
-          this.setState({ pendingMemoryAdjust: false, pendingMemoryRoleSlug: null }, resolve),
+          this.setState({ pendingMemoryAdjustDraft: draft }, resolve),
         );
-
-        this.replyFromAgent([
-          'Memory updated.',
-          '',
-          nextMemory || '(empty)',
-        ].join('\n'));
-
-        this.replyFromAgent([
-          '[[/r recall|Recall memory]]',
-          '[[/r memory adjust|Continue adjusting]]',
-          '[[/r memory reset|Reset memory]]',
-          '[[/r memory commit|Commit memory on-chain]]',
-          '[[/r memory delete|Delete memory]]',
-          '[[/r continuechat|Continue chat]]',
-          '[[/r new|Switch role]]',
-        ].join('\n'));
-
+        this.replyFromAgent(this.buildMemoryAdjustConfirmMessage(draft));
         return true;
       }
     }
 
-    if (this.state.pendingRoleModelStep && trimmed.startsWith('/')) {
-      await this.clearRoleModelPendingState();
-      this.replyFromAgent('(role model setup cancelled)');
+    if (this.state.pendingDoppelMemoryInput && trimmed.startsWith('/')) {
+      await new Promise(resolve => this.setState({ pendingDoppelMemoryInput: false, pendingDoppelMemoryDraft: null }, resolve));
+      this.replyFromAgent(this.getRoleUiText('doppelMemoryCancelled') || '(doppel memory cancelled)');
     }
 
-    if (this.state.pendingRoleModelStep && userMessage && !trimmed.startsWith('/')) {
+    if (this.state.pendingDoppelMemoryInput && userMessage && !trimmed.startsWith('/')) {
+      const inputId = normalizeDoppelMemoryId(trimmed);
+      if (!inputId) {
+        this.replyFromAgent(this.getRoleUiText('doppelMemoryEmpty') || 'Please enter an ID.');
+        return true;
+      }
+      this.replyFromAgent(this.getRoleUiText('doppelMemoryReading') || 'Reading doppel memory…');
+      try {
+        const draft = await fetchDoppelOnChainMemory({ BlueElectrum, rawId: inputId });
+        if (!draft?.hasAnyMemory) {
+          await new Promise(resolve => this.setState({ pendingDoppelMemoryInput: false, pendingDoppelMemoryDraft: null }, resolve));
+          this.replyFromAgent(this.getRoleUiText('doppelRestoreFailed') || '(doppel memory restore failed)');
+          return true;
+        }
+        await new Promise(resolve => this.setState({ pendingDoppelMemoryInput: false, pendingDoppelMemoryDraft: draft }, resolve));
+        this.replyFromAgent(this.buildDoppelMemoryConfirmMessage(draft));
+      } catch (error) {
+        console.warn('Failed to read doppel memory', error);
+        await new Promise(resolve => this.setState({ pendingDoppelMemoryInput: false, pendingDoppelMemoryDraft: null }, resolve));
+        this.replyFromAgent(this.getRoleUiText('doppelRestoreFailed') || '(doppel memory restore failed)');
+      }
+      return true;
+    }
+
+    if (this.state.pendingRoleModelStep && trimmed.startsWith('/')) {
+      await this.clearRoleModelPendingState();
+      this.replyFromAgent(this.getRoleUiText('roleModelSetupCancelled'));
+    }
+
+    if (this.state.pendingRoleModelStep && !trimmed.startsWith('/')) {
       const value = sanitizeDialogText(trimmed);
       if (!value) {
-        this.replyFromAgent('(empty input)');
+        this.replyFromAgent(this.getRoleUiText('emptyInput'));
         return true;
       }
 
@@ -2652,7 +5016,7 @@ ROLE=<role name>
         const provider = sanitizeProviderKey(this.state.pendingRoleModelBuiltinProvider);
         if (!provider || !LLM_PROVIDERS[provider]) {
           await this.clearRoleModelPendingState();
-          this.replyFromAgent('(builtin provider not found)');
+          this.replyFromAgent(this.getRoleUiText('builtinProviderNotFound'));
           return true;
         }
 
@@ -2682,7 +5046,7 @@ ROLE=<role name>
             resolve,
           ),
         );
-        this.replyFromAgent('Enter base URL:');
+        this.replyFromAgent(this.getRoleUiText('enterBaseUrl'));
         return true;
       }
 
@@ -2690,7 +5054,7 @@ ROLE=<role name>
         await new Promise(resolve =>
           this.setState({ pendingRoleModelStep: 'custom_api_key', pendingRoleModelCustomBaseUrl: value }, resolve),
         );
-        this.replyFromAgent('Enter API key:');
+        this.replyFromAgent(this.getRoleUiText('enterApiKey'));
         return true;
       }
 
@@ -2700,7 +5064,7 @@ ROLE=<role name>
         const baseUrl = sanitizeUrlInput(this.state.pendingRoleModelCustomBaseUrl);
         if (!nameRaw || !provider || !baseUrl) {
           await this.clearRoleModelPendingState();
-          this.replyFromAgent('(custom model setup failed)');
+          this.replyFromAgent(this.getRoleUiText('customModelSetupFailed'));
           return true;
         }
 
@@ -2721,6 +5085,17 @@ ROLE=<role name>
       }
     }
 
+    const apiUrlMatch = trimmed.match(/^\/rolemodel\s+apiurl\s+([^\s]+)\s*$/i);
+    if (apiUrlMatch) {
+      await this.openModelApiUsageUrl(apiUrlMatch[1]);
+      return true;
+    }
+
+    if (/^\/rolemodel\s+apiusage\b/i.test(trimmed)) {
+      this.replyFromAgent(this.buildModelApiUsageMessage());
+      return true;
+    }
+
     if (/^\/rolemodel\s+remove\b$/i.test(trimmed)) {
       const menu = await this.buildRoleModelRemoveMenuMessage();
       this.replyFromAgent(menu);
@@ -2737,8 +5112,8 @@ ROLE=<role name>
 
       const builtin = (await this.readBuiltinRegistry?.()) || {};
       if (!builtin?.[provider]) {
-        this.replyFromAgent('(builtin provider not found)');
-        await this.handleTriggers('/role', null);
+        this.replyFromAgent(this.getRoleUiText('builtinProviderNotFound'));
+        await this.handleTriggers('/role menu', null);
         return true;
       }
 
@@ -2759,7 +5134,7 @@ ROLE=<role name>
       }
 
       this.replyFromAgent(`Key removed: ${provider}`);
-      await this.handleTriggers('/role', null);
+      await this.handleTriggers('/role menu', null);
       return true;
     }
 
@@ -2774,8 +5149,8 @@ ROLE=<role name>
       const provider = String(name || '').toLowerCase();
       const custom = (await this.readCustomRegistry?.()) || {};
       if (!custom?.[provider]) {
-        this.replyFromAgent('(custom model not found)');
-        await this.handleTriggers('/role', null);
+        this.replyFromAgent(this.getRoleUiText('customModelNotFound'));
+        await this.handleTriggers('/role menu', null);
         return true;
       }
 
@@ -2792,7 +5167,7 @@ ROLE=<role name>
       }
 
       this.replyFromAgent(`Custom model removed: ${name}`);
-      await this.handleTriggers('/role', null);
+      await this.handleTriggers('/role menu', null);
       return true;
     }
 
@@ -2838,84 +5213,500 @@ ROLE=<role name>
 
     if (/^\/rolemodel\s+custom\b/i.test(trimmed)) {
       const rawName = trimmed.replace(/^\/rolemodel\s+custom\b/i, '').trim();
-      if (rawName) {
-        const provider = rawName.toLowerCase();
-        const custom = (await this.readCustomRegistry?.()) || {};
-        if (custom?.[provider]) {
-          const currentModel = String(this.state.llmConfig?.provider === provider ? (this.state.llmConfig?.model || '') : '').trim();
-          const lastUsedModel = String(this.currentLLMConfig?.provider === provider ? (this.currentLLMConfig?.model || '') : '').trim();
-          const hasKey = !!String(custom?.[provider]?.apiKey || '').trim();
-          const hasSavedModel = !!String(custom?.[provider]?.model || currentModel || lastUsedModel).trim();
-          if (hasKey && hasSavedModel) {
-            if (!String(custom?.[provider]?.model || '').trim() && (currentModel || lastUsedModel)) {
-              custom[provider] = { ...(custom[provider] || {}), model: (currentModel || lastUsedModel) };
-              await this.writeCustomRegistry?.(custom);
-            }
-          }
-          if (hasKey) {
-            await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, resolve));
-            await this.handleTriggers(`/a ${provider}`, null);
-            return true;
-          }
-          await new Promise(resolve =>
-            this.setState(
-              {
-                pendingRoleModelStep: 'custom_api_key',
-                pendingRoleModelBuiltinProvider: '',
-                pendingRoleModelCustomName: rawName,
-                pendingRoleModelCustomBaseUrl: String(custom?.[provider]?.baseUrl || '').trim(),
-              },
-              resolve,
-            ),
-          );
-          this.replyFromAgent('Enter API key:');
-          return true;
-        }
+      if (!rawName) {
+        const menu = await this.buildRoleModelCustomMenuMessage();
+        this.replyFromAgent(menu);
+        return true;
       }
 
-      await new Promise(resolve =>
-        this.setState(
-          {
-            pendingRoleModelStep: 'custom_name',
-            pendingRoleModelBuiltinProvider: '',
-            pendingRoleModelCustomName: '',
-            pendingRoleModelCustomBaseUrl: '',
-          },
-          resolve,
-        ),
-      );
-      this.replyFromAgent('Enter custom model name:');
+      if (/^new$/i.test(rawName)) {
+        await new Promise(resolve =>
+          this.setState(
+            {
+              pendingRoleModelStep: 'custom_name',
+              pendingRoleModelBuiltinProvider: '',
+              pendingRoleModelCustomName: '',
+              pendingRoleModelCustomBaseUrl: '',
+            },
+            resolve,
+          ),
+        );
+        this.replyFromAgent(this.getRoleUiText('enterCustomModelName'));
+        return true;
+      }
+
+      const provider = rawName.toLowerCase();
+      const custom = (await this.readCustomRegistry?.()) || {};
+      if (custom?.[provider]) {
+        const currentModel = String(this.state.llmConfig?.provider === provider ? (this.state.llmConfig?.model || '') : '').trim();
+        const lastUsedModel = String(this.currentLLMConfig?.provider === provider ? (this.currentLLMConfig?.model || '') : '').trim();
+        const hasKey = !!String(custom?.[provider]?.apiKey || '').trim();
+        const hasSavedModel = !!String(custom?.[provider]?.model || currentModel || lastUsedModel).trim();
+        if (hasKey && hasSavedModel) {
+          if (!String(custom?.[provider]?.model || '').trim() && (currentModel || lastUsedModel)) {
+            custom[provider] = { ...(custom[provider] || {}), model: (currentModel || lastUsedModel) };
+            await this.writeCustomRegistry?.(custom);
+          }
+        }
+        if (hasKey) {
+          await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, resolve));
+          await this.handleTriggers(`/a ${provider}`, null);
+          return true;
+        }
+        await new Promise(resolve =>
+          this.setState(
+            {
+              pendingRoleModelStep: 'custom_api_key',
+              pendingRoleModelBuiltinProvider: '',
+              pendingRoleModelCustomName: rawName,
+              pendingRoleModelCustomBaseUrl: String(custom?.[provider]?.baseUrl || '').trim(),
+            },
+            resolve,
+          ),
+        );
+        this.replyFromAgent(this.getRoleUiText('enterApiKey'));
+        return true;
+      }
+
+      const menu = await this.buildRoleModelCustomMenuMessage();
+      this.replyFromAgent(menu);
+      return true;
+    }
+
+    if (/^\/rolemodel\s+check\b/i.test(trimmed)) {
+      await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, resolve));
+      await this.runRoleModelCheck({ source: this.roleEntrySource || 'role', showSuccess: true });
       return true;
     }
 
     if (/^\/rolemodel\b/i.test(trimmed)) {
       await new Promise(resolve => this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, resolve));
-      await this.handleTriggers('/a list', null);
+      await this.startRoleModelSetup();
       return true;
     }
 
+    if (this.state.pendingRoleFragmentImport) {
+      await new Promise(resolve => this.setState({ pendingRoleFragmentImport: false }, resolve));
+      if (!trimmed.startsWith('/')) {
+        await this.importRoleFragment(trimmed);
+        return true;
+      }
+    }
+
+    if (this.state.pendingRoleStoryFragmentImport) {
+      await new Promise(resolve => this.setState({ pendingRoleStoryFragmentImport: false }, resolve));
+      if (!trimmed.startsWith('/')) {
+        await this.confirmRoleStoryFragmentAnalyze(trimmed);
+        return true;
+      }
+    }
+
+    if (/^\/role\s+story\s+fragment\s+analyze\s+yes\b/i.test(trimmed)) {
+      const fragmentText = String(this.state.pendingRoleStoryFragmentText || '').trim();
+      await new Promise(resolve => this.setState({ pendingRoleStoryFragmentAnalyzeConfirm: false, pendingRoleStoryFragmentText: '' }, resolve));
+      if (fragmentText) {
+        await this.importRoleStoryFragment(fragmentText);
+      } else {
+        this.replyFromAgentLocal(this.getRoleUiText('importStoryFragmentEmpty') || 'Please enter some text first.');
+        await this.beginRoleStoryFragmentImport();
+      }
+      return true;
+    }
+
+    if (/^\/role\s+story\s+fragment\s+analyze\s+no\b/i.test(trimmed)) {
+      await new Promise(resolve => this.setState({ pendingRoleStoryFragmentAnalyzeConfirm: false, pendingRoleStoryFragmentText: '' }, resolve));
+      this.replyFromAgentLocal(this.getRoleUiText('storyFragmentAnalyzeCancelled') || '(story fragment analysis cancelled)');
+      return true;
+    }
+
+    if (/^\/role\s+story\s+fragment\s+explore\s+yes\b/i.test(trimmed)) {
+      const storySeed = this.state.pendingRoleStoryFragmentSeed;
+      await new Promise(resolve => this.setState({ pendingRoleStoryFragmentExplore: false, pendingRoleStoryFragmentSeed: null }, resolve));
+      if (storySeed?.premise) {
+        await this.openImportedRoleStoryFragment(storySeed);
+      } else {
+        this.replyFromAgentLocal(this.getRoleUiText('importStoryFragmentFailed', { error: 'empty_seed' }) || 'Story fragment import failed: empty_seed');
+      }
+      return true;
+    }
+
+    if (/^\/role\s+story\s+fragment\s+explore\s+no\b/i.test(trimmed)) {
+      await new Promise(resolve => this.setState({ pendingRoleStoryFragmentExplore: false, pendingRoleStoryFragmentSeed: null }, resolve));
+      this.replyFromAgentLocal(this.getRoleUiText('storyFragmentExploreCancelled') || '(story exploration cancelled)');
+      return true;
+    }
+
+    if (this.state.pendingDoppelStoryInput) {
+      await new Promise(resolve => this.setState({ pendingDoppelStoryInput: false }, resolve));
+      if (!trimmed.startsWith('/')) {
+        await this.importDoppelOnChainStorySummary(trimmed);
+        return true;
+      }
+      this.replyFromAgentLocal(this.getRoleUiText('doppelStoryCancelled') || '(doppel story cancelled)');
+    }
+
     if (this.state.pendingRoleCall && !trimmed.startsWith('/')) {
+      const name = trimmed.trim();
       await new Promise(resolve => this.setState({ pendingRoleCall: false }, resolve));
-      await this.handleTriggers(`/r call ${trimmed}`, userMessage);
+      const existingRoleData = await this.readRoleFile(this.getSpaceRoleKey());
+      if (existingRoleData) {
+        await this.handleRoleCallWithName(name, userMessage);
+      } else {
+        await this.handleRoleSuggestWithName(name, userMessage);
+      }
+      return true;
+    }
+
+    if (/^\/role\s+lang\s+check\b/i.test(trimmed)) {
+      const status = await this.runRoleLangCheck({ showSuccess: true });
+      if (!status?.ok) {
+        return true;
+      }
+      return true;
+    }
+
+    if (/^\/role\s+lang\s+list\b/i.test(trimmed)) {
+      this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+      return true;
+    }
+
+    if (/^\/role\s+lang\b/i.test(trimmed)) {
+      const args = trimmed.replace(/^\/role\s+lang\b/i, '').trim();
+      if (!args) {
+        this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+        return true;
+      }
+      if (/^list\b/i.test(args)) {
+        this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+        return true;
+      }
+
+      const normalizedArg = normalizeStoryLangCode(args);
+      if (normalizedArg === 'other' || normalizedArg === 'more') {
+        this.appendRoleCommandMessage(this.getRoleMoreLangMenuMessage());
+        return true;
+      }
+
+      const isSupported = STORY_SUPPORTED_LANGS.some(item => item.code === normalizedArg);
+      if (!isSupported) {
+        showStatus(this.getRoleMenuText('unsupportedLang', { code: args }), 2000);
+        this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
+        return true;
+      }
+
+      await this.setRoleLangCode(normalizedArg);
+      if (!this.isPureChatMode()) {
+        this.appendRoleCommandMessage(this.buildRoleLangStatusMessage());
+        await this.handleTriggers('/role', null);
+      }
+      return true;
+    }
+
+    if (/^\/role\s+cards\s+start\b/i.test(trimmed)) {
+      await this.handleTriggers('/role cards', null);
       return true;
     }
 
     if (/^\/role\s+cards\b/i.test(trimmed)) {
-      const page = await this.loadLocalRoleCardsPage(0);
-      await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: page.items }, resolve));
-      this.replyFromAgent(this.buildLocalRoleCardsMessage(page.items, 0, page.hasMore));
+      const selected = await this.getCurrentSummonedRoleData();
+      if (!selected?.roleName) {
+        await this.handleTriggers('/role new', null);
+        return true;
+      }
+      this.replyFromAgent(this.buildLocalRoleCardsMessage([selected], 0, false));
       return true;
     }
 
     if (/^\/role\s+morecards\b/i.test(trimmed)) {
-      const nextOffset = (this.state.roleCardOffset || 0) + PAGE_SIZE;
-      const page = await this.loadLocalRoleCardsPage(nextOffset);
-      if (!page.items.length) {
-        this.replyFromAgent('(no more)');
+      await this.handleTriggers('/role cards', null);
+      return true;
+    }
+
+    if (/^\/role\s+menu\b/i.test(trimmed)) {
+      this.replyFromAgent(await this.buildRoleMenuMessage());
+      return true;
+    }
+
+    if (/^\/role\s+story\s+(?:open|new|continue)\b/i.test(trimmed)) {
+      await this.openRoleStorySpace();
+      return true;
+    }
+
+    if (/^\/role\s+story\s+(?:importfragment|fragment)\b/i.test(trimmed)) {
+      await this.beginRoleStoryFragmentImport();
+      return true;
+    }
+
+    if (/^\/role\s+story\s+onchain\s+local\b/i.test(trimmed)) {
+      await this.importLocalOnChainStorySummary();
+      return true;
+    }
+
+    if (/^\/role\s+story\s+onchain\s+doppel\b/i.test(trimmed)) {
+      await this.beginDoppelOnChainStoryImport();
+      return true;
+    }
+
+    if (/^\/role\s+story\s+onchain\b/i.test(trimmed)) {
+      await this.openRoleStoryOnChainMenu();
+      return true;
+    }
+
+    if (/^\/role\s+story\s+import\b/i.test(trimmed)) {
+      await this.importRoleStoryRecord();
+      return true;
+    }
+
+    if (/^\/role\s+story\s+export\b/i.test(trimmed)) {
+      await this.exportRoleStoryRecord();
+      return true;
+    }
+
+    if (/^\/role\s+story\s+(?:switch-worldline|switch_worldline|worldline)\b/i.test(trimmed)) {
+      const hasCurrentStory = await this.hasRoleCurrentStory();
+      if (!hasCurrentStory) {
+        this.replyFromAgent(await this.buildRoleAdventureRecordsMenuMessage());
         return true;
       }
-      await new Promise(resolve => this.setState({ roleCardOffset: nextOffset, roleCardPage: page.items }, resolve));
-      this.replyFromAgent(this.buildLocalRoleCardsMessage(page.items, nextOffset, page.hasMore));
+      await this.openViewCurrentStoryRecords({ viewMode: 'switch-worldline' });
+      return true;
+    }
+
+    if (/^\/role\s+story\s+(?:clear|delete|reset)\b/i.test(trimmed)) {
+      await this.confirmClearRoleStoryRecord();
+      return true;
+    }
+
+    if (/^\/role\s+story\s+summary\b/i.test(trimmed)) {
+      const hasCurrentStory = await this.hasRoleCurrentStory();
+      if (!hasCurrentStory) {
+        this.replyFromAgent(await this.buildRoleAdventureRecordsMenuMessage());
+        return true;
+      }
+      await this.openRoleStorySummaryRecords();
+      return true;
+    }
+
+    if (/^\/role\s+story\s+clone\b/i.test(trimmed)) {
+      const hasCurrentStory = await this.hasRoleCurrentStory();
+      if (!hasCurrentStory) {
+        this.replyFromAgent(await this.buildRoleAdventureRecordsMenuMessage());
+        return true;
+      }
+      await this.cloneRoleStoryRecord();
+      return true;
+    }
+
+    if (/^\/role\s+story\s+snapshot\b/i.test(trimmed)) {
+      const rest = trimmed.replace(/^\/role\s+story\s+snapshot\b/i, '').trim();
+      const parts = rest.split(/\s+/).filter(Boolean);
+      const sub = String(parts[0] || '').toLowerCase();
+      try {
+        if (!sub) {
+          this.replyFromAgent(buildRoleStorySnapshotMenuMessage({ getRoleUiText: this.getRoleUiText }));
+          return true;
+        }
+        if (sub === 'list') {
+          this.replyFromAgent(await buildRoleStorySnapshotListMessage(this));
+          return true;
+        }
+        if (sub === 'import') {
+          await importRoleStorySnapshot(this, parts[1] || '');
+          this.replyFromAgent(this.getRoleUiText('storySnapshotImported') || 'Story snapshot imported.');
+          await this.handleTriggers('/role story records', null);
+          return true;
+        }
+        if (sub === 'create') {
+          const hasCurrentStory = await this.hasRoleCurrentStory();
+          if (!hasCurrentStory) {
+            this.replyFromAgent(this.getRoleUiText('storyReaderEmpty') || '(no story content available)');
+            return true;
+          }
+          const result = await createRoleStorySnapshot(this);
+          this.replyFromAgent(this.getRoleUiText('storySnapshotCreated', { time: new Date(result.capturedAt).toLocaleString(), path: result.path }) || `Story snapshot created: ${result.path}`);
+          this.replyFromAgent(buildRoleStorySnapshotMenuMessage({ getRoleUiText: this.getRoleUiText }));
+          return true;
+        }
+      } catch (error) {
+        this.replyFromAgent(this.getRoleUiText('storySnapshotFailed', { error: String(error?.message || error || 'unknown') }) || `Story snapshot failed: ${String(error?.message || error || 'unknown')}`);
+        return true;
+      }
+      this.replyFromAgent(buildRoleStorySnapshotMenuMessage({ getRoleUiText: this.getRoleUiText }));
+      return true;
+    }
+
+    if (/^\/role\s+story\s+view\s+(?:older|previous|page10)\b/i.test(trimmed)) {
+      const hasCurrentStory = await this.hasRoleCurrentStory();
+      if (!hasCurrentStory) {
+        this.replyFromAgent(await this.buildRoleAdventureRecordsMenuMessage());
+        return true;
+      }
+      await this.openViewCurrentStoryRecords({ viewMode: 'story-view', pageOffsetFromLatest: 1 });
+      return true;
+    }
+
+    if (/^\/role\s+story\s+view\b/i.test(trimmed)) {
+      const hasCurrentStory = await this.hasRoleCurrentStory();
+      if (!hasCurrentStory) {
+        this.replyFromAgent(await this.buildRoleAdventureRecordsMenuMessage());
+        return true;
+      }
+      await this.openViewCurrentStoryRecords({ viewMode: 'story-view' });
+      return true;
+    }
+
+    if (/^\/role\s+story\s+records\b/i.test(trimmed)) {
+      this.replyFromAgent(await this.buildRoleAdventureRecordsMenuMessage());
+      return true;
+    }
+
+    if (/^\/role\s+story\b/i.test(trimmed)) {
+      this.replyFromAgent(await this.buildRoleStoryMenuMessage());
+      return true;
+    }
+
+    if (/^\/role\s+talkmenu\b/i.test(trimmed)) {
+      this.replyFromAgent(this.buildRoleTalkMenuMessage());
+      return true;
+    }
+
+    if (/^\/role\s+chat\b/i.test(trimmed)) {
+      const selected = await this.getCurrentSummonedRoleData();
+      if (!selected?.roleName) {
+        return true;
+      }
+
+      await this.handleTriggers('/r continue', null);
+      return true;
+    }
+
+    if (/^\/role\s+summon\b/i.test(trimmed)) {
+      const name = trimmed.replace(/^\/role\s+summon\b/i, '').trim();
+      if (!name) {
+        await this.handleTriggers('/role new', null);
+        return true;
+      }
+      await this.handleRoleCallWithName(name, userMessage);
+      return true;
+    }
+
+    if (/^\/role\s+create\b/i.test(trimmed)) {
+      const name = trimmed.replace(/^\/role\s+create\b/i, '').trim();
+      if (!name) {
+        await this.handleTriggers('/role new', null);
+        return true;
+      }
+      const roleSlug = this.getSpaceRoleKey();
+      const now = Date.now();
+      const existingRoleData = await this.readRoleFile(roleSlug);
+      if (!existingRoleData) {
+        const writeOk = await this.writeRoleFile(roleSlug, {
+          roleName: name,
+          roleSlug,
+          memory: '',
+          initialMemory: '',
+          createdAt: now,
+          updatedAt: now,
+        });
+        const readBack = writeOk ? await this.readRoleFile(roleSlug) : null;
+        if (!writeOk || !readBack) {
+          this.replyFromAgent('(role create failed)');
+          return true;
+        }
+      }
+      await this.upsertRoleIndexEntry({ roleName: name, roleSlug, updatedAt: now });
+      await this.finalizeRoleActivation({ name, roleSlug, refreshedCards: null, clearDuplicate: true });
+      return true;
+    }
+
+    if (/^\/role\s+voice\s+on\b/i.test(trimmed)) {
+      await new Promise(resolve => this.setState({ isAutoVoiceSpeak: true }, resolve));
+      await this.handleTriggers('/role', null);
+      return true;
+    }
+
+    if (/^\/role\s+voice\s+off\b/i.test(trimmed)) {
+      await new Promise(resolve => this.setState({ isAutoVoiceSpeak: false }, resolve));
+      await this.handleTriggers('/role', null);
+      return true;
+    }
+
+    if (/^\/role\s+talk\s+status\b/i.test(trimmed)) {
+      const statusText = this.getRoleTalkStatusText() || this.getRoleUiText('roleTalkDisabled');
+      const autoText = `${this.getRoleUiText('autoVoice')}：${this.state.isAutoVoiceSpeak ? `🟩 ${this.getRoleUiText('toggleOn')}` : `🟥 ${this.getRoleUiText('toggleOff')}`}`;
+      const liveText = `${this.getRoleUiText('liveVoice')}：${this.state.isContinuousTalkEnabled ? `🟩 ${this.getRoleUiText('toggleOn')}` : `🟥 ${this.getRoleUiText('toggleOff')}`}`;
+      this.replyFromAgent([statusText, autoText, liveText].filter(Boolean).join('\n'));
+      return true;
+    }
+
+    if (/^\/role\s+talk\s+off\b/i.test(trimmed)) {
+      await this.stopRoleSpeech();
+      await this.stopRoleTalkOnce().catch(() => {});
+      this._continuousTalkToken += 1;
+      if (this._continuousTalkTimer) {
+        clearTimeout(this._continuousTalkTimer);
+        this._continuousTalkTimer = null;
+      }
+      await new Promise(resolve => this.setState({ isContinuousTalkEnabled: false }, resolve));
+      await this.handleTriggers('/role', null);
+      return true;
+    }
+
+    if (/^\/role\s+talk\s+on\b/i.test(trimmed)) {
+      const ok = await this.enableRoleTalk();
+      if (ok) {
+        await this.stopRoleSpeech();
+        await new Promise(resolve => this.setState({
+          isContinuousTalkEnabled: true,
+          isAutoVoiceSpeak: true,
+        }, resolve));
+        await this.handleTriggers('/role', null);
+      }
+      return true;
+    }
+
+    if (/^\/role\s+new\b/i.test(trimmed)) {
+      await new Promise(resolve => this.setState({ pendingRoleCall: true }, resolve));
+      this.replyFromAgent(this.getRoleUiText('summonPrompt').replace(this.getRoleUiText('randomSummon'), `[[/role random|${this.getRoleUiText('randomSummon')}]]`));
+      return true;
+    }
+
+    if (/^\/role\s+random\b/i.test(trimmed)) {
+      const randomName = await this.generateRandomRoleName();
+      await new Promise(resolve => this.setState({ pendingRoleCall: false }, resolve));
+      await this.handleTriggers(`/role summon ${randomName}`, null);
+      return true;
+    }
+
+    if (/^\/role\s+clear\b/i.test(trimmed)) {
+      const currentRoleSlug =
+        String(this.state.activeRoleSlug || this.activeRoleSlug || this.state.currentSummonedRole?.roleSlug || '').trim() || '';
+      await new Promise(resolve =>
+        this.setState(
+          {
+            activeRoleSlug: null,
+            lastSelectedRole: null,
+            pendingRoleSuggest: false,
+            pendingRoleSuggestOriginal: '',
+            pendingRoleSuggestOptions: [],
+            pendingRoleFragmentImport: false,
+            pendingRoleStoryFragmentImport: false,
+            pendingRoleCall: false,
+            pendingNewRole: null,
+          },
+          resolve,
+        ),
+      );
+      this.activeRoleSlug = null;
+      await this.clearActiveRoleState();
+      await this.clearCurrentSummonedRole();
+      await this.clearPendingNewRole();
+      if (currentRoleSlug) {
+        await this.clearConversationBuffer(currentRoleSlug);
+        await this.clearConversationSummary(currentRoleSlug);
+      }
+      await this.handleTriggers('/role cards', null);
+      await this.handleTriggers('/role menu', null);
       return true;
     }
 
@@ -2923,12 +5714,11 @@ ROLE=<role name>
       const args = trimmed.replace(/^\/r\s+call\b/i, '').trim();
 
       if (!args) {
-        await new Promise(resolve => this.setState({ pendingRoleCall: true }, resolve));
-        this.replyFromAgent('Who do you want to summon? Reply with the role name.');
+        await this.handleTriggers('/role new', null);
         return true;
       }
 
-      await this.handleRoleSuggestWithName(args, userMessage);
+      await this.beginRoleCreateConfirmFlow(args);
       return true;
     }
 
@@ -2936,11 +5726,12 @@ ROLE=<role name>
     if (/^\/r\s+select\b/i.test(trimmed)) {
       const selectedName = trimmed.replace(/^\/r\s+select\b/i, '').trim();
       if (!selectedName) {
-        await this.handleRoleNewMenu();
+        await this.handleTriggers('/role cards', null);
+        await this.handleTriggers('/role menu', null);
         return true;
       }
 
-      await this.handleRoleCallWithName(selectedName, userMessage);
+      await this.handleTriggers(`/role summon ${selectedName}`, userMessage);
       return true;
     }
 
@@ -2954,12 +5745,15 @@ ROLE=<role name>
       );
 
       if (!name) {
-        if (original) await this.handleRoleSuggestWithName(original, userMessage);
-        else await this.handleRoleNewMenu();
+        if (original) {
+          await this.handleTriggers(`/role create ${original}`, userMessage);
+        } else {
+          await this.handleTriggers('/role new', null);
+        }
         return true;
       }
 
-      await this.handleRoleCallWithName(name, userMessage);
+      await this.handleTriggers(`/role summon ${name}`, userMessage);
       return true;
     }
 
@@ -2969,34 +5763,150 @@ ROLE=<role name>
         this.setState({ pendingRoleSuggest: false, pendingRoleSuggestOriginal: '', pendingRoleSuggestOptions: [] }, resolve),
       );
       if (!original) {
-        await this.handleRoleNewMenu();
+        await this.handleTriggers('/role cards', null);
+        await this.handleTriggers('/role menu', null);
         return true;
       }
-      await this.handleRoleCallWithName(original, userMessage);
+      await this.handleTriggers(`/role create ${original}`, userMessage);
+      return true;
+    }
+
+    if (/^\/(?:r|role)\s+card\b/i.test(trimmed)) {
+      const active = await this.getCurrentRoleMemoryTarget();
+      if (!active) {
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+        return true;
+      }
+
+      this.replyFromAgent(this.buildRoleMemoryCardMessage(active));
+      this.replyFromAgent(this.buildRoleMemoryFullConsoleMessage(active));
+      return true;
+    }
+
+    if (/^\/r\s+recall\s+adjust\b/i.test(trimmed)) {
+      await this.handleTriggers(trimmed.replace(/^\/r\s+recall\s+adjust\b/i, '/role edit'), userMessage);
       return true;
     }
 
     if (/^\/r\s+recall\b/i.test(trimmed)) {
-      const active = await this.getActiveRoleData();
-      if (!active) {
-        this.replyFromAgent('(no active role)');
-        return true;
-      }
-
-      const { roleData } = active;
-      this.replyFromAgent([
-        'Memory:',
-        this.normalizeMemoryCardText(String(roleData.memory || '').trim()) || '(empty)',
-      ].join('\n'));
-
-      this.replyFromAgent(this.buildRoleMemoryFullConsoleMessage(roleData));
+      await this.handleTriggers('/role memory', userMessage);
       return true;
     }
 
-    if (/^\/r\s+memory\s+adjust\b/i.test(trimmed)) {
-      const active = await this.getActiveRoleData();
+    if (/^\/role\s+memory\s+rebuild\b/i.test(trimmed)) {
+      const roleSlug = this.getSpaceRoleKey();
+      const roleData = await this.readRoleFile(roleSlug);
+      this.replyFromAgent(await this.buildRoleMemoryRecoverMenuMessage(roleData ? {
+        roleSlug,
+        roleName: roleData.roleName || roleSlug,
+        roleData,
+      } : null));
+      return true;
+    }
+
+    if (/^\/role\s+memory\b/i.test(trimmed)) {
+      const active = await this.getCurrentRoleMemoryTarget();
       if (!active) {
-        this.replyFromAgent('(no active role)');
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+        return true;
+      }
+
+      this.replyFromAgent(this.buildRoleMemoryFullConsoleMessage(active));
+      return true;
+    }
+
+    if (/^\/role\s+summary\s+clone\b/i.test(trimmed) || /^\/r\s+summary\s+clone\b/i.test(trimmed)) {
+      const active = await this.getCurrentRoleMemoryTarget();
+      if (!active) {
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+        return true;
+      }
+      await this.cloneRoleMemoryRecord(active);
+      return true;
+    }
+
+    if (/^\/role\s+snapshot\b/i.test(trimmed)) {
+      const rest = trimmed.replace(/^\/role\s+snapshot\b/i, '').trim();
+      const parts = rest.split(/\s+/).filter(Boolean);
+      const sub = String(parts[0] || '').toLowerCase();
+      try {
+        if (!sub) {
+          this.replyFromAgent(buildRoleMemorySnapshotMenuMessage({ getRoleUiText: this.getRoleUiText }));
+          return true;
+        }
+        if (sub === 'list') {
+          this.replyFromAgent(await buildRoleMemorySnapshotListMessage(this, null));
+          return true;
+        }
+        if (sub === 'import') {
+          await importRoleMemorySnapshot(this, null, parts[1] || '');
+          this.replyFromAgent(this.getRoleUiText('memorySnapshotImported'));
+          await this.handleTriggers('/role', null);
+          return true;
+        }
+
+        const active = await this.getCurrentRoleMemoryTarget();
+        if (!active) {
+          this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+          return true;
+        }
+        if (sub === active.roleSlug || sub === String(active.roleName || '').toLowerCase()) {
+          this.replyFromAgent(buildRoleMemorySnapshotMenuMessage({ getRoleUiText: this.getRoleUiText }));
+          return true;
+        }
+        if (sub === 'create') {
+          const result = await createRoleMemorySnapshot(this, active);
+          this.replyFromAgent(this.getRoleUiText('memorySnapshotCreated', { time: new Date(result.capturedAt).toLocaleString(), path: result.path }));
+          this.replyFromAgent(buildRoleMemorySnapshotMenuMessage({ getRoleUiText: this.getRoleUiText }));
+          return true;
+        }
+      } catch (error) {
+        this.replyFromAgent(this.getRoleUiText('memorySnapshotFailed', { error: String(error?.message || error || 'unknown') }));
+        return true;
+      }
+      this.replyFromAgent(buildRoleMemorySnapshotMenuMessage({ getRoleUiText: this.getRoleUiText }));
+      return true;
+    }
+
+    if (/^\/role\s+summary\b/i.test(trimmed) || /^\/r\s+summary\b/i.test(trimmed)) {
+      const active = await this.getCurrentRoleMemoryTarget();
+      if (!active) {
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+        return true;
+      }
+      const summary = await this.readConversationSummary(active.roleSlug);
+      this.replyFromAgent(this.buildAwakeningJourneyMessage(active, summary));
+      return true;
+    }
+
+    if (/^\/role\s+s\b/i.test(trimmed)) {
+      const requestText = trimmed.replace(/^\/role\s+s\b/i, '').trim();
+      const active = await this.getCurrentRoleMemoryTarget();
+      if (!active) {
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+        return true;
+      }
+      if (!requestText) {
+        this.replyFromAgent(this.getRoleUiText('awakeningJourneyEditUsage'));
+        return true;
+      }
+      this.replyFromAgent(this.getRoleUiText('awakeningJourneyUpdating'));
+      try {
+        const nextSummary = await this.rewriteConversationSummaryFromUserRequest(active.roleSlug, requestText);
+        this.replyFromAgent(this.getRoleUiText('awakeningJourneyUpdated'));
+        this.replyFromAgent(this.buildAwakeningJourneyMessage(active, nextSummary));
+      } catch (error) {
+        this.replyFromAgent(this.getRoleUiText('awakeningJourneyUpdateFailed'));
+        const fallbackSummary = await this.readConversationSummary(active.roleSlug);
+        this.replyFromAgent(this.buildAwakeningJourneyMessage(active, fallbackSummary));
+      }
+      return true;
+    }
+
+    if (/^\/role\s+edit\b/i.test(trimmed) || /^\/r\s+memory\s+adjust\b/i.test(trimmed)) {
+      const active = await this.getCurrentRoleMemoryTarget();
+      if (!active) {
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
         return true;
       }
 
@@ -3005,49 +5915,127 @@ ROLE=<role name>
           {
             pendingMemoryAdjust: true,
             pendingMemoryRoleSlug: active.roleSlug,
+            pendingMemoryAdjustDraft: null,
+            pendingMemoryAdjustLayer: null,
           },
           resolve,
         ),
       );
 
+      const currentMemoryText = this.normalizeMemoryCardText(String(active.roleData.memory || '').trim()) || '(empty)';
       this.replyFromAgent([
-        'Memory:',
-        this.normalizeMemoryCardText(String(active.roleData.memory || '').trim()) || '(empty)',
+        this.getRoleUiText('memoryTitle'),
+        currentMemoryText,
       ].join('\n'));
 
-      this.replyFromAgent(this.buildRoleMemoryFullConsoleMessage(active.roleData));
-
-      this.replyFromAgent([
-        'What memory would you like to adjust?',
-        '',
-        'You can describe what to change in the current memory card.',
-      ].join('\n'));
+      this.replyFromAgent(this.buildRoleEditLayerChoiceMessage(active));
       return true;
     }
 
-    if (/^\/r\s+memory\s+reset\b/i.test(trimmed)) {
-      const active = await this.getActiveRoleData();
-      if (!active) {
-        this.replyFromAgent('(no active role)');
+    if (/^\/role\s+[vlf]\b/i.test(trimmed)) {
+      const match = /^\/role\s+([vlf])\b/i.exec(trimmed);
+      const layer = normalizeRoleMemoryLayerKey(match?.[1] || '');
+      const requestText = trimmed.replace(/^\/role\s+[vlf]\b/i, '').trim();
+      const active = await this.getCurrentRoleMemoryTarget();
+      if (!active || !layer) {
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
         return true;
       }
 
-      const { roleSlug, roleData } = active;
-      roleData.memory = this.normalizeMemoryCardText(buildDefaultRoleMemoryCard(roleData.roleName || roleSlug));
-      roleData.updatedAt = Date.now();
-      await this.writeRoleFile(roleSlug, roleData);
+      if (!requestText) {
+        await new Promise(resolve =>
+          this.setState(
+            {
+              pendingMemoryAdjust: true,
+              pendingMemoryRoleSlug: active.roleSlug,
+              pendingMemoryAdjustLayer: layer,
+              pendingMemoryAdjustDraft: {
+                layer: String(layer || '').toUpperCase(),
+                action: 'edit',
+                roleSlug: active.roleSlug,
+              },
+            },
+            resolve,
+          ),
+        );
+        this.replyFromAgent(`${this.getMemoryLayerLabel(layer)}\n\n${this.getRoleUiText('askAdjustMemory')}`);
+        return true;
+      }
 
-      this.replyFromAgent('Memory reset successfully.');
-      this.replyFromAgent(this.buildRoleMemoryQuickConsoleMessage());
+      const roleData = await this.readRoleFile(active.roleSlug);
+      if (!roleData) {
+        this.replyFromAgent(this.getRoleUiText('memoryAdjustFailed'));
+        return true;
+      }
 
-      await this.handleTriggers('/r continuechat', null);
+      this.replyFromAgent(this.getRoleUiText('memoryUpdating'));
+      const roleLang = this.getRoleLangCode?.() || this.state.roleLangCode || 'en';
+      const currentLayerText = this.normalizeMemoryLayerText(roleData.memoryLayers?.[layer] || '');
+      let nextLayerText = currentLayerText;
+      if (!!this.state.llmConfig?.provider && typeof this.callLLMSilent === 'function') {
+        const prompt = buildMemoryLayerEditPrompt({
+          roleName: roleData.roleName || active.roleSlug || 'unknown',
+          layer,
+          currentLayerText,
+          requestText,
+        });
+        try {
+          const raw = await this.callLLMSilent(prompt);
+          const cleaned = this.normalizeMemoryLayerText(raw);
+          if (cleaned) nextLayerText = cleaned;
+        } catch {}
+      } else {
+        this.replyFromAgent(this.getRoleUiText('memoryAdjustNeedsLlm'));
+      }
+
+      const repairedLayer = await this.validateAndRepairRoleLayer({
+        roleName: roleData.roleName || active.roleSlug,
+        roleLang,
+        layer,
+        text: nextLayerText,
+        request: requestText,
+      });
+      const result = await this.roleMemoryStore.updateRoleLayer({
+        roleSlug: active.roleSlug,
+        layer,
+        nextText: repairedLayer.text,
+        backupReason: `edit-${this.getRoleMemoryLayerShortCode(layer)}`,
+      });
+      if (!result?.roleData) {
+        this.replyFromAgent(this.getRoleUiText('memoryAdjustFailed'));
+        return true;
+      }
+
+      await this.upsertRoleIndexEntry({
+        roleName: result.roleData.roleName || active.roleSlug,
+        roleSlug: active.roleSlug,
+        updatedAt: result.roleData.updatedAt,
+      });
+      const refreshedCards = await this.loadLocalRoleCardsPage(0);
+      await new Promise(resolve =>
+        this.setState({
+          roleCardOffset: 0,
+          roleCardPage: refreshedCards.items,
+          activeRoleSlug: active.roleSlug,
+          pendingMemoryAdjust: false,
+          pendingMemoryRoleSlug: null,
+          pendingMemoryAdjustDraft: null,
+          pendingMemoryAdjustLayer: null,
+        }, resolve),
+      );
+      await this.saveLastSelectedRole(result.roleData.roleName || active.roleSlug);
+      await this.saveActiveRoleState(result.roleData.roleName || active.roleSlug, active.roleSlug);
+      await this.saveCurrentSummonedRole(result.roleData.roleName || active.roleSlug, active.roleSlug);
+      this.activeRoleSlug = active.roleSlug;
+      this.replyFromAgent(this.getRoleUiText('memoryUpdated'));
+      await this.handleTriggers(`/role card ${active.roleSlug}`, null);
       return true;
     }
 
     if (/^\/r\s+continuechat\b/i.test(trimmed)) {
-      const active = await this.getActiveRoleData();
+      const active = await this.getCurrentSummonedRoleData();
       if (!active) {
-        this.replyFromAgent('(no active role)');
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
         return true;
       }
 
@@ -3055,62 +6043,422 @@ ROLE=<role name>
       const ctx = typeof this.resolveNamespaceContext === 'function' ? this.resolveNamespaceContext() : null;
       const agentId = ctx?.agentId || this.agentId || 'unknown';
       const roleLang = this.getRoleLangCode() || 'en';
-      const rolePrompt = buildRoleChatPrompt(roleData.roleName, agentId, roleData.memory || '', roleLang);
+      const alphaOverride = await this.readRoleAlphaForPrompt();
+      const rolePrompt = buildRoleChatPrompt(roleData.roleName, agentId, roleData.memory || '', roleLang, { alphaOverride });
 
       await this.replyFromLLM(rolePrompt, null, { silentUser: true });
       return true;
     }
 
-    if (/^\/r\s+memory\s+commit\b/i.test(trimmed)) {
-      const active = await this.getActiveRoleData();
+    if (/^\/r\s+memory\s+commit\s+do\b/i.test(trimmed)) {
+      const active = await this.getCurrentRoleMemoryTarget();
       if (!active) {
-        this.replyFromAgent('(no active role)');
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
         return true;
       }
 
       const { roleSlug, roleData } = active;
-      const memoryText = String(roleData.memory || '').trim();
-
-      if (!memoryText) {
-        this.replyFromAgent('(memory is empty)');
+      const layers = {
+        verified: String(roleData?.memoryLayers?.verified || '').trim(),
+        likely: String(roleData?.memoryLayers?.likely || '').trim(),
+        fog: String(roleData?.memoryLayers?.fog || '').trim(),
+      };
+      if (!layers.verified && !layers.likely && !layers.fog) {
+        this.replyFromAgent(this.getRoleUiText('memoryEmpty'));
         return true;
       }
 
       try {
         const namespaceId = this.props?.navigation?.state?.params?.namespaceId;
         if (!namespaceId) {
-          this.replyFromAgent('(missing namespace)');
+          this.replyFromAgent(this.getRoleUiText('missingNamespace'));
           return true;
         }
 
         const walletId = this.props?.navigation?.state?.params?.walletId;
         const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
         if (!wallet) {
-          this.replyFromAgent('(wallet not found)');
+          this.replyFromAgent(this.getRoleUiText('walletNotFound'));
           return true;
         }
 
-        const key = `role.memory.${roleSlug}`;
-        await this.updateKeyValue({
+        const roleNameResult = await this.commitSingleMemoryLayerOnChain({
           wallet,
           namespaceId,
-          key,
-          value: memoryText,
+          roleSlug,
+          layer: 'name',
+          value: String(roleData?.roleName || '').trim(),
         });
+        this.replyFromAgent(roleNameResult?.skipped ? this.getRoleUiText('commitSkipped', { label: 'NAME' }) : `[[/role openkey ${roleNameResult.key}|NAME]] ${this.getRoleUiText('commitSucceeded')}`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
 
-        this.replyFromAgent(`Memory committed on-chain: ${key}`);
+        const verifiedResult = await this.commitSingleMemoryLayerOnChain({
+          wallet,
+          namespaceId,
+          roleSlug,
+          layer: 'verified',
+          value: layers.verified,
+        });
+        this.replyFromAgent(verifiedResult?.skipped ? this.getRoleUiText('commitSkipped', { label: 'VERIFIED' }) : `[[/role openkey ${verifiedResult.key}|VERIFIED]] ${this.getRoleUiText('commitSucceeded')}`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+
+        const likelyResult = await this.commitSingleMemoryLayerOnChain({
+          wallet,
+          namespaceId,
+          roleSlug,
+          layer: 'likely',
+          value: layers.likely,
+        });
+        this.replyFromAgent(likelyResult?.skipped ? this.getRoleUiText('commitSkipped', { label: 'LIKELY' }) : `[[/role openkey ${likelyResult.key}|LIKELY]] ${this.getRoleUiText('commitSucceeded')}`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+
+        const fogResult = await this.commitSingleMemoryLayerOnChain({
+          wallet,
+          namespaceId,
+          roleSlug,
+          layer: 'fog',
+          value: layers.fog,
+        });
+        this.replyFromAgent(fogResult?.skipped ? this.getRoleUiText('commitSkipped', { label: 'FOG' }) : `[[/role openkey ${fogResult.key}|FOG]] ${this.getRoleUiText('commitSucceeded')}`);
+
+        this.replyFromAgent(this.getRoleUiText('commitCompletePoetic'));
       } catch (e) {
         console.warn('Memory commit failed', e);
-        this.replyFromAgent('(memory commit failed)');
+        this.replyFromAgent(this.getRoleUiText('memoryCommitFailed'));
       }
       return true;
     }
 
-    if (/^\/r\s+memory\s+delete\s+confirm\b/i.test(trimmed)) {
-      const roleSlug = this.state.pendingMemoryDeleteRoleSlug;
-      const currentActiveSlug = this.state.activeRoleSlug || this.activeRoleSlug || '';
+    if (/^\/r\s+memory\s+commit\b/i.test(trimmed)) {
+      const active = await this.getCurrentRoleMemoryTarget();
+      if (!active) {
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+        return true;
+      }
 
-      if (!roleSlug || (currentActiveSlug && roleSlug !== currentActiveSlug)) {
+      const { roleData } = active;
+      const roleNameText = String(roleData?.roleName || '').trim();
+      const layers = {
+        verified: String(roleData?.memoryLayers?.verified || '').trim(),
+        likely: String(roleData?.memoryLayers?.likely || '').trim(),
+        fog: String(roleData?.memoryLayers?.fog || '').trim(),
+      };
+      if (!roleNameText && !layers.verified && !layers.likely && !layers.fog) {
+        this.replyFromAgent(this.getRoleUiText('memoryEmpty'));
+        return true;
+      }
+
+      this.replyFromAgent([
+        this.getRoleUiText('memoryCommitPrompt') || 'Commit current memory on-chain? NAME / VERIFIED / LIKELY / FOG will be submitted separately.',
+        '',
+        `${this.getRoleUiText('memoryCommitNameStatus') || 'NAME'}：${roleNameText ? '✅' : '-'}`,
+        `${this.getRoleUiText('memoryCommitVerifiedStatus') || 'VERIFIED'}：${layers.verified ? '✅' : '-'}`,
+        `${this.getRoleUiText('memoryCommitLikelyStatus') || 'LIKELY'}：${layers.likely ? '✅' : '-'}`,
+        `${this.getRoleUiText('memoryCommitFogStatus') || 'FOG'}：${layers.fog ? '✅' : '-'}`,
+        '',
+        `[[/r memory commit do|${this.getRoleUiText('confirm') || 'Confirm'}]]   [[/role memory|${this.getRoleUiText('back')}]]`,
+      ].join('\n'));
+      return true;
+    }
+
+    if (/^\/role\s+openkey\b/i.test(trimmed)) {
+      const key = trimmed.replace(/^\/role\s+openkey\b/i, '').trim();
+      const navigation = this.props?.navigation;
+      const namespaceId = navigation?.state?.params?.namespaceId;
+      const walletId = navigation?.state?.params?.walletId;
+      if (!navigation || typeof navigation.navigate !== 'function' || !namespaceId) {
+        this.replyFromAgent(this.getRoleUiText('missingNamespace'));
+        return true;
+      }
+      navigation.navigate('KeyValues', {
+        namespaceId,
+        walletId,
+        focusKey: key,
+      });
+      return true;
+    }
+
+    if (/^\/role\s+onchainmemory\s+do\b/i.test(trimmed)) {
+      const result = await this.restoreRoleFromOnChainMemory();
+      if (!result?.roleData) {
+        this.replyFromAgent(this.getRoleUiText('onchainRestoreFailed'));
+        return true;
+      }
+      this.replyFromAgent(this.getRoleUiText('onchainRestoreSuccess'));
+      await this.handleTriggers('/role memory', null);
+      return true;
+    }
+
+    const directDoppelRestoreMatch = /^\/role\s+onchainmemory\s+doppel\s+(.+?)\s+do\b/i.exec(trimmed);
+    if (directDoppelRestoreMatch) {
+      const inputId = normalizeDoppelMemoryId(directDoppelRestoreMatch[1]);
+      this.replyFromAgent(this.getRoleUiText('doppelMemoryReading') || 'Reading doppel memory…');
+      const draft = inputId ? await fetchDoppelOnChainMemory({ BlueElectrum, rawId: inputId }) : null;
+      if (!draft?.hasAnyMemory) {
+        this.replyFromAgent(this.getRoleUiText('doppelRestoreFailed') || '(doppel memory restore failed)');
+        return true;
+      }
+      const result = await this.restoreRoleFromDoppelMemory(draft);
+      if (!result?.roleData) {
+        this.replyFromAgent(this.getRoleUiText('doppelRestoreFailed') || '(doppel memory restore failed)');
+        return true;
+      }
+      await this.upsertRoleIndexEntry({
+        roleName: result.roleData.roleName || this.getSpaceRoleKey(),
+        roleSlug: this.getSpaceRoleKey(),
+        updatedAt: result.roleData.updatedAt || Date.now(),
+      });
+      await this.saveLastSelectedRole(result.roleData.roleName || this.getSpaceRoleKey());
+      await this.saveActiveRoleState(result.roleData.roleName || this.getSpaceRoleKey(), this.getSpaceRoleKey());
+      await this.saveCurrentSummonedRole(result.roleData.roleName || this.getSpaceRoleKey(), this.getSpaceRoleKey());
+      this.replyFromAgent(this.getRoleUiText('doppelRestoreSuccess') || 'Doppel memory restored.');
+      const params = this.props.navigation?.state?.params || {};
+      if (params.autoRestoreDoneStorageKey) {
+        await AsyncStorage.setItem(String(params.autoRestoreDoneStorageKey), String(params.autoRestoreDoneStorageValue || inputId || 'done'));
+      }
+      if (params.autoOpenNamespaceAfterAutoDoppelRestore) {
+        this.props.navigation?.navigate?.('Namespaces', { initialTab: 'me' });
+      } else {
+        await this.handleTriggers('/role memory', null);
+      }
+      return true;
+    }
+
+    if (/^\/role\s+onchainmemory\s+doppel\s+do\b/i.test(trimmed)) {
+      const draft = this.state.pendingDoppelMemoryDraft;
+      if (!draft?.hasAnyMemory) {
+        this.replyFromAgent(this.getRoleUiText('doppelRestoreFailed') || '(doppel memory restore failed)');
+        return true;
+      }
+      const result = await this.restoreRoleFromDoppelMemory(draft);
+      await new Promise(resolve => this.setState({ pendingDoppelMemoryInput: false, pendingDoppelMemoryDraft: null }, resolve));
+      if (!result?.roleData) {
+        this.replyFromAgent(this.getRoleUiText('doppelRestoreFailed') || '(doppel memory restore failed)');
+        return true;
+      }
+      await this.upsertRoleIndexEntry({
+        roleName: result.roleData.roleName || this.getSpaceRoleKey(),
+        roleSlug: this.getSpaceRoleKey(),
+        updatedAt: result.roleData.updatedAt || Date.now(),
+      });
+      await this.saveLastSelectedRole(result.roleData.roleName || this.getSpaceRoleKey());
+      await this.saveActiveRoleState(result.roleData.roleName || this.getSpaceRoleKey(), this.getSpaceRoleKey());
+      await this.saveCurrentSummonedRole(result.roleData.roleName || this.getSpaceRoleKey(), this.getSpaceRoleKey());
+      this.replyFromAgent(this.getRoleUiText('doppelRestoreSuccess') || 'Doppel memory restored.');
+      await this.handleTriggers('/role memory', null);
+      return true;
+    }
+
+    if (/^\/role\s+onchainmemory\s+doppel\b/i.test(trimmed)) {
+      await new Promise(resolve => this.setState({ pendingDoppelMemoryInput: true, pendingDoppelMemoryDraft: null }, resolve));
+      this.replyFromAgent(this.getRoleUiText('doppelMemoryPrompt') || 'Enter the doppel ID to read:');
+      return true;
+    }
+
+    if (/^\/role\s+onchainmemory\s+local\b/i.test(trimmed)) {
+      const roleSlug = this.getSpaceRoleKey();
+      const roleData = await this.readRoleFile(roleSlug);
+      const status = await this.getOnChainMemoryStatus();
+      this.replyFromAgent([
+        this.getRoleUiText('onchainRestoreConfirm'),
+        String(roleData?.roleName || roleSlug || '').trim(),
+        '',
+        `NAME：${status?.nameExists ? '✅' : '-'}`,
+        `VERIFIED：${status?.verifiedExists ? '✅' : '-'}`,
+        `LIKELY：${status?.likelyExists ? '✅' : '-'}`,
+        `FOG：${status?.fogExists ? '✅' : '-'}`,
+        '',
+        `[[/role onchainmemory do|${this.getRoleUiText('confirm') || 'Confirm'}]]   [[/role onchainmemory|${this.getRoleUiText('back')}]]`,
+      ].join('\n'));
+      return true;
+    }
+
+    if (/^\/role\s+onchainmemory\b/i.test(trimmed)) {
+      this.replyFromAgent([
+        this.getRoleUiText('onchainMemoryMenuTitle') || this.getRoleUiText('onchainMemory') || 'On-chain memory',
+        '',
+        `[[/role onchainmemory local|${this.getRoleUiText('localOnchainMemory') || 'Local memory'}]]`,
+        '',
+        `[[/role onchainmemory doppel|${this.getRoleUiText('doppelMemory') || 'Doppel memory'}]]`,
+        '',
+        `[[/role memory rebuild|${this.getRoleUiText('back')}]]`,
+      ].join('\n'));
+      return true;
+    }
+
+    if (/^\/role\s+recover\s+do\b/i.test(trimmed)) {
+      const roleSlug = this.state.pendingLastMemoryRecoverRoleSlug || this.getSpaceRoleKey();
+
+      if (!roleSlug) {
+        await new Promise(resolve =>
+          this.setState(
+            {
+              pendingLastMemoryRecoverConfirm: false,
+              pendingLastMemoryRecoverRoleSlug: null,
+            },
+            resolve,
+          ),
+        );
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+        return true;
+      }
+
+      await new Promise(resolve =>
+        this.setState(
+          {
+            pendingLastMemoryRecoverConfirm: false,
+            pendingLastMemoryRecoverRoleSlug: null,
+          },
+          resolve,
+        ),
+      );
+
+      const result = await this.restoreRoleFromLastMemory(roleSlug);
+      if (!result?.roleData) {
+        this.replyFromAgent(this.getRoleUiText('lastMemoryRecoverFailed') || '(last memory recover failed)');
+        return true;
+      }
+
+      await this.upsertRoleIndexEntry({
+        roleName: result.roleData.roleName || roleSlug,
+        roleSlug,
+        updatedAt: result.roleData.updatedAt,
+      });
+      const refreshedCards = await this.loadLocalRoleCardsPage(0);
+      await new Promise(resolve =>
+        this.setState({
+          roleCardOffset: 0,
+          roleCardPage: refreshedCards.items,
+          activeRoleSlug: roleSlug,
+          pendingMemoryAdjust: false,
+          pendingMemoryRoleSlug: null,
+          pendingMemoryAdjustDraft: null,
+          pendingMemoryAdjustLayer: null,
+          pendingLastMemoryRecoverConfirm: false,
+          pendingLastMemoryRecoverRoleSlug: null,
+        }, resolve),
+      );
+      await this.saveLastSelectedRole(result.roleData.roleName || roleSlug);
+      await this.saveActiveRoleState(result.roleData.roleName || roleSlug, roleSlug);
+      await this.saveCurrentSummonedRole(result.roleData.roleName || roleSlug, roleSlug);
+      this.activeRoleSlug = roleSlug;
+
+      this.replyFromAgent(this.getRoleUiText('lastMemoryRecoverSuccess') || 'Restored this role to the memory before the most recent edit.');
+      await this.handleTriggers('/role memory', null);
+      return true;
+    }
+
+    if (/^\/role\s+recover\b/i.test(trimmed)) {
+      const active = await this.getCurrentRoleMemoryTarget();
+      if (!active) {
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+        return true;
+      }
+
+      await new Promise(resolve =>
+        this.setState(
+          {
+            pendingLastMemoryRecoverConfirm: true,
+            pendingLastMemoryRecoverRoleSlug: active.roleSlug,
+          },
+          resolve,
+        ),
+      );
+
+      const lastStatus = await this.getRoleLastMemoryStatus(active.roleSlug);
+      const capturedAtText = lastStatus.capturedAt ? new Date(lastStatus.capturedAt).toLocaleString() : '-';
+      const statusLines = [
+        `${this.getRoleUiText('lastMemoryFileStatus') || 'Last memory file'}：${lastStatus.lastMemoryExists ? '✅' : '❌'}`,
+        `${this.getRoleUiText('lastMemoryRoleStatus') || 'Role file'}：${lastStatus.roleReadable ? '✅' : '❌'}`,
+        `${this.getRoleUiText('lastMemoryCapturedAt') || 'Saved at'}：${capturedAtText}`,
+        `${this.getRoleUiText('lastMemoryVerifiedStatus') || 'Last VERIFIED'}：${lastStatus.verifiedReady ? '✅' : '❌'}`,
+        `${this.getRoleUiText('lastMemoryLikelyStatus') || 'Last LIKELY'}：${lastStatus.likelyReady ? '✅' : '❌'}`,
+        `${this.getRoleUiText('lastMemoryFogStatus') || 'Last FOG'}：${lastStatus.fogReady ? '✅' : '❌'}`,
+        `${this.getRoleUiText('initialMemoryBaselineStatus') || 'Baseline file'}：${lastStatus.baselineExists ? '✅' : '❌'}`,
+      ];
+
+      this.replyFromAgent([
+        this.getRoleUiText('lastMemoryPrompt') || 'Restore this role to its last memory before the most recent edit? The current memory will be backed up first.',
+        String(active.roleName || active.roleSlug || '').trim(),
+        '',
+        ...statusLines,
+        '',
+        `[[/role recover do|${this.getRoleUiText('confirm') || 'Confirm'}]]   [[/role memory|${this.getRoleUiText('back')}]]`,
+      ].join('\n'));
+      return true;
+    }
+
+    if (/^\/r\s+memory\s+rebuild\s+confirm\b/i.test(trimmed)) {
+      const active = await this.getCurrentRoleMemoryTarget();
+      if (!active) {
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+        return true;
+      }
+
+      await new Promise(resolve =>
+        this.setState(
+          {
+            pendingMemoryRebuildConfirm: true,
+            pendingMemoryRebuildRoleSlug: active.roleSlug,
+          },
+          resolve,
+        ),
+      );
+
+      const initialStatus = await this.getRoleInitialMemoryStatus(active.roleSlug);
+      const statusLines = [
+        `${this.getRoleUiText('initialMemoryBaselineStatus') || 'Baseline'}：${initialStatus.baselineExists ? '✅' : '❌'}`,
+        `${this.getRoleUiText('initialMemoryVerifiedStatus') || 'Initial VERIFIED'}：${initialStatus.initialVerifiedExists ? '✅' : '❌'}`,
+        `${this.getRoleUiText('initialMemoryLikelyStatus') || 'Initial LIKELY'}：${initialStatus.initialLikelyExists ? '✅' : '❌'}`,
+        `${this.getRoleUiText('initialMemoryFogStatus') || 'Initial FOG'}：${initialStatus.initialFogExists ? '✅' : '❌'}`,
+      ];
+
+      this.replyFromAgent([
+        this.getRoleUiText('initialMemoryPrompt') || 'Restore this role to its initial memory? Current memory will be backed up first.',
+        String(active.roleName || active.roleSlug || '').trim(),
+        '',
+        ...statusLines,
+        '',
+        `[[/r memory rebuild do|${this.getRoleUiText('confirm') || 'Confirm'}]]   [[/role memory|${this.getRoleUiText('back')}]]`,
+      ].join('\n'));
+      return true;
+    }
+
+    if (/^\/r\s+memory\s+rebuild\s+do\b/i.test(trimmed)) {
+      const roleSlug = this.state.pendingMemoryRebuildRoleSlug || this.getSpaceRoleKey();
+
+      if (!roleSlug) {
+        await new Promise(resolve =>
+          this.setState(
+            {
+              pendingMemoryRebuildConfirm: false,
+              pendingMemoryRebuildRoleSlug: null,
+            },
+            resolve,
+          ),
+        );
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+        return true;
+      }
+
+      await new Promise(resolve =>
+        this.setState(
+          {
+            pendingMemoryRebuildConfirm: false,
+            pendingMemoryRebuildRoleSlug: null,
+          },
+          resolve,
+        ),
+      );
+
+      await this.handleTriggers(`/r memory rebuild ${roleSlug}`, userMessage);
+      return true;
+    }
+
+    if (/^\/r\s+memory\s+delete\s+confirm\b/i.test(trimmed)) {
+      const roleSlug = this.state.pendingMemoryDeleteRoleSlug || this.getSpaceRoleKey();
+
+      if (!roleSlug) {
         await new Promise(resolve =>
           this.setState(
             {
@@ -3120,23 +6468,33 @@ ROLE=<role name>
             resolve,
           ),
         );
-        this.replyFromAgent(roleSlug ? '(delete target mismatch)' : '(no role selected for deletion)');
+        this.replyFromAgent(this.getRoleUiText('noRoleSelectedForDeletion'));
         return true;
       }
 
+      await this.captureExistingRoleMemorySnapshot(roleSlug, { kind: 'before-memory-delete', trigger: '/r memory delete confirm' });
       const ok = await this.deleteRoleFile(roleSlug);
+      if (ok) {
+        await this.removeRoleIndexEntry(roleSlug);
+      }
 
       await new Promise(resolve =>
         this.setState(
           {
+            pendingMemoryRebuildConfirm: false,
+            pendingMemoryRebuildRoleSlug: null,
             pendingMemoryDeleteConfirm: false,
             pendingMemoryDeleteRoleSlug: null,
             activeRoleSlug: null,
             pendingMemoryAdjust: false,
             pendingMemoryRoleSlug: null,
+            pendingMemoryAdjustDraft: null,
+            pendingMemoryAdjustLayer: null,
             pendingRoleSuggest: false,
             pendingRoleSuggestOriginal: '',
             pendingRoleSuggestOptions: [],
+            pendingRoleFragmentImport: false,
+            pendingRoleStoryFragmentImport: false,
             pendingRoleCall: false,
             pendingNewRole: null,
           },
@@ -3146,6 +6504,8 @@ ROLE=<role name>
       this.activeRoleSlug = null;
 
       await this.clearLastSelectedRole();
+      await this.clearActiveRoleState();
+      await this.clearCurrentSummonedRole();
       await this.clearPendingNewRole();
 
       const first = await this.loadLocalRoleCardsPage(0);
@@ -3154,31 +6514,142 @@ ROLE=<role name>
       );
 
       if (!ok) {
-        this.replyFromAgent('(delete memory failed)');
+        this.replyFromAgent(this.getRoleUiText('deleteMemoryFailed'));
         return true;
       }
 
-      this.replyFromAgent('Role memory deleted successfully.');
+      this.replyFromAgent(this.getRoleUiText('deleteMemorySuccess'));
+      await this.handleTriggers('/role cards', null);
+      await this.handleTriggers('/role menu', null);
+      return true;
+    }
 
-      this.replyFromAgent(this.buildLocalRoleCardsMessage(first.items, 0, first.hasMore));
+    if (/^\/r\s+memory\s+reset\b/i.test(trimmed)) {
+      await this.handleTriggers(trimmed.replace(/^\/r\s+memory\s+reset\b/i, '/r memory rebuild v'), userMessage);
+      return true;
+    }
 
-      this.replyFromAgent([
-        'Role setup:',
-        '',
-        '[[/r call|New role]]',
-        '',
-        `[[/rolelang|${this.getRoleMenuText('changeLanguage')}]]`,
-        '',
-        `[[/rolemodel|${this.getRoleMenuText('changeModel')}]]`,
-      ].join('\n'));
+        if (/^\/r\s+memory\s+rebuild\b/i.test(trimmed)) {
+      const args = trimmed.replace(/^\/r\s+memory\s+rebuild\b/i, '').trim().split(/\s+/).filter(Boolean);
+      const layer = normalizeRoleMemoryLayerKey(args[0]);
+      const active = await this.getCurrentRoleMemoryTarget();
+      if (!active) {
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+        return true;
+      }
 
+      let result = null;
+      if (!layer) {
+        const initialStatus = await this.getRoleInitialMemoryStatus(active.roleSlug);
+        if (initialStatus?.baselineExists) {
+          result = await this.restoreRoleFromRecoveryBaseline(active.roleSlug);
+        } else {
+          result = await this.restoreRoleFromInitialMemory(active.roleSlug);
+        }
+      } else {
+        result = await this.roleMemoryStore.rebuildRoleLayer({ roleSlug: active.roleSlug, layer });
+      }
+
+      if (!result?.roleData) {
+        this.replyFromAgent(this.getRoleUiText('memoryRebuildFailed') || '(memory rebuild failed)');
+        return true;
+      }
+
+      await this.upsertRoleIndexEntry({
+        roleName: result.roleData.roleName || active.roleSlug,
+        roleSlug: active.roleSlug,
+        updatedAt: result.roleData.updatedAt,
+      });
+      const refreshedCards = await this.loadLocalRoleCardsPage(0);
+      await new Promise(resolve =>
+        this.setState({
+          roleCardOffset: 0,
+          roleCardPage: refreshedCards.items,
+          activeRoleSlug: active.roleSlug,
+          pendingMemoryAdjust: false,
+          pendingMemoryRoleSlug: null,
+          pendingMemoryAdjustDraft: null,
+          pendingMemoryAdjustLayer: null,
+          pendingMemoryRebuildConfirm: false,
+          pendingMemoryRebuildRoleSlug: null,
+        }, resolve),
+      );
+      await this.saveLastSelectedRole(result.roleData.roleName || active.roleSlug);
+      await this.saveActiveRoleState(result.roleData.roleName || active.roleSlug, active.roleSlug);
+      await this.saveCurrentSummonedRole(result.roleData.roleName || active.roleSlug, active.roleSlug);
+      this.activeRoleSlug = active.roleSlug;
+
+      if (layer) {
+        this.replyFromAgent(this.getRoleUiText('memoryRebuildSuccess', { layer: String(layer).toUpperCase(), backup: result?.backup?.fileName || '-' }));
+      } else {
+        this.replyFromAgent(this.getRoleUiText('memoryRebuildFullSuccess') || 'Memory restored to its initial state.');
+      }
+
+      await this.handleTriggers('/role memory', null);
+      return true;
+    }
+
+if (/^\/r\s+memory\s+recover\b/i.test(trimmed)) {
+      const rawArgs = trimmed.replace(/^\/r\s+memory\s+recover\b/i, '').trim();
+      const args = rawArgs.split(/\s+/).filter(Boolean);
+      let layer = '';
+      let backupFileName = '';
+
+      if (args.length) layer = normalizeRoleMemoryLayerKey(args.shift());
+      if (args.length) backupFileName = args.join(' ');
+
+      const active = await this.getCurrentRoleMemoryTarget();
+      if (!active) {
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+        return true;
+      }
+      if (!layer || !backupFileName) {
+        this.replyFromAgent(await this.buildRoleMemoryRecoverMenuMessage(active));
+        return true;
+      }
+
+      const result = await this.roleMemoryStore.recoverRoleLayer({ roleSlug: active.roleSlug, layer, backupFileName });
+      if (!result?.roleData) {
+        this.replyFromAgent(this.getRoleUiText('memoryRecoverFailed') || '(memory recover failed)');
+        return true;
+      }
+
+      await this.upsertRoleIndexEntry({
+        roleName: result.roleData.roleName || active.roleSlug,
+        roleSlug: active.roleSlug,
+        updatedAt: result.roleData.updatedAt,
+      });
+      const refreshedCards = await this.loadLocalRoleCardsPage(0);
+      await new Promise(resolve =>
+        this.setState({
+          roleCardOffset: 0,
+          roleCardPage: refreshedCards.items,
+          activeRoleSlug: active.roleSlug,
+          pendingMemoryAdjust: false,
+          pendingMemoryRoleSlug: null,
+          pendingMemoryAdjustDraft: null,
+          pendingMemoryAdjustLayer: null,
+        }, resolve),
+      );
+      await this.saveLastSelectedRole(result.roleData.roleName || active.roleSlug);
+      await this.saveActiveRoleState(result.roleData.roleName || active.roleSlug, active.roleSlug);
+      await this.saveCurrentSummonedRole(result.roleData.roleName || active.roleSlug, active.roleSlug);
+      this.activeRoleSlug = active.roleSlug;
+
+      this.replyFromAgent(this.getRoleUiText('memoryRecoverSuccess', {
+        layer: String(layer).toUpperCase(),
+        backup: backupFileName,
+        created: result?.backup?.fileName || '-',
+      }));
+      this.replyFromAgent(await this.buildRoleMemoryRecoverMenuMessage({ ...active, roleData: result.roleData }));
+      await this.handleTriggers('/role memory', null);
       return true;
     }
 
     if (/^\/r\s+memory\s+delete\b/i.test(trimmed)) {
-      const active = await this.getActiveRoleData();
+      const active = await this.getCurrentRoleMemoryTarget();
       if (!active) {
-        this.replyFromAgent('(no active role)');
+        this.replyFromAgent(this.getRoleUiText('noActiveRole'));
         return true;
       }
 
@@ -3193,41 +6664,66 @@ ROLE=<role name>
       );
 
       this.replyFromAgent([
-        'Delete this role memory?',
+        this.getRoleUiText('deleteRoleMemoryPrompt'),
         '',
-        '[[/r memory delete confirm|Confirm delete]]',
-        '[[/r recall|Back]]',
+        `[[/r memory delete confirm|${this.getRoleUiText('confirmDelete')}]]`,
+        '',
+        `[[/role memory|${this.getRoleUiText('back')}]]`,
       ].join('\n'));
       return true;
     }
 
     if (/^\/r\s+create\b/i.test(trimmed)) {
       const name = trimmed.replace(/^\/r\s+create\b/i, '').trim();
-      if (!name) {
-        await this.showRoleCreateWizard();
-        return true;
-      }
-      const ok = await this.setPendingNewRole(name);
-      if (!ok) {
-        await this.showRoleCreateWizard();
-        return true;
-      }
-      await this.showRoleCreateConfirm(name);
+      await this.beginRoleCreateConfirmFlow(name);
       return true;
     }
 
     if (/^\/r\s+setname\b/i.test(trimmed)) {
       const name = trimmed.replace(/^\/r\s+setname\b/i, '').trim();
+      await this.beginRoleCreateConfirmFlow(name);
+      return true;
+    }
+
+    if (/^\/(?:r|role)\s+clearall\b/i.test(trimmed)) {
+      await this.clearAllRoleDatas();
+      return true;
+    }
+
+    if (/^\/r\s+duplicate\s+load\b/i.test(trimmed)) {
+      const name = String(this.state.pendingDuplicateRoleName || '').trim() || (await this.getPendingNewRole());
       if (!name) {
         await this.showRoleCreateWizard();
         return true;
       }
-      const ok = await this.setPendingNewRole(name);
-      if (!ok) {
+      await this.handleRoleCallWithName(name, userMessage, { isContinue: true });
+      return true;
+    }
+
+    if (/^\/r\s+duplicate\s+overwrite\b/i.test(trimmed)) {
+      const name = String(this.state.pendingDuplicateRoleName || '').trim() || (await this.getPendingNewRole());
+      if (!name) {
         await this.showRoleCreateWizard();
         return true;
       }
-      await this.showRoleCreateConfirm(name);
+      const roleSlug = this.getSpaceRoleKey();
+      const now = Date.now();
+      const initialMemoryBundle = await this.buildValidatedInitialRoleMemory(name);
+      const normalizedInitialMemory = this.normalizeMemoryCardText(initialMemoryBundle?.memory || '');
+      await this.writeRoleFile(roleSlug, {
+        roleName: name,
+        roleSlug,
+        memory: normalizedInitialMemory,
+        initialMemory: this.normalizeMemoryCardText(initialMemoryBundle?.initialMemory || normalizedInitialMemory),
+        memoryLayers: initialMemoryBundle?.memoryLayers,
+        initialMemoryLayers: initialMemoryBundle?.initialMemoryLayers,
+        generationStatus: initialMemoryBundle?.generationStatus || 'validated',
+        memorySeed: initialMemoryBundle?.memorySeed || null,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await this.upsertRoleIndexEntry({ roleName: name, roleSlug, updatedAt: Date.now() });
+      await this.finalizeRoleActivation({ name, roleSlug, refreshedCards: null, clearDuplicate: true });
       return true;
     }
 
@@ -3237,25 +6733,21 @@ ROLE=<role name>
         await this.showRoleCreateWizard();
         return true;
       }
-      await this.saveLastSelectedRole(name);
-      await this.clearPendingNewRole();
-
-      this.replyFromAgent(`Selected role: ${name}\n\n[[/role|Continue]]`);
-
-      await this.handleTriggers('/role', null);
+      await this.handleTriggers(`/role summon ${name}`, userMessage);
       return true;
     }
 
     if (/^\/r\s+cancel\b/i.test(trimmed)) {
+      await new Promise(resolve => this.setState({ pendingDuplicateRoleName: null }, resolve));
       await this.clearPendingNewRole();
-      await this.handleTriggers('/r new', null);
+      await this.handleTriggers('/role clear', null);
       return true;
     }
 
     if (/^\/r\s+continue\b/i.test(trimmed)) {
-      const selected = this.state.lastSelectedRole;
+      const selected = await this.getCurrentSummonedRoleData();
       if (!selected?.roleName) {
-        await this.handleTriggers('/r new', null);
+        await this.handleTriggers('/role clear', null);
         return true;
       }
 
@@ -3264,11 +6756,14 @@ ROLE=<role name>
     }
 
     if (/^\/role\b/i.test(trimmed)) {
-      const ok = await this.ensureRoleLangReady(true);
-      if (!ok) return true;
+      const langStatus = await this.runRoleLangCheck({ showSuccess: true });
+      if (!langStatus?.ok) {
+        await this.handleTriggers('/role lang list', null);
+        return true;
+      }
 
-      if (!this.hasConfiguredRoleLLM()) {
-        await this.handleTriggers('/a list', null);
+      const roleModelStatus = await this.ensureRoleModelReady({ source: this.roleEntrySource || 'role' });
+      if (!roleModelStatus?.ok) {
         return true;
       }
 
@@ -3276,33 +6771,20 @@ ROLE=<role name>
         await this.restoreLastSelectedRole();
       }
 
-      const selected = this.state.lastSelectedRole;
+      if (!this.isPureChatMode()) {
+        await this.handleTriggers('/role menu', null);
+      }
+
+      const selected = await this.getCurrentSummonedRoleData();
       if (selected && selected.roleName) {
-        await this.handleTriggers('/r continue', null);
-      } else {
-        await this.handleTriggers('/r new', null);
+        await this.handleTriggers('/role chat', null);
       }
       return true;
     }
 
     if (/^\/rolelang\b/i.test(trimmed)) {
       const args = trimmed.replace(/^\/rolelang\b/i, '').trim();
-      if (!args) {
-        this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
-        return true;
-      }
-
-      const normalizedArg = normalizeStoryLangCode(args);
-      const isSupported = STORY_SUPPORTED_LANGS.some(item => item.code === normalizedArg);
-      if (!isSupported) {
-        showStatus(this.getRoleMenuText('unsupportedLang', { code: args }), 2000);
-        this.appendRoleCommandMessage(this.getRoleLangMenuMessage());
-        return true;
-      }
-
-      await this.setRoleLangCode(normalizedArg);
-      this.appendRoleCommandMessage(this.buildRoleLangStatusMessage());
-      await this.handleTriggers('/role', null);
+      await this.handleTriggers(args ? `/role lang ${args}` : '/role lang', null);
       return true;
     }
     const aMatch = /^\/a(?:\s+(.+))?$/i.exec(trimmed);
@@ -3349,25 +6831,20 @@ ROLE=<role name>
       // because provider selection (e.g. /a deepseek) also changes config before final model version is chosen.
       return;
     }
-    const helpMatch = /^\/h\b/i.exec(trimmed);
-    if (helpMatch) {
-      this.replyFromAgent(getCommandHelpMessage());
-      return;
-    }
     const shortMatch = /^\/short(?:\s+(on|off))?\s*$/i.exec(trimmed);
     if (shortMatch) {
       if (!this.isStoryScope) {
-        showStatus('"/short" is only available in Story mode', 2000);
+        showStatus(this.getRoleUiText('shortOnlyStory'), 2000);
         return;
       }
       const nextMode = (shortMatch[1] || '').toLowerCase();
       if (!nextMode) {
-        showStatus('Usage: /short on | /short off', 2000);
+        showStatus(this.getRoleUiText('shortUsage'), 2000);
         return;
       }
       const enabled = nextMode === 'on';
       this.setState({ storyShortMode: enabled });
-      showStatus(enabled ? 'Story history: short ON' : 'Story history: short OFF', 2000);
+      showStatus(enabled ? this.getRoleUiText('shortOn') : this.getRoleUiText('shortOff'), 2000);
       return;
     }
     const langMatch = /^\/lang(?:\s+(.+))?\s*$/i.exec(trimmed);
@@ -3395,22 +6872,16 @@ ROLE=<role name>
       return;
     }
     if (/^\/r\s+new\b/i.test(trimmed)) {
-      await this.handleRoleNewMenu();
+      await this.handleTriggers('/role clear', null);
       return true;
     }
     const roleMatch = /^\/r\s+(.+)/i.exec(trimmed);
     if (roleMatch) {
-      await Roleplay.handleRoleCommand(this, roleMatch[1], {
-        Rolecards,
-        buildRoleplayPrompt: buildRoleplayPromptOffline,
-      });
+      await Roleplay.handleRoleCommand(this, roleMatch[1], { Rolecards });
       return;
     }
     if (/^\/r\b/i.test(trimmed)) {
-      await Roleplay.handleRoleCommand(this, 'unknown', {
-        Rolecards,
-        buildRoleplayPrompt: buildRoleplayPromptOffline,
-      });
+      await Roleplay.handleRoleCommand(this, 'unknown', { Rolecards });
       this.replyFromAgent(
         Roleplay.buildRoleHistoryMessage(this, {
           getRoleHistoryTitle,
@@ -3422,6 +6893,11 @@ ROLE=<role name>
     const destinyMatch = /^\/d(?:\s+(.+))?$/i.exec(trimmed);
     if (destinyMatch) {
       await this.handleDestinyCommand(destinyMatch[1] || '');
+      return;
+    }
+
+    if (/^\/reopen\b/i.test(trimmed)) {
+      await this.handleReopenCurrentWindow();
       return;
     }
 
@@ -3438,12 +6914,56 @@ ROLE=<role name>
     }
 
     if (trimmed.startsWith('/')) {
-      this.replyFromAgent('Unknown command. Type /h');
+      this.replyFromAgent(this.getRoleUiText('unknownCommand'));
       return;
     }
 
     await this.replyFromLLM(trimmed, userMessage);
   };
+
+  prunePureChatAutoMessages = baselineCount => {
+    this.setState(prevState => {
+      const baseCount = Number.isFinite(baselineCount) ? baselineCount : 0;
+      const before = prevState.allMessages.slice(0, baseCount);
+      const added = prevState.allMessages.slice(baseCount);
+      const keepAdded = added.filter(message => {
+        if (!message) return false;
+        const raw = String(message.text || '').trim();
+        if (!raw) return false;
+        if (message._renderMode === 'commands') return false;
+        if (message.sender === 'user') return false;
+        const t = raw.toLowerCase();
+        const noisy = /^\/role\b/i.test(raw)
+          || /^\/linkstart\b/i.test(raw)
+          || /checking role/i.test(t)
+          || /checking model/i.test(t)
+          || /select role/i.test(t)
+          || /choose role/i.test(t)
+          || /set model/i.test(t)
+          || /choose model/i.test(t)
+          || /^model selected(?::|\s|$)/i.test(t)
+          || /^role selected(?::|\s|$)/i.test(t)
+          || /^\u6a21\u578b\s+/i.test(raw)
+          || /^\u8bed\u8a00\s+/i.test(raw)
+          || raw === '\u8bb0\u5fc6'
+          || raw === '\u8bed\u97f3'
+          || raw === '\u8bed\u97f3\u8bbe\u7f6e'
+          || raw === '\u6a21\u578b'
+          || /^memory$/i.test(raw)
+          || /^voice$/i.test(raw)
+          || /^voice settings$/i.test(raw)
+          || /^model$/i.test(raw)
+          || /^language\s+/i.test(raw)
+          || /^\/h\b/i.test(raw)
+          || /help\.$/i.test(t);
+        return !noisy;
+      });
+      return {
+        allMessages: [...before, ...keepAdded],
+        messages: [...before, ...keepAdded].slice(-Math.min([...before, ...keepAdded].length, Math.max(prevState.visibleCount, PAGE_SIZE))),
+      };
+    });
+  }
 
   runAutoCommand = async () => {
     if (this.hasAutoCommandRun) {
@@ -3458,12 +6978,40 @@ ROLE=<role name>
     if (!commandText) {
       return;
     }
+    if (commandText === '/role chat') {
+      const roleData = await this.readRoleFile(this.getSpaceRoleKey());
+      const llmConfig = await this.loadLLMConfig();
+      const activeProvider = String(llmConfig?.provider || llmConfig?.activeProvider || '').trim();
+      const hasRole = !!roleData;
+      const hasModel = !!activeProvider;
+      if (!hasRole || !hasModel) {
+        navigation?.setParams?.({ autoCommand: null });
+        return;
+      }
+    }
     this.hasAutoCommandRun = true;
     this.lastAutoCommand = commandText;
-    const userMessage = this.buildMessage(commandText, 'user');
-    this.appendMessage(userMessage);
+    const roleEntrySource = navigation?.state?.params?.roleEntrySource;
+    const silentAutoChat = roleEntrySource === 'namespace-chat-button' && commandText === '/role chat';
+    const baselineCount = this.state.allMessages.length;
+    const silentAutoStoryClone = commandText === '/role story clone';
+    const userMessage = silentAutoChat || silentAutoStoryClone ? null : this.buildMessage(commandText, 'user');
+    if (userMessage) {
+      this.appendMessage(userMessage);
+    }
     this.setState({ inputValue: '' });
-    await this.handleTriggers(commandText, userMessage);
+    const prevSuppress = this._suppressSystemMessages === true;
+    if (silentAutoChat) {
+      this._suppressSystemMessages = true;
+    }
+    try {
+      await this.handleTriggers(commandText, userMessage);
+    } finally {
+      this._suppressSystemMessages = prevSuppress;
+    }
+    if (silentAutoChat) {
+      this.prunePureChatAutoMessages(baselineCount);
+    }
     this.shouldScrollToEnd = true;
     navigation?.setParams?.({ autoCommand: null });
   };
@@ -3638,17 +7186,17 @@ ROLE=<role name>
       .slice(0, 1000);
 
     if (!value) {
-      this.replyFromAgent('Welcome message is empty.');
+      this.replyFromAgent(this.getRoleUiText('welcomeEmpty'));
       return;
     }
     if (!namespaceId || !walletId) {
-      this.replyFromAgent('Missing namespace or wallet information to save welcome message.');
+      this.replyFromAgent(this.getRoleUiText('missingNamespaceOrWallet'));
       return;
     }
 
     const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
     if (!wallet) {
-      this.replyFromAgent('Wallet not found for this agent.');
+      this.replyFromAgent(this.getRoleUiText('walletNotFoundForAgent'));
       return;
     }
 
@@ -3659,10 +7207,10 @@ ROLE=<role name>
         key: 'welcome',
         value,
       });
-      this.replyFromAgent('Saved welcome message on-chain.');
+      this.replyFromAgent(this.getRoleUiText('welcomeSaved'));
     } catch (e) {
       console.warn('AgentChat: failed to save welcome', e);
-      this.replyFromAgent('Failed to save welcome message.');
+      this.replyFromAgent(this.getRoleUiText('welcomeSaveFailed'));
     }
   };
 
@@ -3678,6 +7226,57 @@ ROLE=<role name>
     }
     await BlueApp.saveToDisk();
     return result;
+  };
+
+  waitForNamespaceKeyVisible = async (namespaceId, targetKey, { attempts = 8, intervalMs = 1500 } = {}) => {
+    const normalizedTargetKey = String(targetKey || '').trim();
+    if (!namespaceId || !normalizedTargetKey) return false;
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        await BlueElectrum.ping();
+        if (typeof BlueElectrum.waitTillConnected === 'function') {
+          await BlueElectrum.waitTillConnected();
+        }
+        const history = await BlueElectrum.blockchainKeva_getKeyValues(getNamespaceScriptHash(namespaceId), -1);
+        const keyValues = Array.isArray(history?.keyvalues) ? history.keyvalues : [];
+        const found = keyValues.some(kv => {
+          const decodedKey = kv?.key ? decodeBase64(kv.key) : '';
+          return String(decodedKey || '').trim() === normalizedTargetKey;
+        });
+        if (found) {
+          return true;
+        }
+      } catch (error) {
+        console.warn('waitForNamespaceKeyVisible failed', { namespaceId, targetKey: normalizedTargetKey, attempt: i + 1, error: String(error?.message || error) });
+      }
+      if (i < attempts - 1) {
+        await new Promise(resolve => setTimeout(resolve, intervalMs));
+      }
+    }
+    return false;
+  };
+
+  commitSingleMemoryLayerOnChain = async ({ wallet, namespaceId, roleSlug, layer, value }) => {
+    const safeLayer = String(layer || '').trim().toLowerCase();
+    const safeValue = String(value || '').trim();
+    if (!safeLayer) {
+      throw new Error('invalid_layer');
+    }
+    if (!safeValue) {
+      return { skipped: true, layer: safeLayer };
+    }
+    const key = `role.memory.${roleSlug}.${safeLayer}`;
+    await this.updateKeyValue({
+      wallet,
+      namespaceId,
+      key,
+      value: safeValue,
+    });
+    const visible = await this.waitForNamespaceKeyVisible(namespaceId, key);
+    if (!visible) {
+      throw new Error(`key_not_visible:${key}`);
+    }
+    return { skipped: false, layer: safeLayer, key };
   };
 
   readStoryBlockCache = async () => {
@@ -3717,22 +7316,60 @@ ROLE=<role name>
     return height;
   };
 
+  getFreshOrCachedBlockHeight = async () => {
+    try {
+      await BlueElectrum.ping();
+      if (typeof BlueElectrum.waitTillConnected === 'function') {
+        await BlueElectrum.waitTillConnected();
+      }
+      const height = await BlueElectrum.blockchainBlock_count();
+      await this.writeStoryBlockCache(height);
+      return Number.isFinite(Number(height)) ? Number(height) : null;
+    } catch (error) {
+      const cached = await this.readStoryBlockCache();
+      if (cached && cached.height > 0) {
+        return Number(cached.height);
+      }
+      console.warn('Failed to fetch fresh role story block height', error);
+      return null;
+    }
+  };
+
+  getBlockEstimateContext = async () => {
+    const cachedBeforeFetch = await this.readStoryBlockCache();
+    const fetchedHeight = await this.getFreshOrCachedBlockHeight();
+    const cachedAfterFetch = await this.readStoryBlockCache();
+    const activeCache = cachedAfterFetch && cachedAfterFetch.height > 0 ? cachedAfterFetch : cachedBeforeFetch;
+    if (Number.isFinite(Number(fetchedHeight)) && fetchedHeight > 0) {
+      const usedFreshFetch = !cachedBeforeFetch
+        || !Number.isFinite(Number(cachedBeforeFetch?.height))
+        || Number(cachedBeforeFetch.height) !== Number(fetchedHeight)
+        || Number(cachedAfterFetch?.ts || 0) > Number(cachedBeforeFetch?.ts || 0);
+      return {
+        currentHeight: Number(fetchedHeight),
+        currentTs: Number(activeCache?.ts || Date.now()) || Date.now(),
+        source: usedFreshFetch ? 'live' : 'cache',
+      };
+    }
+    return {
+      currentHeight: null,
+      currentTs: Number(activeCache?.ts || Date.now()) || Date.now(),
+      source: 'none',
+    };
+  };
+
   replyWithCurrentBlock = async (opts = {}) => {
     try {
       const height = await this.getCachedOrFetchBlockHeight();
       const resultText = `Current block: ${height}`;
       if (!opts?.silent) {
         this.replyFromAgent(resultText);
-      } else {
-        this.appendStoryCommandMessage(resultText);
       }
       return height;
     } catch (e) {
       const errText = `Failed to fetch current block: ${String(e?.message || e)}`;
       if (!opts?.silent) {
         this.replyFromAgent(errText);
-      } else {
-        this.appendStoryCommandMessage(errText);
       }
       console.warn('AgentChat: /block failed', e);
       return null;
@@ -3753,9 +7390,53 @@ ROLE=<role name>
     });
   };
 
-  replyFromAgent = text => {
-    const reply = this.buildMessage(text, 'agent');
+  isRoleMenuLikeText = text => {
+    const raw = String(text || '');
+    return /\[\[\/(?:role|r)\b/i.test(raw) || /^\s*\/?role\s+menu\b/i.test(raw);
+  };
+
+  replyFromAgent = (text, options = {}) => {
+    const raw = String(text || '');
+    if (this._suppressSystemMessages || this.isPureChatMode()) {
+      const t = raw.trim().toLowerCase();
+      const normalized = raw.replace(/\[\[[^\]|]+\|([^\]]+)\]\]/g, '$1').replace(/\s+/g, ' ').trim();
+      const internalLike = /^\/role\b/i.test(t)
+        || /checking role/i.test(t)
+        || /checking model/i.test(t)
+        || /select role/i.test(t)
+        || /choose role/i.test(t)
+        || /set model/i.test(t)
+        || /choose model/i.test(t)
+        || /role chat/i.test(t)
+        || /^model selected(?::|\s|$)/i.test(t)
+        || /^role selected(?::|\s|$)/i.test(t)
+        || /restore memory/i.test(t)
+        || /^\u6a21\u578b\s+/i.test(normalized)
+        || /^\u8bed\u8a00\s+/i.test(normalized)
+        || /^\u8bb0\u5fc6$/i.test(normalized)
+        || /^\u8bed\u97f3$/i.test(normalized)
+        || /^\u8bed\u97f3\u8bbe\u7f6e$/i.test(normalized)
+        || /^\u6a21\u578b$/i.test(normalized)
+        || /^memory$/i.test(normalized)
+        || /^voice$/i.test(normalized)
+        || /^voice settings$/i.test(normalized)
+        || /^model$/i.test(normalized)
+        || /^language\s+/i.test(normalized);
+      if (internalLike) {
+        return;
+      }
+    }
+    const reply = {
+      ...this.buildMessage(text, 'agent'),
+      ...(options || {}),
+      _useSatoshiAvatar: Boolean(options?._useSatoshiAvatar || this.isRoleMenuLikeText(text)),
+    };
+    this.forceScrollToBottomOnce = true;
+    this.shouldScrollToEnd = true;
     this.appendMessage(reply);
+    if (this.chatScope === 'role') {
+      this.scheduleBottomFollow();
+    }
 
     if (this.state.pendingReturnToRoleMenu) {
       const t = String(text || '')
@@ -3768,8 +7449,15 @@ ROLE=<role name>
       const isModelSelectedMsg = /^model selected(?::|\s|$)/.test(t);
 
       if (isModelSelectedMsg) {
-        this.appendRoleCommandMessage('/role');
-        this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, () => this.handleTriggers('/role', null));
+        if (this.state.pendingRoleModelReturnToRole) {
+          return;
+        }
+        if (!this.isPureChatMode()) {
+          this.appendRoleCommandMessage('/role menu');
+          this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, () => this.handleTriggers('/role menu', null));
+        } else {
+          this.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false });
+        }
         return;
       }
     }
@@ -3780,22 +7468,22 @@ ROLE=<role name>
         .trim()
         .toLowerCase();
 
-      // 只要包含 "model selected" 就触发（兼容 custom/builtin）
+      // Trigger when text contains "model selected" (compatible with custom/builtin)
       const isModelSelectedMsg = t.includes('model selected');
 
       if (isModelSelectedMsg) {
-        // 1s 防抖，避免重复提示导致连环触发
+        // 1s debounce to avoid repeated hints causing chained triggers
         const now = Date.now();
         if (this._lastAutoDAt && now - this._lastAutoDAt < 1000) return;
         this._lastAutoDAt = now;
 
-        // 不写入一条用户消息 "/d"，直接回到 /d 菜单
+        // Do not append a user message "/d"; go back to the /d menu directly
         requestAnimationFrame(() => this.handleDestinyCommand('menu'));
       }
     }
   };
 
-  replyFromAgentSeedCard = (text, copyText, linkLabel = 'Copy full Destiny Seed Card') => {
+  replyFromAgentSeedCard = (text, copyText, linkLabel = this.getRoleUiText('copyFullDestinySeedCard')) => {
     const reply = {
       ...this.buildMessage(text, 'agent'),
       copyText,
@@ -3808,10 +7496,48 @@ ROLE=<role name>
     return timeConverter(Math.floor(Date.now() / 1000));
   };
 
-  handleMessagePress = messageText => {
-    if (messageText) {
-      Clipboard.setString(messageText);
+  openLocalRoleFile = async rawPath => {
+    const path = String(rawPath || '').trim();
+    if (!path) return false;
+    const normalizedPath = path.replace(/^file:\/\//i, '');
+    try {
+      const exists = await RNFS.exists(normalizedPath);
+      if (!exists) return false;
+      const opener = NativeModules?.RoleExportOpen;
+      if (opener && typeof opener.openFile === 'function') {
+        await opener.openFile(normalizedPath);
+        return true;
+      }
+      const fileUrl = path.startsWith('file://') ? path : `file://${normalizedPath}`;
+      const canOpen = await Linking.canOpenURL(fileUrl);
+      if (canOpen) {
+        await Linking.openURL(fileUrl);
+        return true;
+      }
+    } catch (error) {
+      console.warn('Failed to open local role file', { path, error });
     }
+    Clipboard.setString(path);
+    this.replyFromAgent(this.getRoleUiText('exportFileCopied', { path }));
+    return true;
+  };
+
+  handleMessagePress = async messageText => {
+    const text = String(messageText || '').trim();
+    if (!text) {
+      return;
+    }
+
+    const exportMatch = /^\u5bfc\u51fa\u8bb0\u5f55\u6210\u529f[:：]\s*(.+)$/i.exec(text);
+    if (exportMatch && exportMatch[1]) {
+      const rawPath = String(exportMatch[1] || '').trim();
+      const normalizedPath = rawPath.replace(/^file:\/\//i, '');
+      if (await this.openLocalRoleFile(normalizedPath)) {
+        return;
+      }
+    }
+
+    Clipboard.setString(text);
   };
 
   handleDigestPress = async digestItem => {
@@ -3868,36 +7594,66 @@ ROLE=<role name>
       ? this.getStoryMenuText('currentLanguage', { label: currentLabel, code: currentCode })
       : this.getStoryMenuText('currentLanguageNotSet');
 
+    const commonLines = [];
+    const commonItems = this.getCommonStoryLangItems();
+    for (let i = 0; i < commonItems.length; i += 3) {
+      commonLines.push(commonItems.slice(i, i + 3).map(item => `[[/lang ${item.code}|${item.label}]]`).join('   '));
+    }
+    commonLines.push(`[[/lang other|${this.getStoryMenuText('moreLanguages')}]]`);
+
     return [
       this.getStoryMenuText('langMenuTitle', { current }),
       '',
-      this.getSupportedStoryLangListMessage(),
+      this.getStoryMenuText('supportedLangs'),
+      '',
+      commonLines.join('\n\n'),
     ].join('\n');
   };
 
-  getSupportedStoryLangListMessage = () => {
-    const items = (STORY_SUPPORTED_LANGS || []).map(item => (item && item.code ? item : null)).filter(Boolean);
+  getSupportedStoryLangListMessage = (items = STORY_SUPPORTED_LANGS) => {
+    const normalizedItems = (items || []).map(item => (item && item.code ? item : null)).filter(Boolean);
+    const groups = [];
+
+    for (let i = 0; i < normalizedItems.length; i += 3) {
+      groups.push(normalizedItems.slice(i, i + 3));
+    }
 
     const lines = [this.getStoryMenuText('supportedLangs'), ''];
-    const row = [];
-    for (let i = 0; i < items.length; i++) {
-      const { code, label } = items[i];
-      row.push(`[[/lang ${code}|${label}]]`);
-      if (row.length === 3) {
-        lines.push(row.join('   '));
-        row.length = 0;
+    groups.forEach((group, index) => {
+      lines.push(group.map(item => `[[/lang ${item.code}|${item.label}]]`).join('   '));
+      if (index !== groups.length - 1) {
+        lines.push('');
       }
-    }
-    if (row.length) lines.push(row.join('   '));
+    });
 
     return lines.join('\n');
   };
 
+  getCommonStoryLangItems = () => {
+    const itemMap = new Map((STORY_SUPPORTED_LANGS || []).map(item => [item.code, item]));
+    return STORY_COMMON_LANG_CODES.map(code => itemMap.get(code)).filter(Boolean);
+  };
+
+  getMoreStoryLangItems = () => {
+    const commonCodes = new Set(this.getCommonStoryLangItems().map(item => item.code));
+    return (STORY_SUPPORTED_LANGS || []).filter(item => item && item.code && !commonCodes.has(item.code));
+  };
+
+  isPureChatMode = () => this.props.navigation?.state?.params?.pureChatMode === true;
+
   appendStoryCommandMessage = text => {
+    if (this._suppressSystemMessages || this.isPureChatMode()) {
+      return;
+    }
+    this.forceScrollToBottomOnce = true;
+    this.shouldScrollToEnd = true;
     this.appendMessage(this.buildMessage(text, 'agent'), 'user', {
       _renderMode: 'commands',
       _localOnly: true,
     });
+    if (this.chatScope === 'role') {
+      this.scheduleBottomFollow();
+    }
   };
 
   getRoleLangCode = () => {
@@ -3908,18 +7664,19 @@ ROLE=<role name>
 
   getRoleLocale = () => normalizeStoryLangCode(this.getRoleLangCode() || 'en');
 
-  getRoleMenuText = (key, vars = {}) => {
-    const locale = this.getRoleLocale();
-    const base = String(locale || '').split('-')[0];
-
-    const table = STORY_MENU_MESSAGES[locale] || STORY_MENU_MESSAGES[base] || STORY_MENU_MESSAGES.en;
-
-    let text = (table && table[key]) || (STORY_MENU_MESSAGES.en && STORY_MENU_MESSAGES.en[key]) || '';
+  getRoleLocalizedText = (messagesByLocale, key, vars = {}) => {
+    const table = getRoleLocaleTable(messagesByLocale, this.getRoleLocale());
+    let text = (table && table[key]) || (messagesByLocale?.en && messagesByLocale.en[key]) || '';
     Object.keys(vars).forEach(k => {
-      text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(vars[k]));
+      text = text.replace(new RegExp(`\{${k}\}`, 'g'), String(vars[k]));
     });
     return text;
   };
+
+  getRoleMenuText = (key, vars = {}) => this.getRoleLocalizedText(STORY_MENU_MESSAGES, key, vars);
+
+  getRoleUiText = (key, vars = {}) => this.getRoleLocalizedText(ROLE_UI_MESSAGES, key, vars);
+
 
   setRoleLangCode = async code => {
     const normalized = normalizeStoryLangCode(code);
@@ -3928,14 +7685,16 @@ ROLE=<role name>
   };
 
   restoreLastSelectedRole = async () => {
-    const raw = await AsyncStorage.getItem(getRoleLastSelectedStorageKey(this.agentId));
-    if (!raw) return;
     try {
+      const raw = await AsyncStorage.getItem(getRoleLastSelectedStorageKey(this.agentId));
+      if (!raw) return;
       const obj = JSON.parse(raw);
       if (obj && obj.roleName) {
         await new Promise(resolve => this.setState({ lastSelectedRole: obj }, resolve));
       }
-    } catch {}
+    } catch (error) {
+      console.warn('[agentrole] restoreLastSelectedRole failed', error);
+    }
   };
 
   saveLastSelectedRole = async roleName => {
@@ -3950,12 +7709,199 @@ ROLE=<role name>
     await new Promise(resolve => this.setState({ lastSelectedRole: null }, resolve));
   };
 
+  restoreActiveRoleState = async () => {
+    try {
+      const exists = await RNFS.exists(this.currentRolePath);
+      if (!exists) return;
+      const raw = await RNFS.readFile(this.currentRolePath, 'utf8');
+      const obj = JSON.parse(raw);
+      if (obj && obj.roleName) {
+        this.activeRoleSlug = obj.roleSlug || Rolecards.normalizeRoleSlug(obj.roleName) || null;
+        await new Promise(resolve =>
+          this.setState({ activeRoleState: obj, activeRoleSlug: this.activeRoleSlug || null }, resolve),
+        );
+      }
+    } catch {}
+  };
+
+  restoreCurrentSummonedRole = async () => {
+    try {
+      const exists = await RNFS.exists(this.currentRolePath);
+      if (!exists) return;
+      const raw = await RNFS.readFile(this.currentRolePath, 'utf8');
+      const obj = JSON.parse(raw);
+      if (obj && obj.roleName) {
+        await new Promise(resolve => this.setState({ currentSummonedRole: obj }, resolve));
+      }
+    } catch {}
+  };
+
+  saveActiveRoleState = async (roleName, roleSlug = null) => {
+    const name = String(roleName || '').trim();
+    if (!name) return;
+    const resolvedRoleSlug = this.getSpaceRoleKey();
+    const obj = {
+      roleName: name,
+      roleSlug: resolvedRoleSlug,
+      roleCardPath: resolvedRoleSlug ? this.getRoleCardPath(resolvedRoleSlug) : null,
+      updatedAt: Date.now(),
+    };
+    try {
+      await this.ensureRoleFilesDir();
+      await RNFS.writeFile(this.currentRolePath, JSON.stringify(obj, null, 2), 'utf8');
+    } catch {}
+    this.activeRoleSlug = obj.roleSlug || null;
+    await new Promise(resolve => this.setState({ activeRoleState: obj, activeRoleSlug: obj.roleSlug || null }, resolve));
+  };
+
+  clearActiveRoleState = async () => {
+    try {
+      const exists = await RNFS.exists(this.currentRolePath);
+      if (exists) {
+        await RNFS.unlink(this.currentRolePath);
+      }
+    } catch {}
+    this.activeRoleSlug = null;
+    await new Promise(resolve => this.setState({ activeRoleState: null, activeRoleSlug: null }, resolve));
+  };
+
+  saveCurrentSummonedRole = async (roleName, roleSlug = null) => {
+    const name = String(roleName || '').trim();
+    if (!name) return;
+    const resolvedRoleSlug = this.getSpaceRoleKey();
+    const obj = {
+      roleName: name,
+      roleSlug: resolvedRoleSlug,
+      roleCardPath: resolvedRoleSlug ? this.getRoleCardPath(resolvedRoleSlug) : null,
+      updatedAt: Date.now(),
+    };
+    try {
+      await this.ensureRoleFilesDir();
+      await RNFS.writeFile(this.currentRolePath, JSON.stringify(obj, null, 2), 'utf8');
+    } catch {}
+    await new Promise(resolve => this.setState({ currentSummonedRole: obj }, resolve));
+  };
+
+  clearCurrentSummonedRole = async () => {
+    try {
+      const exists = await RNFS.exists(this.currentRolePath);
+      if (exists) {
+        await RNFS.unlink(this.currentRolePath);
+      }
+    } catch {}
+    await new Promise(resolve => this.setState({ currentSummonedRole: null }, resolve));
+  };
+
+  clearAllRoleDatas = async () => {
+    try {
+      const dirOk = await this.ensureRoleFilesDir();
+      if (!dirOk) return false;
+      const roleDirExists = await RNFS.exists(this.roleFilesDir);
+      if (roleDirExists) {
+        const entries = await RNFS.readDir(this.roleFilesDir);
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            try { await RNFS.unlink(entry.path); } catch {}
+            continue;
+          }
+          if (entry.isFile() && entry.name.endsWith('.json')) {
+            try { await RNFS.unlink(entry.path); } catch {}
+          }
+        }
+      }
+      const chatDirExists = await RNFS.exists(this.agentChatDir);
+      if (chatDirExists) {
+        const entries = await RNFS.readDir(this.agentChatDir);
+        for (const entry of entries) {
+          if (entry.isFile() && /^\d{4}-\d{2}-\d{2}\.json$/.test(entry.name)) {
+            try { await RNFS.unlink(entry.path); } catch {}
+          }
+        }
+        const digestDir = `${this.agentChatDir}/digest`;
+        const digestExists = await RNFS.exists(digestDir);
+        if (digestExists) {
+          const digestEntries = await RNFS.readDir(digestDir);
+          for (const entry of digestEntries) {
+            if (entry.isFile() && /^\d{4}-\d{2}-\d{2}\.json$/.test(entry.name)) {
+              try { await RNFS.unlink(entry.path); } catch {}
+            }
+          }
+        }
+      }
+      await this.writeRoleIndex([]);
+      await AsyncStorage.removeItem(getRoleLangStorageKey(this.agentId));
+      await this.clearLastSelectedRole();
+      await this.clearActiveRoleState();
+      await this.clearCurrentSummonedRole();
+      await this.clearPendingNewRole();
+      this.activeRoleSlug = null;
+      this.loadedDateKeys = [];
+      this.allDateKeys = [];
+
+      const initMessage = this.buildMessage('Role data initialized.', 'agent');
+      const todayKey = getLocalDateKey(initMessage.timestamp);
+      await this.writeDayMessages(todayKey, [initMessage]);
+
+      await new Promise(resolve => this.setState({
+        allMessages: [initMessage],
+        messages: [initMessage],
+        digestMessages: [],
+        roleLangCode: null,
+        roleCardOffset: 0,
+        roleCardPage: [],
+        pendingMemoryAdjust: false,
+        pendingMemoryRoleSlug: null,
+        pendingMemoryAdjustDraft: null,
+        pendingMemoryAdjustLayer: null,
+        pendingMemoryDeleteConfirm: false,
+        pendingMemoryDeleteRoleSlug: null,
+        pendingRoleSuggest: false,
+        pendingRoleSuggestOriginal: '',
+        pendingRoleSuggestOptions: [],
+        pendingRoleFragmentImport: false,
+      pendingRoleStoryFragmentImport: false,
+        pendingRoleCall: false,
+        pendingDuplicateRoleName: null,
+      }, resolve));
+      await this.handleTriggers('/role', null);
+      return true;
+    } catch (error) {
+      this.replyFromAgent(`Clear role datas failed:\n${String(error?.message || error || 'unknown error')}`);
+      return false;
+    }
+  };
+
+  confirmClearRoleDatas = () => {
+    Alert.alert(
+      'Initialize role data?',
+      'This will clear current role state, role index, and all role cards.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Clear role datas', style: 'destructive', onPress: () => this.clearAllRoleDatas() },
+      ],
+    );
+  };
+
   setPendingNewRole = async roleName => {
     const name = String(roleName || '').trim();
     if (!name) return false;
     await AsyncStorage.setItem(getRolePendingNewStorageKey(this.agentId), name);
     await new Promise(resolve => this.setState({ pendingNewRole: name }, resolve));
     return true;
+  };
+
+  showRoleDuplicateMenu = async name => {
+    await new Promise(resolve => this.setState({ pendingDuplicateRoleName: name }, resolve));
+    const lines = [
+      this.getRoleUiText('roleName', { name }),
+      '',
+      this.getRoleUiText('roleAlreadyExists'),
+      '',
+      `[[/role summon ${name}|${this.getRoleUiText('yes')}]]`,
+      '',
+      `[[/role clear|${this.getRoleUiText('no')}]]`,
+    ];
+    this.replyFromAgent(lines.join('\n'));
   };
 
   clearPendingNewRole = async () => {
@@ -3970,51 +7916,1419 @@ ROLE=<role name>
     return String(stored || '').trim();
   };
 
+  getRandomRoleFallbackPool = roleLang => {
+    const normalized = String(roleLang || 'en').toLowerCase();
+    const pools = {
+      'zh-cn': [
+        '灰烬', '岚', '镜', '青岚', '星砂', '雾灯', '空河', '夜弦', '白鹭', '玄枝',
+        '云栖', '烛影', '墨衡', '霜河', '归鸿', '潮生', '星澜', '听雪', '远舟', '青砚',
+      ],
+      'zh-tw': [
+        '灰燼', '嵐', '鏡', '青嵐', '星砂', '霧燈', '空河', '夜弦', '白鷺', '玄枝',
+        '雲棲', '燭影', '墨衡', '霜河', '歸鴻', '潮生', '星瀾', '聽雪', '遠舟', '青硯',
+      ],
+      ja: [
+        'アカリ', 'ハル', 'ミオ', 'ソラ', 'レン', 'ユイ', 'カイ', 'ナギ', 'シオン', 'ツバキ',
+        'ホタル', 'ルカ', 'アオイ', 'ヒナタ', 'ユキ', 'セナ', 'リツ', 'マコト', 'カナメ', 'ミズキ',
+      ],
+      ko: [
+        '하린', '서윤', '도윤', '지우', '민준', '유나', '시온', '아린', '태오', '나린',
+        '하늘', '별하', '서하', '이안', '유진', '라온', '지안', '도하', '가온', '수아',
+      ],
+      es: [
+        'Luna', 'Sol', 'Nilo', 'Ari', 'Vega', 'Noa', 'Iria', 'Leo', 'Mara', 'Senda',
+        'Brisa', 'Nara', 'Elio', 'Alba', 'Río', 'Cielo', 'Nube', 'Luz', 'Sombra', 'Aren',
+      ],
+      fr: [
+        'Lune', 'Étoile', 'Noé', 'Mira', 'Élan', 'Aube', 'Ciel', 'Rune', 'Iris', 'Sable',
+        'Brume', 'Lior', 'Nacre', 'Solène', 'Éole', 'Nuit', 'Azur', 'Clair', 'Ondine', 'Rive',
+      ],
+      en: [
+        'Ashen', 'Mira', 'Kite', 'Lumen', 'Nyra', 'Aster', 'Sable', 'Iris', 'Rune', 'Vera',
+        'Ember', 'Nova', 'Orion', 'Lyra', 'Vale', 'Echo', 'Riven', 'Sora', 'Halo', 'Wren',
+      ],
+    };
+    return pools[normalized] || pools.en;
+  };
+
+  generateRandomRoleName = async () => {
+    const roleLang = this.getRoleLangCode?.() || this.state.roleLangCode || 'en';
+    const fallbackPool = this.getRandomRoleFallbackPool(roleLang);
+    const used = new Set();
+    try {
+      const index = await this.getReconciledRoleIndex();
+      (index || []).forEach(item => {
+        const raw = String(item?.roleName || item?.roleSlug || '').trim().toLowerCase();
+        if (raw) used.add(raw);
+      });
+    } catch {}
+
+    const pickFallback = () => {
+      const available = fallbackPool.filter(name => !used.has(String(name).trim().toLowerCase()));
+      const pool = available.length ? available : fallbackPool;
+      return pool[Math.floor(Math.random() * pool.length)] || 'Mira';
+    };
+
+    const hasLLM = !!this.state.llmConfig?.provider && typeof this.callLLMSilent === 'function';
+    if (!hasLLM) {
+      return pickFallback();
+    }
+
+    try {
+      const index = await this.getReconciledRoleIndex();
+      const recentNames = (index || []).slice(0, 12).map(item => String(item?.roleName || item?.roleSlug || '').trim()).filter(Boolean);
+      const prompt = `Generate exactly ONE short role name for xKEVA role summon.\nLanguage: ${roleLang}\nRequirements:\n- short and memorable\n- suitable for role creation\n- avoid duplicates with existing names\n- output name only, no quotes, no explanation\nExisting names:\n${recentNames.join(', ') || '(none)'}`;
+      const raw = String(await this.callLLMSilent(prompt) || '').trim().split(/\r?\n/)[0].trim();
+      const cleaned = raw.replace(/^[-*\d.\s"'`]+/, '').replace(/["'`]/g, '').trim();
+      const safe = Rolecards.normalizeRoleSlug(cleaned) ? cleaned : '';
+      if (safe && !used.has(safe.trim().toLowerCase())) {
+        return safe;
+      }
+    } catch {}
+
+    return pickFallback();
+  };
+
   showRoleCreateWizard = async () => {
+    const sampleName = 'MyRole';
     const lines = [
-      'Create a new role',
+      this.getRoleUiText('createRoleTitle'),
       '',
-      'Type a role name using:',
-      '/r create <role name>',
+      this.getRoleUiText('summonPrompt').replace(this.getRoleUiText('randomSummon'), `[[/role random|${this.getRoleUiText('randomSummon')}]]`),
       '',
-      'Example:',
-      '[[/r create MyRole|Use name: MyRole]]',
+      this.getRoleUiText('example'),
+      `[[/role new|${this.getRoleUiText('useName', { name: sampleName })}]]`,
       '',
-      '[[/r cancel|Cancel]]',
+      `[[/role clear|${this.getRoleUiText('cancel')}]]`,
     ];
     this.replyFromAgent(lines.join('\n'));
   };
 
   showRoleCreateConfirm = async name => {
+    const roleSlug = Rolecards.normalizeRoleSlug(name) || null;
+    const existing = roleSlug ? await this.readRoleFile(roleSlug) : null;
+    if (existing) {
+      await this.showRoleDuplicateMenu(name);
+      return;
+    }
+
     const lines = [
-      `Role name: ${name}`,
+      this.getRoleUiText('roleName', { name }),
       '',
-      'Confirm to select this role.',
+      this.getRoleUiText('confirmSelectRole'),
       '',
-      '[[/r confirm|Confirm]]',
-      '[[/r cancel|Cancel]]',
+      `[[/role summon ${name}|${this.getRoleUiText('confirm')}]]`,
+      '',
+      `[[/role new|${this.getRoleUiText('change')}]]`,
+      '',
+      `[[/role clear|${this.getRoleUiText('resummon')}]]`,
     ];
     this.replyFromAgent(lines.join('\n'));
   };
 
+  beginRoleCreateConfirmFlow = async name => {
+    const normalizedName = String(name || '').trim();
+    if (!normalizedName) {
+      await this.handleTriggers('/role new', null);
+      return false;
+    }
+    const ok = await this.setPendingNewRole(normalizedName);
+    if (!ok) {
+      await this.handleTriggers('/role new', null);
+      return false;
+    }
+    await this.showRoleCreateConfirm(normalizedName);
+    return true;
+  };
+
+  finalizeRoleActivation = async ({ name, roleSlug, refreshedCards = null, clearDuplicate = true } = {}) => {
+    await this.saveLastSelectedRole(name);
+    await this.saveActiveRoleState(name, roleSlug);
+    await this.saveCurrentSummonedRole(name, roleSlug);
+    await new Promise(resolve =>
+      this.setState(
+        {
+          activeRoleSlug: roleSlug,
+          roleCardOffset: refreshedCards ? 0 : this.state.roleCardOffset,
+          roleCardPage: refreshedCards ? refreshedCards.items : this.state.roleCardPage,
+          pendingDuplicateRoleName: clearDuplicate ? null : this.state.pendingDuplicateRoleName,
+        },
+        resolve,
+      ),
+    );
+    await this.clearPendingNewRole();
+    this.replyFromAgent(this.buildRoleSummonSuccessMessage(name));
+    if (!this.isPureChatMode()) {
+      await this.handleTriggers('/role menu', null);
+    }
+    await this.handleTriggers('/role chat', null);
+  };
+
+  createGeneratedRoleAndActivate = async name => {
+    this.replyFromAgent(this.getRoleUiText('summonSystemCall'));
+    this.replyFromAgent(this.getRoleUiText('summonLoading'));
+    const normalizedName = String(name || '').trim();
+    if (!normalizedName) {
+      await this.handleTriggers('/role new', null);
+      return false;
+    }
+    const roleSlug = this.getSpaceRoleKey();
+    const roleModelStatus = await this.ensureRoleModelReady({ source: this.roleEntrySource || 'role' });
+    if (!roleModelStatus?.ok) {
+      return false;
+    }
+    const now = Date.now();
+    const existingRoleData = await this.readRoleFile(roleSlug);
+    let readyRoleData = existingRoleData;
+    if (!readyRoleData) {
+      const initialMemoryBundle = await this.buildValidatedInitialRoleMemory(normalizedName);
+      const normalizedInitialMemory = this.normalizeMemoryCardText(initialMemoryBundle?.memory || '');
+      const writeOk = await this.writeRoleFile(roleSlug, {
+        roleName: normalizedName,
+        roleSlug,
+        memory: normalizedInitialMemory,
+        initialMemory: this.normalizeMemoryCardText(initialMemoryBundle?.initialMemory || normalizedInitialMemory),
+        memoryLayers: initialMemoryBundle?.memoryLayers,
+        initialMemoryLayers: initialMemoryBundle?.initialMemoryLayers,
+        generationStatus: initialMemoryBundle?.generationStatus || 'validated',
+        memorySeed: initialMemoryBundle?.memorySeed || null,
+        createdAt: now,
+        updatedAt: now,
+      });
+      readyRoleData = writeOk ? await this.readRoleFile(roleSlug) : null;
+      if (!writeOk || !readyRoleData) {
+        this.replyFromAgent('(role summon failed: memory card not ready)');
+        return false;
+      }
+      try {
+        await this.writeRoleRecoveryBaseline(roleSlug);
+      } catch (error) {
+        console.warn('Failed to write recovery baseline', { roleSlug, error });
+      }
+    }
+    await this.upsertRoleIndexEntry({ roleName: normalizedName, roleSlug, updatedAt: readyRoleData?.updatedAt || now });
+    const refreshedCards = await this.loadLocalRoleCardsPage(0);
+    await this.finalizeRoleActivation({ name: normalizedName, roleSlug, refreshedCards, clearDuplicate: true });
+    return true;
+  };
+
   getRoleLangMenuMessage = () => {
     const current = getStoryLangLabel(this.getRoleLangCode() || 'en');
-    const chips = STORY_SUPPORTED_LANGS.map(item => `[[/rolelang ${item.code}|${item.label}]]`).join('   ');
-    const lines = [this.getRoleMenuText('langMenuTitle', { current }), '', this.getRoleMenuText('supportedLangs'), '', chips];
+    const commonItems = this.getCommonStoryLangItems();
+    const commonLines = [];
+    for (let i = 0; i < commonItems.length; i += 3) {
+      commonLines.push(commonItems.slice(i, i + 3).map(item => `[[/role lang ${item.code}|${item.label}]]`).join('   '));
+    }
+    commonLines.push(`[[/role lang other|${this.getRoleMenuText('moreLanguages')}]]`);
+    const lines = [
+      `[[/role lang list|${this.getRoleMenuText('changeLanguage')}]]  ${current}`,
+      '',
+      this.getRoleMenuText('supportedLangs'),
+      '',
+      commonLines.join('\n\n'),
+    ];
+    return lines.join('\n');
+  };
+
+  getRoleMoreLangMenuMessage = () => {
+    const items = this.getMoreStoryLangItems();
+    const lines = [`[[/role lang list|${this.getRoleMenuText('changeLanguage')}]]  ${getStoryLangLabel(this.getRoleLangCode() || 'en')}`, '', this.getRoleMenuText('supportedLangs'), ''];
+    for (let i = 0; i < items.length; i += 3) {
+      lines.push(items.slice(i, i + 3).map(item => `[[/role lang ${item.code}|${item.label}]]`).join('   '));
+      if (i + 3 < items.length) {
+        lines.push('');
+      }
+    }
     return lines.join('\n');
   };
 
   buildRoleLangStatusMessage = () => {
     const code = this.getRoleLangCode();
     const label = getStoryLangLabel(code || 'en');
-    const current = this.getRoleMenuText('currentLanguage', { label, code: code || 'en' });
 
-    return [current, `[[/rolelang|${this.getRoleMenuText('changeLanguage')}]]`].join('\n');
+    return `[[/role lang list|${this.getRoleMenuText('changeLanguage')}]]  ${label}`;
+  };
+
+  buildRoleMenuMessage = async () => {
+    const roleData = await this.readRoleFile(this.getSpaceRoleKey());
+    const hasRole = !!roleData;
+    const primaryCommand = hasRole ? '/role memory' : '/role new';
+    const primaryLabel = hasRole ? this.getRoleUiText('memory') : this.getRoleUiText('startSummon');
+    const lines = [
+      `[[${primaryCommand}|${primaryLabel}]]`,
+      '',
+    ];
+    if (!hasRole) {
+      lines.push(`[[/role memory rebuild|${this.getRoleUiText('restoreMemoryMenu')}]]`);
+      lines.push('');
+    }
+    lines.push(`[[/role story|${this.getRoleUiText('storyMenu')}]]`);
+    lines.push('');
+    lines.push(`[[/role talkmenu|${this.getRoleUiText('voiceMenu')}]]`);
+    lines.push('');
+    lines.push(`[[/rolemodel|${this.getRoleMenuText('changeModel')}]]`);
+    lines.push('');
+    return lines.join('\n');
+  };
+
+  getStoryChatDir = () => getStoryChatDirHelper(this.agentId, CHAT_DIR);
+
+  getRoleStoryChoicesPath = () => getRoleStoryChoicesPathHelper(this.agentId, CHAT_DIR);
+
+  getRoleCurrentStoryPath = () => getRoleCurrentStoryPathHelper(this.agentId, CHAT_DIR);
+
+  getRoleCurrentStorySummaryPath = () => getRoleCurrentStorySummaryPathHelper(this.agentId, CHAT_DIR);
+
+  openRoleStorySpace = async extraParams => openRoleStorySpaceHelper({
+    persistLastSpaceShortcut: this.persistLastSpaceShortcut,
+    navigation: this.props.navigation,
+    extraParams,
+  });
+
+  exportRoleStoryRecord = async () => {
+    const hasCurrentStory = await this.hasRoleCurrentStory();
+    if (!hasCurrentStory) {
+      this.replyFromAgent(this.getRoleUiText('storyReaderEmpty') || '(no story content available)');
+      return null;
+    }
+    const params = this.props.navigation?.state?.params || {};
+    const result = await exportRoleStoryRecordHelper({
+      namespace: {
+        namespaceId: params.namespaceId,
+        shortCode: params.shortCode,
+        displayName: params.displayName,
+      },
+    });
+    const filePath = String(result?.filePath || '').trim();
+    if (filePath) {
+      this._lastExportedStoryRecordPath = filePath;
+      const successText = this.getRoleUiText('storyExportSuccess', { path: filePath }) || `Story saved: ${filePath}`;
+      this.replyFromAgent(`${successText}\n\n[[/role openstoryexport|${this.getRoleUiText('openRecord')}]]\n\n${await this.buildRoleStoryMenuMessage()}`);
+    }
+    return result;
+  };
+
+  hasRoleCurrentStory = async () => {
+    const messages = await this.readRoleCurrentStoryMessages();
+    return messages.some(message => String(message?.text || '').trim());
+  };
+
+  importRoleStoryRecord = async () => {
+    const params = this.props.navigation?.state?.params || {};
+    return importRoleStoryRecordHelper({
+      namespace: {
+        namespaceId: params.namespaceId,
+        shortCode: params.shortCode,
+        displayName: params.displayName,
+      },
+      onOpenStory: () => this.openRoleStorySpace(),
+    });
+  };
+
+  confirmClearRoleStoryRecord = async () => {
+    const hasCurrentStory = await this.hasRoleCurrentStory();
+    if (!hasCurrentStory) {
+      this.replyFromAgent(this.getRoleUiText('storyReaderEmpty') || '(no story content available)');
+      return false;
+    }
+
+    Alert.alert(
+      this.getRoleUiText('deleteStoryTitle') || 'Delete story?',
+      this.getRoleUiText('deleteStoryPrompt') || 'This will clear current story data and local story cache. A story snapshot will be created before clearing.',
+      [
+        { text: this.getRoleUiText('cancel') || 'Cancel', style: 'cancel' },
+        {
+          text: this.getRoleUiText('deleteStoryConfirm') || this.getRoleUiText('deleteStory') || 'Delete story',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await createRoleStorySnapshot(this);
+            } catch (error) {
+              console.warn('Failed to capture story snapshot before clear', error);
+              Alert.alert(
+                this.getRoleUiText('storySnapshotFailed', { error: String(error?.message || error || 'unknown') }) || 'Story snapshot failed',
+                this.getRoleUiText('deleteStorySnapshotRequired') || 'Story was not deleted because the backup snapshot failed.',
+              );
+              return;
+            }
+            await this.openRoleStorySpace({
+              clearStoryOnMount: true,
+              suppressAutoLinkStart: true,
+            });
+          },
+        },
+      ],
+    );
+    return true;
+  };
+
+  getRoleStoryCloneDir = () => getStoryCloneDir(this.getStoryChatDir());
+
+  buildRoleStoryClonePrompt = async () => {
+    const currentStoryState = await this.readRoleCurrentStoryState();
+    const messages = Array.isArray(currentStoryState?.messages) ? currentStoryState.messages : [];
+    const choices = Array.isArray(currentStoryState?.lastChoiceSet) ? currentStoryState.lastChoiceSet : [];
+    return buildOfflineStoryClonePrompt({
+      messages,
+      choices,
+      agentId: this.agentId || 'unknown',
+      roleName: currentStoryState?.roleName || this.state.currentRoleName || '',
+      fallbackRoleName: 'This role',
+      langCode: this.getRoleLangCode?.() || this.state.roleLangCode || this.getStoryLangCode?.() || 'en',
+      storySessionId: currentStoryState?.storySessionId || '',
+      storyState: currentStoryState,
+      title: this.getRoleUiText('cloneStoryPromptTitle') || 'xKEVA Agentstory offline clone prompt',
+      stripStoryChoiceLines: stripStoryChoiceLinesFromText,
+      cleanStoryChoiceLabel: text => String(text || '').replace(/^\s*\d+[.)、:-]?\s*/, '').trim(),
+    });
+  };
+
+  cloneRoleStoryRecord = async () => {
+    const promptText = await this.buildRoleStoryClonePrompt();
+    if (!promptText) {
+      this.replyFromAgent(this.getRoleUiText('storyReaderEmpty') || 'No story content available.');
+      return null;
+    }
+    try {
+      const cloneDir = this.getRoleStoryCloneDir();
+      await RNFS.mkdir(cloneDir);
+      const filename = buildStoryCloneFilename(Date.now());
+      const path = `${cloneDir}/${filename}`;
+      await RNFS.writeFile(path, promptText, 'utf8');
+      this._lastStoryClonePath = path;
+      const messageText = this.getRoleUiText('cloneStoryGenerated', { path }) || `Clone file generated:\n${path}`;
+      this.replyFromAgent(`${messageText}\n\n[[/role openstoryclone ${path}|${this.getRoleUiText('openRecord')}]]      [[/role copystoryclone ${path}|${this.getRoleUiText('copyClonePrompt') || 'Copy prompt'}]]`);
+      return path;
+    } catch (error) {
+      console.warn('Failed to generate role story clone prompt', error);
+      this.replyFromAgent(this.getRoleUiText('cloneStoryFailed') || 'Failed to generate clone file.');
+      return null;
+    }
+  };
+
+  cloneRoleMemoryRecord = async active => {
+    const roleRef = active || (await this.getCurrentRoleMemoryTarget());
+    if (!roleRef) {
+      this.replyFromAgent(this.getRoleUiText('noActiveRole'));
+      return null;
+    }
+    const summary = await this.readConversationSummary(roleRef.roleSlug);
+    const promptText = buildRoleMemoryClonePrompt({
+      roleRef,
+      summary,
+      roleLangCode: this.getRoleLangCode?.() || this.state.roleLangCode || 'en',
+    });
+    if (!promptText) {
+      this.replyFromAgent(this.getRoleUiText('cloneMemoryEmpty') || '(no memory content available)');
+      return null;
+    }
+    try {
+      const cloneDir = getRoleMemoryCloneDir(this.getRoleDirPath(roleRef.roleSlug));
+      await RNFS.mkdir(cloneDir);
+      const filename = buildRoleMemoryCloneFilename(Date.now());
+      const path = `${cloneDir}/${filename}`;
+      await RNFS.writeFile(path, promptText, 'utf8');
+      this._lastMemoryClonePath = path;
+      const messageText = this.getRoleUiText('cloneMemoryGenerated', { path }) || `Memory clone file generated:\n${path}`;
+      this.replyFromAgent(`${messageText}\n\n[[/role openmemoryclone ${path}|${this.getRoleUiText('openRecord')}]]      [[/role copymemoryclone ${path}|${this.getRoleUiText('copyClonePrompt') || 'Copy prompt'}]]`);
+      return path;
+    } catch (error) {
+      console.warn('Failed to generate role memory clone prompt', error);
+      this.replyFromAgent(this.getRoleUiText('cloneMemoryFailed') || 'Failed to generate memory clone file.');
+      return null;
+    }
+  };
+
+  buildRoleStoryMenuMessage = async () => {
+    const hasChoices = await RNFS.exists(this.getRoleStoryChoicesPath());
+    const hasCurrentStory = await this.hasRoleCurrentStory();
+    return buildRoleStoryMenuMessageHelper({
+      hasChoices,
+      hasCurrentStory,
+      getRoleUiText: this.getRoleUiText,
+    });
+  };
+
+  buildRoleAdventureRecordsMenuMessage = async () => {
+    const hasCurrentStory = await this.hasRoleCurrentStory();
+    return buildRoleAdventureRecordsMenuMessageHelper({
+      hasCurrentStory,
+      getRoleUiText: this.getRoleUiText,
+    });
+  };
+
+  readRoleCurrentStoryState = async () => {
+    const path = this.getRoleCurrentStoryPath();
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) return null;
+      const raw = await RNFS.readFile(path, 'utf8');
+      const json = JSON.parse(raw);
+      return json && typeof json === 'object' ? json : null;
+    } catch (error) {
+      console.warn('Failed to read role current story state', { path, error });
+      return null;
+    }
+  };
+
+  writeRoleCurrentStoryState = async state => {
+    const path = this.getRoleCurrentStoryPath();
+    await RNFS.writeFile(path, JSON.stringify(state), 'utf8');
+    return state;
+  };
+
+  persistRoleCurrentChoices = async choices => {
+    const path = this.getRoleStoryChoicesPath();
+    const safeChoices = Array.isArray(choices) ? choices.filter(Boolean) : [];
+    if (!safeChoices.length) {
+      const exists = await RNFS.exists(path);
+      if (exists) {
+        await RNFS.unlink(path).catch(() => {});
+      }
+      return [];
+    }
+    await RNFS.writeFile(path, JSON.stringify({ choices: safeChoices, updatedAt: Date.now() }), 'utf8');
+    return safeChoices;
+  };
+
+  readRoleStoryJsonFile = async path => {
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) return null;
+      const raw = await RNFS.readFile(path, 'utf8');
+      return JSON.parse(raw);
+    } catch (error) {
+      console.warn('Failed to read role story json file', { path, error });
+      return null;
+    }
+  };
+
+  writeRoleStoryJsonFile = async (path, value) => {
+    await RNFS.writeFile(path, JSON.stringify(value), 'utf8');
+    return value;
+  };
+
+  getRoleStoryDirPath = () => getStoryChatDirHelper(this.agentId, CHAT_DIR);
+
+  getRoleStoryAlphaPath = () => `${this.getRoleStoryDirPath()}/alpha.json`;
+
+  getRoleStoryCurrentAlphaLogPath = () => `${this.getRoleStoryDirPath()}/alpha_log/current_run.json`;
+
+  truncateSwitchWorldlineStoryRuntimeFiles = async ({ keepMessages = [], targetMessage = null, currentStoryState = null } = {}) => {
+    const targetTs = Number(targetMessage?.timestamp || targetMessage?.t || 0) || 0;
+    const targetId = String(targetMessage?.id || '').trim();
+
+    const restoredChoices = await this.syncRoleStoryChoicesFromMessages(keepMessages);
+
+    const alphaLogPath = this.getRoleStoryCurrentAlphaLogPath();
+    const alphaStatePath = this.getRoleStoryAlphaPath();
+    const alphaLog = await this.readRoleStoryJsonFile(alphaLogPath);
+    const alphaEntries = Array.isArray(alphaLog?.entries) ? alphaLog.entries : [];
+    const keptAlphaEntries = targetTs > 0
+      ? alphaEntries.filter(entry => Number(entry?.ts || 0) < targetTs)
+      : alphaEntries;
+
+    if (alphaLog && Array.isArray(alphaLog.entries)) {
+      await this.writeRoleStoryJsonFile(alphaLogPath, {
+        ...alphaLog,
+        entries: keptAlphaEntries,
+      });
+    }
+
+    const alphaState = await this.readRoleStoryJsonFile(alphaStatePath);
+    const fallbackBaseAlpha = Number.isFinite(Number(currentStoryState?.baseAlpha))
+      ? Number(currentStoryState.baseAlpha)
+      : Number.isFinite(Number(alphaState?.baseAlpha))
+      ? Number(alphaState.baseAlpha)
+      : null;
+    const restoredAlpha = keptAlphaEntries.length > 0
+      ? Number(keptAlphaEntries[keptAlphaEntries.length - 1]?.alphaAfter)
+      : fallbackBaseAlpha;
+
+    if (alphaState && Number.isFinite(Number(restoredAlpha))) {
+      await this.writeRoleStoryJsonFile(alphaStatePath, {
+        ...alphaState,
+        currentAlpha: Number(restoredAlpha),
+        updatedAt: Date.now(),
+      });
+    }
+
+    const lastKeptUserMessage = [...(Array.isArray(keepMessages) ? keepMessages : [])]
+      .reverse()
+      .find(message => String(message?.sender || '').trim().toLowerCase() === 'user');
+
+    return {
+      restoredChoices,
+      restoredAlpha: Number.isFinite(Number(restoredAlpha)) ? Number(restoredAlpha) : null,
+      lastKeptMessageId: String(lastKeptUserMessage?.id || targetId || ''),
+      lastKeptMessageTs: Number(lastKeptUserMessage?.timestamp || lastKeptUserMessage?.t || 0) || 0,
+    };
+  };
+
+  buildRoleBootstrapStoryChoices = () => [
+    {
+      key: '1',
+      send: '1',
+      label: this.getRoleUiText('storyDefaultChoiceScout'),
+      source: 'bootstrap-choice-fallback',
+    },
+    {
+      key: '2',
+      send: '2',
+      label: this.getRoleUiText('storyDefaultChoiceSearch'),
+      source: 'bootstrap-choice-fallback',
+    },
+    {
+      key: '3',
+      send: '3',
+      label: this.getRoleUiText('storyDefaultChoiceLead'),
+      source: 'bootstrap-choice-fallback',
+    },
+  ];
+
+  extractRoleStoryChoicesFromMessages = messages => {
+    const sourceMessages = Array.isArray(messages) ? messages : [];
+    for (let i = sourceMessages.length - 1; i >= 0; i -= 1) {
+      const message = sourceMessages[i];
+      const sender = String(message?.sender || '').trim().toLowerCase();
+      if (sender !== 'agent') {
+        continue;
+      }
+      const rawText = String(message?.text || '').trim();
+      if (!rawText) {
+        continue;
+      }
+      const choices = extractStoryChoicesFromText(rawText);
+      if (choices.length > 0) {
+        return choices;
+      }
+    }
+    return [];
+  };
+
+  resolveRoleStoryChoicesForRewind = ({ messages = [], targetMessage = null } = {}) => {
+    const parsedChoices = this.extractRoleStoryChoicesFromMessages(messages);
+    if (parsedChoices.length > 0) {
+      return parsedChoices;
+    }
+
+    const sourceMessages = Array.isArray(messages) ? messages : [];
+    const hasKeptUserMessage = sourceMessages.some(message => String(message?.sender || '').trim().toLowerCase() === 'user');
+    const hasKeptAgentMessage = sourceMessages.some(message => String(message?.sender || '').trim().toLowerCase() === 'agent' && String(message?.text || '').trim());
+    const targetChoiceRaw = String(targetMessage?._choiceMeta?.raw || '').trim();
+    const bootstrapScoutLabel = this.getRoleUiText('storyDefaultChoiceScout');
+    if (!hasKeptUserMessage && hasKeptAgentMessage && targetChoiceRaw === bootstrapScoutLabel) {
+      return this.buildRoleBootstrapStoryChoices();
+    }
+
+    return [];
+  };
+
+  syncRoleStoryChoicesFromMessages = async messages => {
+    const choices = this.extractRoleStoryChoicesFromMessages(messages);
+    await this.persistRoleCurrentChoices(choices);
+    return choices;
+  };
+
+  getRoleStoryNamespace = () => {
+    const params = this.props.navigation?.state?.params || {};
+    return {
+      namespaceId: params.namespaceId,
+      shortCode: params.shortCode,
+      displayName: params.displayName,
+    };
+  };
+
+  readRoleStorySnapshotJson = (snapshot, relativePath, fallbackValue = null) => {
+    const file = (Array.isArray(snapshot?.files) ? snapshot.files : []).find(item => String(item?.path || '') === relativePath);
+    if (!file) return fallbackValue;
+    try {
+      return JSON.parse(String(file?.content || ''));
+    } catch (error) {
+      console.warn('Failed to parse role story snapshot json', { relativePath, error });
+      return fallbackValue;
+    }
+  };
+
+  writeRoleStorySnapshotJson = (snapshot, relativePath, value) => {
+    const files = Array.isArray(snapshot?.files) ? snapshot.files.slice() : [];
+    const nextContent = JSON.stringify(value);
+    const index = files.findIndex(item => String(item?.path || '') === relativePath);
+    const nextFile = { path: relativePath, encoding: 'utf8', content: nextContent };
+    if (index >= 0) {
+      files[index] = nextFile;
+    } else {
+      files.push(nextFile);
+      files.sort((a, b) => String(a?.path || '').localeCompare(String(b?.path || '')));
+    }
+    return {
+      ...(snapshot || {}),
+      files,
+      storage: {
+        ...(snapshot?.storage || {}),
+        fileCount: files.length,
+      },
+    };
+  };
+
+  removeRoleStorySnapshotFile = (snapshot, relativePath) => {
+    const files = (Array.isArray(snapshot?.files) ? snapshot.files : []).filter(item => String(item?.path || '') !== relativePath);
+    return {
+      ...(snapshot || {}),
+      files,
+      storage: {
+        ...(snapshot?.storage || {}),
+        fileCount: files.length,
+      },
+    };
+  };
+
+  truncateSwitchWorldlineFromMessage = async targetItem => {
+    const targetId = String(targetItem?.id || '').trim();
+    if (!targetId) {
+      return false;
+    }
+    const namespace = this.getRoleStoryNamespace();
+    const snapshot = await buildStoryRecordSnapshot(namespace);
+    const currentStoryState = this.readRoleStorySnapshotJson(snapshot, 'current_story.json', null);
+    const sourceMessages = Array.isArray(currentStoryState?.messages) ? currentStoryState.messages : [];
+    const targetIndex = sourceMessages.findIndex(message => String(message?.id || '').trim() === targetId);
+    if (targetIndex < 0) {
+      Alert.alert(this.getRoleUiText('storySwitchWorldlineFailedTitle'), this.getRoleUiText('storySwitchWorldlineNotFound'));
+      return false;
+    }
+
+    const targetMessage = sourceMessages[targetIndex] || null;
+    const truncatedMessages = sourceMessages.slice(0, targetIndex);
+    const restoredChoices = this.resolveRoleStoryChoicesForRewind({
+      messages: truncatedMessages,
+      targetMessage,
+    });
+    const lastKeptUserMessage = [...truncatedMessages]
+      .reverse()
+      .find(message => String(message?.sender || '').trim().toLowerCase() === 'user');
+
+    const alphaLog = this.readRoleStorySnapshotJson(snapshot, 'alpha_log/current_run.json', null);
+    const alphaEntries = Array.isArray(alphaLog?.entries) ? alphaLog.entries : [];
+    const targetTs = Number(targetMessage?.timestamp || targetMessage?.t || 0) || 0;
+    const keptAlphaEntries = targetTs > 0
+      ? alphaEntries.filter(entry => Number(entry?.ts || 0) < targetTs)
+      : alphaEntries;
+    const alphaState = this.readRoleStorySnapshotJson(snapshot, 'alpha.json', null);
+    const fallbackBaseAlpha = Number.isFinite(Number(currentStoryState?.baseAlpha))
+      ? Number(currentStoryState.baseAlpha)
+      : Number.isFinite(Number(alphaState?.baseAlpha))
+      ? Number(alphaState.baseAlpha)
+      : null;
+    const restoredAlpha = keptAlphaEntries.length > 0
+      ? Number(keptAlphaEntries[keptAlphaEntries.length - 1]?.alphaAfter)
+      : fallbackBaseAlpha;
+
+    const shouldWaitForChoice = restoredChoices.length > 0;
+    const hasKeptUserTurn = !!lastKeptUserMessage;
+    const nextStoryState = {
+      ...(currentStoryState || {}),
+      messages: truncatedMessages,
+      lastChoiceSet: restoredChoices,
+      awaitingChoice: shouldWaitForChoice,
+      shouldResumeGeneration: false,
+      status: shouldWaitForChoice ? 'waiting_user' : truncatedMessages.length > 0 ? 'exploring' : 'idle',
+      phase: truncatedMessages.length > 0 ? 'exploring' : 'boot',
+      entryMode: hasKeptUserTurn ? 'continue' : 'new',
+      lastSubmittedChoiceAt: Number(lastKeptUserMessage?.timestamp || lastKeptUserMessage?.t || 0) || 0,
+      lastSubmittedChoiceUserMessageId: String(lastKeptUserMessage?.id || ''),
+      lastAutoFallbackReplyId: '',
+      currentAlpha: Number.isFinite(Number(restoredAlpha)) ? Number(restoredAlpha) : null,
+      updatedAt: Date.now(),
+    };
+
+    let nextSnapshot = this.writeRoleStorySnapshotJson(snapshot, 'current_story.json', nextStoryState);
+    nextSnapshot = shouldWaitForChoice
+      ? this.writeRoleStorySnapshotJson(nextSnapshot, 'current_choices.json', {
+          choices: restoredChoices,
+          updatedAt: Date.now(),
+        })
+      : this.removeRoleStorySnapshotFile(nextSnapshot, 'current_choices.json');
+    if (alphaLog && Array.isArray(alphaLog.entries) && keptAlphaEntries.length > 0) {
+      nextSnapshot = this.writeRoleStorySnapshotJson(nextSnapshot, 'alpha_log/current_run.json', {
+        ...alphaLog,
+        entries: keptAlphaEntries,
+      });
+    } else {
+      nextSnapshot = this.removeRoleStorySnapshotFile(nextSnapshot, 'alpha_log/current_run.json');
+    }
+    if (alphaState && Number.isFinite(Number(restoredAlpha))) {
+      nextSnapshot = this.writeRoleStorySnapshotJson(nextSnapshot, 'alpha.json', {
+        ...alphaState,
+        currentAlpha: Number(restoredAlpha),
+        updatedAt: Date.now(),
+      });
+    }
+
+    await restoreStoryRecordSnapshot(nextSnapshot, namespace);
+    await this.writeRoleCurrentStoryState(nextStoryState);
+    if (shouldWaitForChoice) {
+      await this.persistRoleCurrentChoices(restoredChoices);
+    } else {
+      await RNFS.unlink(this.getRoleStoryChoicesPath()).catch(() => {});
+    }
+    if (alphaLog && Array.isArray(alphaLog.entries) && keptAlphaEntries.length > 0) {
+      await this.writeRoleStoryJsonFile(this.getRoleStoryCurrentAlphaLogPath(), {
+        ...alphaLog,
+        entries: keptAlphaEntries,
+      });
+    } else {
+      await RNFS.unlink(this.getRoleStoryCurrentAlphaLogPath()).catch(() => {});
+    }
+    if (alphaState && Number.isFinite(Number(restoredAlpha))) {
+      await this.writeRoleStoryJsonFile(this.getRoleStoryAlphaPath(), {
+        ...alphaState,
+        currentAlpha: Number(restoredAlpha),
+        updatedAt: Date.now(),
+      });
+    }
+    await this.stopRoleSpeech();
+    await this.handleStopViewHistorySpeak();
+    await new Promise(resolve =>
+      this.setState(
+        {
+          isViewHistoryMode: false,
+          historyViewMode: null,
+          isSwitchWorldlineMode: false,
+          historyPageIndex: 0,
+          historyPages: [],
+          historyReaderBlocks: [],
+          historyRawMessages: [],
+          switchWorldlineBlockContext: null,
+        },
+        resolve,
+      ),
+    );
+    await this.openRoleStorySpace();
+    showStatus(this.getRoleUiText('storySwitchWorldlineReturned'));
+    return true;
+  };
+
+  confirmSwitchWorldlineRewind = item => {
+    Alert.alert(
+      this.getRoleUiText('storySwitchWorldlineConfirmTitle'),
+      this.getRoleUiText('storySwitchWorldlineConfirmBody'),
+      [
+        { text: this.getRoleUiText('cancel'), style: 'cancel' },
+        {
+          text: this.getRoleUiText('storySwitchWorldlineConfirmAction'),
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await this.truncateSwitchWorldlineFromMessage(item);
+            } catch (error) {
+              console.warn('Failed to rewind switch worldline', error);
+              Alert.alert(this.getRoleUiText('storySwitchWorldlineFailedTitle'), String(error?.message || error || 'unknown'));
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  readRoleCurrentStoryMessages = async () => {
+    const currentStoryState = await this.readRoleCurrentStoryState();
+    const messages = Array.isArray(currentStoryState?.messages) ? currentStoryState.messages : [];
+    try {
+      return messages
+        .map((message, index) => {
+          const sender = String(message?.sender || '').trim().toLowerCase() === 'user' ? 'user' : 'agent';
+          const rawText = String(message?.text || '').trim();
+          const text = sender === 'agent' ? stripStoryChoiceLinesFromText(rawText) : rawText;
+          if (!text) return null;
+          return {
+            id: message?.id || `current-story-${index}`,
+            sender,
+            text,
+            timestamp: Number(message?.timestamp || message?.t || Date.now()) || Date.now(),
+            _choiceMeta: message?._choiceMeta || null,
+            _modelText: message?._modelText || '',
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0));
+    } catch (error) {
+      console.warn('Failed to read role current story', error);
+      return [];
+    }
+  };
+
+  readRoleCurrentStorySummary = async () => {
+    const path = this.getRoleCurrentStorySummaryPath();
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) return null;
+      const raw = await RNFS.readFile(path, 'utf8');
+      const parsed = JSON.parse(String(raw || '{}'));
+      const text = String(parsed?.text || '').trim();
+      if (!text) return null;
+      return {
+        text,
+        updatedAt: Number(parsed?.updatedAt || 0) || Date.now(),
+        sourceMessageCount: Number(parsed?.sourceMessageCount || 0) || 0,
+        roleName: String(parsed?.roleName || '').trim(),
+        roleSlug: String(parsed?.roleSlug || '').trim(),
+        startBlockDelta: parsed?.startBlockDelta === null || parsed?.startBlockDelta === undefined ? null : Number(parsed.startBlockDelta),
+        startBlockHeight: parsed?.startBlockHeight === null || parsed?.startBlockHeight === undefined ? null : Number(parsed.startBlockHeight),
+        latestBlockHeight: parsed?.latestBlockHeight === null || parsed?.latestBlockHeight === undefined ? null : Number(parsed.latestBlockHeight),
+      };
+    } catch (error) {
+      console.warn('Failed to read role current story summary', error);
+      return null;
+    }
+  };
+
+  writeRoleCurrentStorySummary = async payload => {
+    const path = this.getRoleCurrentStorySummaryPath();
+    await RNFS.writeFile(path, JSON.stringify(payload, null, 2), 'utf8');
+    return payload;
+  };
+
+  getRoleStorySummaryOnChainKey = summary => {
+    const roleSlug = String(summary?.roleSlug || this.state.activeRoleSlug || this.agentId || 'default').trim() || 'default';
+    return `story.summary.${roleSlug}`;
+  };
+
+  hasNamespaceKey = async (namespaceId, targetKey) => {
+    const normalizedTargetKey = String(targetKey || '').trim();
+    if (!namespaceId || !normalizedTargetKey) return false;
+    const kvMap = await this.fetchNamespaceKeyValueMap(namespaceId);
+    return Object.prototype.hasOwnProperty.call(kvMap || {}, normalizedTargetKey);
+  };
+
+  openNamespaceKeyValuePage = key => {
+    const navigation = this.props?.navigation;
+    const params = navigation?.state?.params || {};
+    const { namespaceId, walletId, displayName, shortCode } = params;
+    if (!navigation || typeof navigation.navigate !== 'function' || !namespaceId || !key) {
+      return false;
+    }
+    navigation.navigate('KeyValues', {
+      namespaceId,
+      walletId,
+      displayName,
+      shortCode,
+      focusKey: key,
+    });
+    return true;
+  };
+
+  buildRoleStorySummaryOnChainValue = async summaryText => {
+    const params = this.props.navigation?.state?.params || {};
+    const shortCode = String(params.shortCode || '').trim().replace(/^@+/, '');
+    const safeShortCode = shortCode.replace(/[^A-Za-z0-9_]/g, '');
+    const savedStoryTag = await this.readSavedStorySummaryTag();
+    const tags = ['#agentstory'];
+    if (savedStoryTag) {
+      tags.push(savedStoryTag);
+    } else if (safeShortCode) {
+      tags.push(`#story${safeShortCode}`);
+    }
+    const uniqueTags = [];
+    const seenTags = new Set();
+    tags.forEach(tag => {
+      const normalized = String(tag || '').trim();
+      const key = normalized.toLowerCase();
+      if (!normalized || seenTags.has(key)) {
+        return;
+      }
+      seenTags.add(key);
+      uniqueTags.push(normalized);
+    });
+    const body = String(summaryText || '').trim();
+    const existing = new Set(
+      String(body || '')
+        .match(/#[A-Za-z0-9_]+/g)?.map(tag => tag.toLowerCase()) || [],
+    );
+    const missingTags = uniqueTags.filter(tag => !existing.has(tag.toLowerCase()));
+    if (!missingTags.length) {
+      return body;
+    }
+    return `${body}\n\n${missingTags.join(' ')}`;
+  };
+
+  commitRoleStorySummaryOnChain = async summary => {
+    const params = this.props.navigation?.state?.params || {};
+    const { namespaceId, walletId } = params;
+    const summaryText = String(summary?.text || '').trim();
+    if (!summaryText) {
+      throw new Error(this.getRoleUiText('storySummaryEmpty') || 'No summary available yet.');
+    }
+    if (!namespaceId || !walletId) {
+      throw new Error(this.getRoleUiText('missingNamespaceOrWallet') || 'missing namespace or wallet');
+    }
+    const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
+    if (!wallet) {
+      throw new Error(this.getRoleUiText('walletNotFoundForAgent') || 'wallet not found');
+    }
+    const key = this.getRoleStorySummaryOnChainKey(summary);
+    const taggedSummaryText = await this.buildRoleStorySummaryOnChainValue(summaryText);
+    await this.updateKeyValue({ wallet, namespaceId, key, value: taggedSummaryText });
+    const visible = await this.waitForNamespaceKeyVisible(namespaceId, key);
+    if (!visible) {
+      throw new Error(`key_not_visible:${key}`);
+    }
+    return key;
+  };
+
+  handleCopyRoleStorySummaryPress = async summary => {
+    const summaryText = String(summary?.text || '').trim();
+    if (!summaryText) {
+      showStatus(this.getRoleUiText('storySummaryEmpty') || 'No summary available yet.', 2000);
+      return;
+    }
+    Clipboard.setString(await this.buildRoleStorySummaryOnChainValue(summaryText));
+    showStatus(this.getRoleUiText('copiedToClipboard'), 2000);
+  };
+
+  handleCommitRoleStorySummaryPress = async summary => {
+    if (this.state.isStorySummaryCommitPending) {
+      return false;
+    }
+    const params = this.props.navigation?.state?.params || {};
+    const { namespaceId } = params;
+    const key = this.getRoleStorySummaryOnChainKey(summary);
+    const exists = await this.hasNamespaceKey(namespaceId, key);
+    const title = this.getRoleUiText('storySummaryCommit') || 'Upload block';
+    const message = exists
+      ? (this.getRoleUiText('storySummaryCommitOverwriteConfirm') || 'An on-chain record already exists. Overwrite it?')
+      : (this.getRoleUiText('storySummaryCommitCreateConfirm') || 'No on-chain key found yet. Upload now?');
+
+    return new Promise(resolve => {
+      Alert.alert(
+        title,
+        message,
+        [
+          { text: this.getRoleUiText('back') || 'Back', style: 'cancel', onPress: () => resolve(false) },
+          ...(exists ? [{ text: this.getRoleUiText('view') || 'View', onPress: () => { this.openNamespaceKeyValuePage(key); resolve(false); } }] : []),
+          {
+            text: this.getRoleUiText('confirm') || 'Confirm',
+            onPress: async () => {
+              try {
+                await new Promise(done => this.setState({ isStorySummaryCommitPending: true }, done));
+                await this.commitRoleStorySummaryOnChain(summary);
+                showStatus(this.getRoleUiText('storySummaryCommitDone') || 'Story summary committed on-chain.');
+                resolve(true);
+              } catch (error) {
+                Alert.alert(this.getRoleUiText('storySummaryCommitFailed') || 'Story summary on-chain failed', String(error?.message || error || 'unknown'));
+                resolve(false);
+              } finally {
+                this.setState({ isStorySummaryCommitPending: false });
+              }
+            },
+          },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) },
+      );
+    });
+  };
+
+  getStorySummaryLanguageSpec = roleLangCode => {
+    const code = normalizeStoryLangCode(roleLangCode || 'en');
+    const specs = {
+      'zh-cn': {
+        outputLabel: 'Simplified Chinese',
+        emptyLabel: '(none)',
+        sectionLabels: ['EARLY (light)', 'MIDDLE (medium)', 'LATE (heavy)'],
+        speakerUser: 'User',
+        speakerNarrator: 'Narrator',
+        formatDelta: value => Number.isFinite(Number(value)) ? `${Number(value)} blocks ago` : 'some blocks ago',
+        anchor: ({ roleName, deltaLabel }) => `${roleName} awakened ${deltaLabel} and began exploring from the story's starting point.`,
+        anchorHint: ({ roleName, deltaLabel }) => `${roleName} awakened ${deltaLabel} and began exploring from [place Y].`,
+        compressHint: 'Keep the first sentence in Simplified Chinese while following the English semantic template above.',
+        firstLineCheck: /\u82cf\u9192|awakened/i,
+      },
+      'zh-tw': {
+        outputLabel: 'Traditional Chinese',
+        emptyLabel: '(none)',
+        sectionLabels: ['EARLY (light)', 'MIDDLE (medium)', 'LATE (heavy)'],
+        speakerUser: 'User',
+        speakerNarrator: 'Narrator',
+        formatDelta: value => Number.isFinite(Number(value)) ? `${Number(value)} blocks ago` : 'some blocks ago',
+        anchor: ({ roleName, deltaLabel }) => `${roleName} awakened ${deltaLabel} and began exploring from the story's starting point.`,
+        anchorHint: ({ roleName, deltaLabel }) => `${roleName} awakened ${deltaLabel} and began exploring from [place Y].`,
+        compressHint: 'Keep the first sentence in Traditional Chinese while following the English semantic template above.',
+        firstLineCheck: /\u7526\u9192|\u82cf\u9192|awakened/i,
+      },
+      es: {
+        outputLabel: 'Spanish',
+        emptyLabel: '(none)',
+        sectionLabels: ['EARLY (light)', 'MIDDLE (medium)', 'LATE (heavy)'],
+        speakerUser: 'User',
+        speakerNarrator: 'Narrator',
+        formatDelta: value => Number.isFinite(Number(value)) ? `hace ${Number(value)} bloques` : 'hace algunos bloques',
+        anchor: ({ roleName, deltaLabel }) => `${roleName} despertó ${deltaLabel} y empezó a explorar desde el punto inicial de la historia.`,
+        anchorHint: ({ roleName, deltaLabel }) => `${roleName} despertó ${deltaLabel} y empezó a explorar desde 【lugar Y】.`,
+        compressHint: 'Keep the first sentence in the same Spanish format and preserve the current situation plus the next suspense.',
+        firstLineCheck: /despertó/i,
+      },
+      fr: {
+        outputLabel: 'French',
+        emptyLabel: '(none)',
+        sectionLabels: ['EARLY (light)', 'MIDDLE (medium)', 'LATE (heavy)'],
+        speakerUser: 'User',
+        speakerNarrator: 'Narrator',
+        formatDelta: value => Number.isFinite(Number(value)) ? `il y a ${Number(value)} blocs` : 'il y a quelques blocs',
+        anchor: ({ roleName, deltaLabel }) => `${roleName} s’est éveillé ${deltaLabel} et a commencé à explorer depuis le point de départ de l’histoire.`,
+        anchorHint: ({ roleName, deltaLabel }) => `${roleName} s’est éveillé ${deltaLabel} et a commencé à explorer depuis 【le lieu Y】.`,
+        compressHint: 'Keep the first sentence in the same French format and preserve the current situation plus the next suspense.',
+        firstLineCheck: /éveillé|eveillé|éveillée/i,
+      },
+      ko: {
+        outputLabel: 'Korean',
+        emptyLabel: '(none)',
+        sectionLabels: ['EARLY (light)', 'MIDDLE (medium)', 'LATE (heavy)'],
+        speakerUser: 'User',
+        speakerNarrator: 'Narrator',
+        formatDelta: value => Number.isFinite(Number(value)) ? `${Number(value)} blocks ago` : 'some blocks ago',
+        anchor: ({ roleName, deltaLabel }) => `${roleName} awakened ${deltaLabel} and began exploring from the story's starting point.`,
+        anchorHint: ({ roleName, deltaLabel }) => `${roleName} awakened ${deltaLabel} and began exploring from [place Y].`,
+        compressHint: 'Keep the first sentence in Korean while following the English semantic template above.',
+        firstLineCheck: /\uae68\uc5b4\ub0ac|awakened/i,
+      },
+      ja: {
+        outputLabel: 'Japanese',
+        emptyLabel: '(none)',
+        sectionLabels: ['EARLY (light)', 'MIDDLE (medium)', 'LATE (heavy)'],
+        speakerUser: 'User',
+        speakerNarrator: 'Narrator',
+        formatDelta: value => Number.isFinite(Number(value)) ? `${Number(value)} blocks ago` : 'some blocks ago',
+        anchor: ({ roleName, deltaLabel }) => `${roleName} awakened ${deltaLabel} and began exploring from the story's starting point.`,
+        anchorHint: ({ roleName, deltaLabel }) => `${roleName} awakened ${deltaLabel} and began exploring from [place Y].`,
+        compressHint: 'Keep the first sentence in Japanese while following the English semantic template above.',
+        firstLineCheck: /\u76ee\u899a\u3081|awakened/i,
+      },
+      en: {
+        outputLabel: 'English',
+        emptyLabel: '(none)',
+        sectionLabels: ['EARLY (light)', 'MIDDLE (medium)', 'LATE (heavy)'],
+        speakerUser: 'User',
+        speakerNarrator: 'Narrator',
+        formatDelta: value => Number.isFinite(Number(value)) ? `${Number(value)} blocks ago` : 'some blocks ago',
+        anchor: ({ roleName, deltaLabel }) => `${roleName} awakened ${deltaLabel} and began exploring from the story's starting point.`,
+        anchorHint: ({ roleName, deltaLabel }) => `${roleName} awakened ${deltaLabel} and began exploring from [place Y].`,
+        compressHint: 'Keep the first sentence in the same English format and preserve the current situation plus the next suspense.',
+        firstLineCheck: /awakened/i,
+      },
+    };
+    return specs[code] || specs.en;
+  };
+
+  buildStorySummaryPrompt = ({ messages = [], roleName = '', roleLangCode = 'en', startBlockDelta = null, startBlockHeight = null, latestBlockHeight = null }) => {
+    const safeMessages = Array.isArray(messages) ? messages : [];
+    const langSpec = this.getStorySummaryLanguageSpec(roleLangCode);
+    const deltaLabel = langSpec.formatDelta(startBlockDelta);
+    const normalized = safeMessages
+      .map((message, index) => {
+        const role = String(message?.sender || message?.role || '').trim().toLowerCase() === 'user' ? langSpec.speakerUser : langSpec.speakerNarrator;
+        const text = String(message?.text || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+        if (!text) return null;
+        return { index, role, text };
+      })
+      .filter(Boolean);
+    const total = normalized.length;
+    const earlyEnd = total <= 3 ? total : Math.max(1, Math.ceil(total * 0.3));
+    const middleEnd = total <= 6 ? total : Math.max(earlyEnd + 1, Math.ceil(total * 0.7));
+    const pickSegmentItems = (items, maxItems, mode = 'tail') => {
+      if (items.length <= maxItems) return items;
+      if (mode === 'head-tail') {
+        const headCount = Math.max(1, Math.ceil(maxItems / 2));
+        const tailCount = Math.max(1, maxItems - headCount);
+        return items.slice(0, headCount).concat(items.slice(-tailCount));
+      }
+      return items.slice(-maxItems);
+    };
+    const joinSegment = items => items.map(item => `- ${item.role}: ${item.text}`).join('\n');
+    const early = joinSegment(pickSegmentItems(normalized.slice(0, earlyEnd), 6, 'head-tail'));
+    const middle = joinSegment(pickSegmentItems(normalized.slice(earlyEnd, middleEnd), 8, 'tail'));
+    const late = joinSegment(pickSegmentItems(normalized.slice(middleEnd), 12, 'tail'));
+    return [
+      'You are a story-summary editor.',
+      `Write the final summary in ${langSpec.outputLabel}.`,
+      'Output plain text only. No title, no bullet list in the final answer, no Markdown.',
+      'Hard requirements:',
+      '1. Target roughly 450-520 Chinese characters worth of density, and keep the final result under 1800 UTF-8 bytes.',
+      `2. The first line must start with this meaning and structure in ${langSpec.outputLabel}: ${langSpec.anchorHint({ roleName: String(roleName || 'this role'), deltaLabel })}`,
+      '3. If the exact starting place is uncertain, infer the closest plausible starting location from the opening story beats. Do not say "unknown place".',
+      '4. Use weighting scheme A: early section light (1-2 sentences), middle section medium (2-3 sentences), late section heavy (4-6 sentences), with later events getting more concrete detail.',
+      '5. Keep only the main plotline, key places, key characters, goal changes, major turns, current situation, and the next suspense. Remove repetitive dialogue, side actions, and decorative prose.',
+      '6. The ending must clearly state what situation the story is currently paused at and what problem comes next.',
+      `7. Use the role name "${String(roleName || 'this role')}". current_story started around block ${Number.isFinite(Number(startBlockHeight)) ? Number(startBlockHeight) : 'unknown'}; current reference block is about ${Number.isFinite(Number(latestBlockHeight)) ? Number(latestBlockHeight) : 'unknown'}; delta is about ${Number.isFinite(Number(startBlockDelta)) ? Number(startBlockDelta) : 'unknown'}.`,
+      '',
+      `[${langSpec.sectionLabels[0]}]`,
+      early || langSpec.emptyLabel,
+      '',
+      `[${langSpec.sectionLabels[1]}]`,
+      middle || langSpec.emptyLabel,
+      '',
+      `[${langSpec.sectionLabels[2]}]`,
+      late || langSpec.emptyLabel,
+    ].join('\n');
+  };
+
+  normalizeStorySummaryText = (text, { roleName = '', roleLangCode = 'en', startBlockDelta = null } = {}) => {
+    const cleaned = String(text || '').replace(/\r/g, '').split('\n').map(line => line.trim()).filter(Boolean).join('\n').trim();
+    if (!cleaned) return '';
+    const lines = cleaned.split('\n').filter(Boolean);
+    if (lines.length === 0) return '';
+    const langSpec = this.getStorySummaryLanguageSpec(roleLangCode);
+    const first = lines[0];
+    if (langSpec.firstLineCheck.test(first)) {
+      return lines.join('\n').trim();
+    }
+    const safeRoleName = String(roleName || 'this role').trim() || 'this role';
+    const deltaLabel = langSpec.formatDelta(startBlockDelta);
+    const anchor = langSpec.anchor({ roleName: safeRoleName, deltaLabel });
+    return [anchor].concat(lines).join('\n').trim();
+  };
+
+  generateRoleCurrentStorySummary = async () => {
+    if (!this.state.llmConfig?.provider || typeof this.callLLMSilent !== 'function') {
+      throw new Error('llm unavailable');
+    }
+    const currentStoryState = await this.readRoleCurrentStoryState();
+    const currentStoryMessages = await this.readRoleCurrentStoryMessages();
+    if (!currentStoryMessages.length) {
+      throw new Error(this.getRoleUiText('storyReaderEmpty') || 'No story content available.');
+    }
+    const estimateContext = await this.getBlockEstimateContext();
+    const estimateHeight = Number.isFinite(Number(estimateContext?.currentHeight)) ? Number(estimateContext.currentHeight) : null;
+    const estimateTs = Number.isFinite(Number(estimateContext?.currentTs)) ? Number(estimateContext.currentTs) : Date.now();
+    const nowTs = Date.now();
+    const storedStartBlockHeight = Number.isFinite(Number(currentStoryState?.startBlockHeight)) ? Number(currentStoryState.startBlockHeight) : null;
+    const storedLastBlockHeight = Number.isFinite(Number(currentStoryState?.lastBlockHeight)) ? Number(currentStoryState.lastBlockHeight) : null;
+    const startBlockHeight = storedStartBlockHeight || this.estimateStoryBlockHeightForTimestamp(currentStoryMessages[0]?.timestamp || nowTs, estimateHeight, estimateTs);
+    const latestBlockHeight = storedLastBlockHeight || this.estimateStoryBlockHeightForTimestamp(currentStoryMessages[currentStoryMessages.length - 1]?.timestamp || nowTs, estimateHeight, estimateTs);
+    const roleLangCode = this.getRoleLangCode?.() || this.state.roleLangCode || 'en';
+    const roleName = String(currentStoryState?.roleName || this.state.currentSummonedRole?.roleName || this.state.currentSummonedRole?.name || '').trim() || 'this role';
+    const currentReferenceHeight = Number.isFinite(Number(estimateHeight)) ? Number(estimateHeight) : latestBlockHeight;
+    const startBlockDelta = Number.isFinite(Number(currentReferenceHeight)) && Number.isFinite(Number(startBlockHeight))
+      ? Math.max(0, Number(currentReferenceHeight) - Number(startBlockHeight))
+      : null;
+    const prompt = this.buildStorySummaryPrompt({
+      messages: currentStoryMessages,
+      roleName,
+      roleLangCode,
+      startBlockDelta,
+      startBlockHeight,
+      latestBlockHeight: currentReferenceHeight,
+    });
+    let summaryText = this.normalizeStorySummaryText(await this.callLLMSilent(prompt, { skipRoleContext: true }), { roleName, roleLangCode, startBlockDelta });
+    const utf8Length = value => unescape(encodeURIComponent(String(value || ''))).length;
+    if (utf8Length(summaryText) > 1800) {
+      const langSpec = this.getStorySummaryLanguageSpec(roleLangCode);
+      const compressPrompt = [
+        `Compress the following story summary. Keep it concise and keep the final result in ${langSpec.outputLabel}.`,
+        'Keep the overall meaning, remove every disposable detail, and keep the byte size under 1700 UTF-8 bytes.',
+        langSpec.compressHint,
+        '',
+        summaryText,
+      ].join('\n');
+      summaryText = this.normalizeStorySummaryText(await this.callLLMSilent(compressPrompt, { skipRoleContext: true }), { roleName, roleLangCode, startBlockDelta });
+    }
+    const payload = {
+      text: summaryText,
+      updatedAt: Date.now(),
+      sourceMessageCount: currentStoryMessages.length,
+      roleName,
+      roleSlug: String(currentStoryState?.roleSlug || this.state.activeRoleSlug || '').trim(),
+      startBlockDelta,
+      startBlockHeight,
+      latestBlockHeight: currentReferenceHeight,
+    };
+    await this.writeRoleCurrentStorySummary(payload);
+    return payload;
+  };
+
+  openRoleStorySummaryRecords = async ({ forceRefresh = false } = {}) => {
+    let summary = forceRefresh ? null : await this.readRoleCurrentStorySummary();
+    if (!summary) {
+      this.replyFromAgent('开始整理全生成宇宙探索记录…');
+      showStatus(this.getRoleUiText('storySummaryGenerating') || 'Generating story summary…');
+      summary = await this.generateRoleCurrentStorySummary();
+    }
+    const displayMessages = [{
+      id: `story-summary-${Number(summary?.updatedAt || Date.now())}`,
+      sender: 'agent',
+      text: String(summary?.text || '').trim() || (this.getRoleUiText('storySummaryEmpty') || 'No summary available yet.'),
+      timestamp: Number(summary?.updatedAt || Date.now()) || Date.now(),
+      roleName: String(summary?.roleName || '').trim(),
+      roleSlug: String(summary?.roleSlug || '').trim(),
+      startBlockDelta: summary?.startBlockDelta,
+      startBlockHeight: summary?.startBlockHeight,
+      latestBlockHeight: summary?.latestBlockHeight,
+    }];
+    const historyBlocks = this.buildViewHistoryReaderBlocks(displayMessages);
+    const historyPages = this.buildHistoryPages(historyBlocks);
+    const latestPageIndex = Math.max(0, historyPages.length - 1);
+    const firstPage = historyPages[latestPageIndex] || [];
+    const visibleCount = Math.min(firstPage.length || PAGE_SIZE, PAGE_SIZE);
+    await new Promise(resolve =>
+      this.setState(
+        {
+          visibleCount,
+          inputValue: '',
+          isViewHistoryMode: true,
+          historyViewMode: 'story-summary',
+          isSwitchWorldlineMode: false,
+          isHistorySpeaking: false,
+          historyPageIndex: latestPageIndex,
+          historyPages,
+          historyReaderBlocks: historyBlocks,
+          historyRawMessages: displayMessages,
+          switchWorldlineBlockContext: null,
+        },
+        resolve,
+      ),
+    );
+    this.forceScrollToBottomOnce = true;
+    requestAnimationFrame(() => this.scrollToBottomOffset(false));
+  };
+
+  openViewCurrentStoryRecords = async ({ viewMode = 'story-view', pageOffsetFromLatest = 0 } = {}) => {
+    const currentStoryMessages = await this.readRoleCurrentStoryMessages();
+    const isSwitchWorldlineMode = viewMode === 'switch-worldline';
+    let switchWorldlineBlockContext = null;
+    let displayMessages = currentStoryMessages;
+
+    if (isSwitchWorldlineMode) {
+      try {
+        const estimateContext = await this.getBlockEstimateContext();
+        const currentHeight = Number.isFinite(Number(estimateContext?.currentHeight)) ? Number(estimateContext.currentHeight) : null;
+        const currentTs = Number.isFinite(Number(estimateContext?.currentTs)) ? Number(estimateContext.currentTs) : Date.now();
+        this._latestStoryBlockHeight = currentHeight;
+        switchWorldlineBlockContext = {
+          currentHeight,
+          currentTs,
+        };
+      } catch (error) {
+        console.warn('Failed to prepare switch worldline block context', error);
+      }
+      displayMessages = currentStoryMessages
+        .filter(message => !(String(message?.sender || '').trim().toLowerCase() === 'user' && message?._choiceMeta?.syntheticFallback === true))
+        .map(message => this.formatSwitchWorldlineUserMessage(message, switchWorldlineBlockContext));
+    }
+
+    const historyBlocks = this.buildViewHistoryReaderBlocks(displayMessages, {
+      prefixSwitchWorldlineUserBlocks: isSwitchWorldlineMode,
+    });
+    const historyPages = this.buildHistoryPages(historyBlocks);
+    const latestPageIndex = Math.max(0, historyPages.length - 1);
+    const initialPageIndex = Math.max(0, latestPageIndex - Math.max(0, Number(pageOffsetFromLatest) || 0));
+    const firstPage = historyPages[initialPageIndex] || [];
+    const visibleCount = Math.min(firstPage.length || PAGE_SIZE, PAGE_SIZE);
+    await new Promise(resolve =>
+      this.setState(
+        {
+          visibleCount,
+          inputValue: '',
+          isViewHistoryMode: true,
+          historyViewMode: viewMode,
+          isSwitchWorldlineMode,
+          isHistorySpeaking: false,
+          historyPageIndex: initialPageIndex,
+          historyPages,
+          historyReaderBlocks: historyBlocks,
+          historyRawMessages: displayMessages,
+          switchWorldlineBlockContext,
+        },
+        resolve,
+      ),
+    );
+    this.forceScrollToBottomOnce = true;
+    requestAnimationFrame(() => this.scrollToBottomOffset(false));
+  };
+
+  listDateKeysForScope = async scope => {
+    try {
+      const normalizedScope = scope === 'story' ? 'story' : this.chatScope;
+      const baseDir = normalizedScope === 'story'
+        ? `${this.getStoryChatDir()}/raw`
+        : this.agentChatDir;
+      const exists = await RNFS.exists(baseDir);
+      if (!exists) return [];
+      const entries = await RNFS.readDir(baseDir);
+      return entries
+        .filter(entry => entry.isFile())
+        .map(entry => entry.name)
+        .filter(name => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
+        .map(name => name.replace('.json', ''))
+        .sort()
+        .reverse();
+    } catch {
+      return [];
+    }
+  };
+
+  readDayMessagesForScope = async (dateKey, scope) => {
+    try {
+      const normalizedScope = scope === 'story' ? 'story' : this.chatScope;
+      if (normalizedScope === 'story') {
+        const storyChatDir = this.getStoryChatDir();
+        const messages = await readStoryEntriesByDay(storyChatDir, dateKey, 'raw');
+        return this.sanitizeMessagesForList(messages, dateKey);
+      }
+      return this.readDayMessages(dateKey);
+    } catch {
+      return [];
+    }
+  };
+
+  readHistoryForScope = async scope => {
+    const normalizedScope = scope === 'story' ? 'story' : this.chatScope;
+    const keys = await this.listDateKeysForScope(normalizedScope);
+    const targetKeyField = normalizedScope === this.chatScope ? 'allDateKeys' : '_storyHistoryDateKeys';
+    this[targetKeyField] = keys;
+    if (keys.length === 0) {
+      if (normalizedScope === this.chatScope) {
+        this.loadedDateKeys = [];
+      }
+      return [];
+    }
+    const todayKey = getLocalDateKey();
+    const pickedKeys = keys.includes(todayKey) ? [todayKey] : [keys[0]];
+    const dayBuckets = await Promise.all(pickedKeys.map(dateKey => this.readDayMessagesForScope(dateKey, normalizedScope)));
+    const mergedMessages = dayBuckets
+      .slice()
+      .reverse()
+      .reduce((acc, items) => acc.concat(Array.isArray(items) ? items : []), []);
+    if (normalizedScope === this.chatScope) {
+      this.loadedDateKeys = pickedKeys;
+    }
+    return normalizedScope === 'role' ? this.sanitizeRoleHistoryMessages(mergedMessages) : mergedMessages;
+  };
+
+  buildRoleTalkMenuMessage = () => {
+    const autoBadge = this.state.isAutoVoiceSpeak ? `🟩 ${this.getRoleUiText('toggleOn')}` : `🟥 ${this.getRoleUiText('toggleOff')}`;
+    const liveBadge = this.state.isContinuousTalkEnabled ? `🟩 ${this.getRoleUiText('toggleOn')}` : `🟥 ${this.getRoleUiText('toggleOff')}`;
+    const autoLabel = `${this.getRoleUiText('autoVoice')}  ${autoBadge}`;
+    const liveLabel = `${this.getRoleUiText('liveVoice')}  ${liveBadge}`;
+    return [
+      this.getRoleUiText('voiceMenu'),
+      '',
+      `[[/role voice ${this.state.isAutoVoiceSpeak ? 'off' : 'on'}|${autoLabel}]]`,
+      '',
+      `[[/role talk ${this.state.isContinuousTalkEnabled ? 'off' : 'on'}|${liveLabel}]]`,
+      '',
+      `[[/role talk status|${this.getRoleUiText('voiceStatus')}]]`,
+      '',
+      `[[/role menu|${this.getRoleUiText('back')}]]`,
+    ].join('\n');
   };
 
   appendRoleCommandMessage = text => {
+    this.forceScrollToBottomOnce = true;
+    this.shouldScrollToEnd = true;
     if (typeof this.appendStoryCommandMessage === 'function') {
       this.appendStoryCommandMessage(text);
+      if (this.chatScope === 'role') {
+        this.scheduleBottomFollow();
+      }
     } else {
       this.replyFromAgent(text);
     }
@@ -4033,13 +9347,66 @@ ROLE=<role name>
       return false;
     }
 
-    if (showUI) this.appendRoleCommandMessage(this.buildRoleLangStatusMessage());
     return true;
+  };
+
+  runRoleLangCheck = async (options = {}) => {
+    const { showSuccess = true } = options || {};
+    const ok = await this.ensureRoleLangReady(false);
+    const code = this.getRoleLangCode() || '';
+    const langLabel = getStoryLangLabel(code || 'en');
+
+    if (ok && showSuccess) {
+      this.appendRoleCommandMessage(this.buildRoleLangStatusMessage());
+    }
+
+    return {
+      ok,
+      langCode: code,
+      langLabel,
+    };
   };
 
   hasConfiguredRoleLLM = () => {
     const cfg = this.state.llmConfig || this.currentLLMConfig;
     return !!String(cfg?.provider || '').trim();
+  };
+
+  getRoleModelReasonLabel = reason => this.getRoleUiText(`roleModelReason_${String(reason || '').trim()}`) || String(reason || '').trim();
+
+  runRoleModelCheck = async (options = {}) => {
+    const status = await evaluateRoleModelConfig(this);
+    if (status?.ok) {
+      if (options?.showSuccess) {
+        this.replyFromAgent(this.getRoleUiText('roleModelCheckOk'));
+      }
+      return status;
+    }
+
+    if (options?.showFailure !== false) {
+      this.replyFromAgent(this.getRoleUiText('roleModelCheckFailed', {
+        reason: this.getRoleModelReasonLabel(status?.reason),
+      }));
+    }
+    return status;
+  };
+
+  ensureRoleModelReady = async (options = {}) => {
+    const status = await this.runRoleModelCheck({ ...options, showFailure: false, showSuccess: false });
+    if (!status?.ok) {
+      await new Promise(resolve =>
+        this.setState({ pendingReturnToRoleMenu: true, pendingModelFinalConfirm: true, pendingRoleModelReturnToRole: true }, resolve),
+      );
+      await this.handleTriggers('/a list', null);
+      return status;
+    }
+
+    const normalizedConfig = status.loadedConfig || null;
+    if (normalizedConfig) {
+      this.currentLLMConfig = normalizedConfig;
+      await new Promise(resolve => this.setState({ llmConfig: normalizedConfig }, resolve));
+    }
+    return status;
   };
 
   clearRoleModelPendingState = async () => {
@@ -4062,7 +9429,7 @@ ROLE=<role name>
 
     const resolved = (await this.resolveProviderDef?.(provider)) || null;
     if (!resolved?.def) {
-      this.replyFromAgent('(provider not found)');
+      this.replyFromAgent(this.getRoleUiText('providerNotFound'));
       return false;
     }
 
@@ -4072,7 +9439,7 @@ ROLE=<role name>
 
     const baseUrl = String(registryEntry?.baseUrl || resolved.def.baseUrl || '').trim().replace(/\/$/, '');
     if (!baseUrl) {
-      this.replyFromAgent('(missing baseUrl)');
+      this.replyFromAgent(this.getRoleUiText('missingBaseUrl'));
       return false;
     }
 
@@ -4095,6 +9462,43 @@ ROLE=<role name>
     return true;
   };
 
+  getModelApiUsageLinks = () => [
+    ['gpt', 'GPT', 'https://platform.openai.com/api-keys'],
+    ['grok', 'Grok', 'https://console.x.ai/'],
+    ['claude', 'Claude', 'https://console.anthropic.com/settings/keys'],
+    ['gemini', 'Gemini', 'https://aistudio.google.com/apikey'],
+    ['deepseek', 'DeepSeek', 'https://platform.deepseek.com/api_keys'],
+    ['kimi', 'Kimi', 'https://platform.moonshot.cn/console/api-keys'],
+    ['qwen', 'Qwen', 'https://dashscope.console.aliyun.com/apiKey'],
+  ];
+
+  openModelApiUsageUrl = async provider => {
+    const key = String(provider || '').trim().toLowerCase();
+    const hit = this.getModelApiUsageLinks().find(([name]) => name === key);
+    if (!hit?.[2]) return false;
+    await Linking.openURL(hit[2]);
+    return true;
+  };
+
+  buildModelApiUsageMessage = () => [
+    this.getRoleUiText('apiUsageTitle') || 'API help:',
+    '',
+    this.getRoleUiText('apiUsageBody') || 'If you do not know how to get an API key, ask any large model directly, or check the official provider website.',
+    '',
+    this.getRoleUiText('apiUsageOfficialLinks') || 'Official websites:',
+    '',
+    this.getModelApiUsageLinks().slice(0, 4).map(([key, label]) => `[[/rolemodel apiurl ${key}|${label}]]`).join('  '),
+    '',
+    this.getModelApiUsageLinks().slice(4).map(([key, label]) => `[[/rolemodel apiurl ${key}|${label}]]`).join('  '),
+    '',
+    `[[/rolemodel|${this.getRoleUiText('back') || 'Back'}]]`,
+  ].join('\n');
+
+  buildModelApiUsageButtonLine = command => {
+    const label = this.getRoleUiText('apiUsageButton') || this.getRoleUiText('apiUsageTitle') || 'Instructions';
+    return `[[${command || '/rolemodel apiusage'}|${label}]]`;
+  };
+
   buildRoleModelMenuMessage = async () => {
     const builtin = (await this.readBuiltinRegistry?.()) || {};
     const custom = (await this.readCustomRegistry?.()) || {};
@@ -4102,36 +9506,39 @@ ROLE=<role name>
     const activeProvider = String(this.state.llmConfig?.provider || this.currentLLMConfig?.provider || '')
       .trim()
       .toLowerCase();
-    const builtinProviders = ['gpt', 'grok', 'gemini', 'deepseek', 'kimi', 'qwen', 'local'];
+    const builtinProviders = ['gpt', 'grok', 'claude', 'gemini', 'deepseek', 'kimi', 'qwen'];
+    const statusDot = (name, hasKey) => (activeProvider === name ? '🟩' : hasKey ? '🟩' : '🟥');
+    const activeSuffix = name => (activeProvider === String(name || '').trim().toLowerCase() ? ' ●' : '');
 
-    const lines = ['Role model setup:', ''];
+    const useLabel = this.getRoleUiText('useModel') || 'use';
 
-    builtinProviders.forEach(name => {
-      const hasKey = !!String(builtin?.[name]?.apiKey || '').trim();
-      const marker = activeProvider === name ? '●' : hasKey ? '✓' : '○';
-      lines.push(`[[/rolemodel builtin ${name}|${marker} ${name}]]`);
+    const builtinLines = builtinProviders.map(name => {
+      const hasCurrentKey = activeProvider === name && !!String(this.state.llmConfig?.apiKey || this.currentLLMConfig?.apiKey || '').trim();
+      const hasKey = !!String(builtin?.[name]?.apiKey || '').trim() || hasCurrentKey;
+      return `${statusDot(name, hasKey)} [[/rolemodel builtin ${name}|${useLabel}]] ${name}${activeSuffix(name)}`;
     });
 
-    lines.push('');
-    lines.push('Custom models:');
+    const customNames = Object.keys(custom || {}).filter(name => custom?.[name]?.baseUrl);
+    const customLines = customNames.map(name => {
+      const label = String(custom?.[name]?.label || name).trim() || name;
+      return `🟩 [[/rolemodel custom ${name}|${useLabel}]] ${label}${activeSuffix(name)}`;
+    });
 
-    const customNames = Object.keys(custom || {});
-    if (!customNames.length) {
-      lines.push('(empty)');
-    } else {
-      customNames.forEach(name => {
-        const label = String(custom?.[name]?.label || name).trim() || name;
-        const hasKey = !!String(custom?.[name]?.apiKey || '').trim();
-        const marker = activeProvider === name ? '●' : hasKey ? '✓' : '○';
-        lines.push(`[[/rolemodel custom ${name}|${marker} ${label}]]`);
-      });
-    }
-
-    lines.push('');
-    lines.push('[[/rolemodel custom|Add custom model]]');
-    lines.push('[[/rolemodel remove|Remove key]]');
-    lines.push('');
-    lines.push('[[/role|Back]]');
+    const addModelLabel = this.getRoleUiText('addModel') || 'Add model';
+    const removeMenuLabel = this.getRoleUiText('removeModel') || 'Remove key';
+    const lines = [
+      ...builtinLines.flatMap(line => [line, '']),
+      ...customLines.flatMap(line => [line, '']),
+      `[[/rolemodel check|${this.getRoleUiText('roleModelCheckEntry')}]]`,
+      '',
+      `[[/rolemodel custom|${addModelLabel}]]`,
+      '',
+      this.buildModelApiUsageButtonLine('/rolemodel apiusage'),
+      '',
+      `[[/rolemodel remove|${removeMenuLabel}]]`,
+      '',
+      `[[/role|${this.getRoleUiText('backToRole')}]]`,
+    ];
 
     return lines.join('\n');
   };
@@ -4140,31 +9547,59 @@ ROLE=<role name>
     const builtin = (await this.readBuiltinRegistry?.()) || {};
     const custom = (await this.readCustomRegistry?.()) || {};
 
-    const builtinProviders = ['gpt', 'grok', 'gemini', 'deepseek', 'kimi', 'qwen', 'local'];
-    const lines = ['Remove key / custom model:', ''];
+    const builtinProviders = ['gpt', 'grok', 'claude', 'gemini', 'deepseek', 'kimi', 'qwen'];
+    const removeLabel = this.getRoleUiText('removeModel') || 'remove';
+    const lines = [this.getRoleUiText('removeKeyCustomModel'), ''];
 
     let hasAny = false;
 
     builtinProviders.forEach(name => {
       if (builtin?.[name]?.apiKey) {
         hasAny = true;
-        lines.push(`[[/rolemodel remove builtin ${name}|${name}]]`);
+        lines.push(`🟩 [[/rolemodel remove builtin ${name}|${removeLabel}]] ${name}`);
+        lines.push('');
       }
     });
 
-    const customNames = Object.keys(custom || {});
+    const customNames = Object.keys(custom || {}).filter(name => custom?.[name]?.baseUrl);
     customNames.forEach(name => {
       hasAny = true;
       const label = String(custom?.[name]?.label || name).trim() || name;
-      lines.push(`[[/rolemodel remove custom ${name}|${label}]]`);
+      lines.push(`🟩 [[/rolemodel remove custom ${name}|${removeLabel}]] ${label}`);
+      lines.push('');
     });
 
     if (!hasAny) {
-      lines.push('(empty)');
+      lines.push(this.getRoleUiText('empty'));
+      lines.push('');
     }
 
+    lines.push(`[[/rolemodel|${this.getRoleUiText('back')}]]`);
+
+    return lines.join('\n');
+  };
+
+  buildRoleModelCustomMenuMessage = async () => {
+    const custom = (await this.readCustomRegistry?.()) || {};
+    const customNames = Object.keys(custom || {}).filter(name => custom?.[name]?.baseUrl);
+    const lines = [this.getRoleUiText('addModel'), ''];
+
+    if (!customNames.length) {
+      lines.push(this.getRoleUiText('empty'));
+      lines.push('');
+    } else {
+      customNames.forEach(name => {
+        const label = String(custom?.[name]?.label || name).trim() || name;
+        lines.push(`🟩 [[/rolemodel custom ${name}|${this.getRoleUiText('useModel') || 'use'}]] ${label}`);
+        lines.push('');
+      });
+    }
+
+    lines.push(`🟩 [[/rolemodel custom new|${this.getRoleUiText('addModel') || 'Add model'}]]`);
     lines.push('');
-    lines.push('[[/rolemodel|Back]]');
+    lines.push(`🟩 [[/rolemodel remove|${this.getRoleUiText('removeModel') || 'Remove key'}]]`);
+    lines.push('');
+    lines.push(`[[/rolemodel|${this.getRoleUiText('back')}]]`);
 
     return lines.join('\n');
   };
@@ -4176,49 +9611,30 @@ ROLE=<role name>
   };
 
   handleRoleNewMenu = async () => {
+    this.forceScrollToBottomOnce = true;
+    this.shouldScrollToEnd = true;
     if (!this.getRoleLangCode()) {
-      await this.handleTriggers('/role', null);
+      await this.handleTriggers('/role lang list', null);
       return;
     }
 
-    const first = await this.loadLocalRoleCardsPage(0);
-    await new Promise(resolve => this.setState({ roleCardOffset: 0, roleCardPage: first.items }, resolve));
-    this.replyFromAgent(this.buildLocalRoleCardsMessage(first.items, 0, first.hasMore));
-
-    const lines = [
-      'Role setup:',
-      '',
-      `[[/r call|New role]]`,
-      '',
-      `[[/rolelang|${this.getRoleMenuText('changeLanguage')}]]`,
-      '',
-      `[[/rolemodel|${this.getRoleMenuText('changeModel')}]]`,
-    ];
-    this.replyFromAgent(lines.join('\n'));
+    await this.handleTriggers('/role cards start', null);
+    await this.handleTriggers('/role menu', null);
   };
 
   loadLocalRoleCardsPage = async (offset = 0) => {
     try {
-      const exists = await RNFS.exists(this.roleFilesDir);
-      if (!exists) return { items: [], hasMore: false };
-
-      const entries = await RNFS.readDir(this.roleFilesDir);
-      const files = entries.filter(e => e.isFile() && e.name.endsWith('.json'));
-
-      const all = [];
-      for (const f of files) {
-        try {
-          const raw = await RNFS.readFile(f.path, 'utf8');
-          const j = JSON.parse(raw);
-          if (j && j.roleSlug) {
-            all.push({
-              roleName: j.roleName || j.roleSlug,
-              roleSlug: j.roleSlug,
-              updatedAt: Number(j.updatedAt || j.createdAt || 0),
-            });
-          }
-        } catch {}
-      }
+      const dirOk = await this.ensureRoleFilesDir();
+      if (!dirOk) return { items: [], hasMore: false };
+      const indexItems = await this.getReconciledRoleIndex();
+      const all = (Array.isArray(indexItems) ? indexItems : [])
+        .filter(item => item && item.roleSlug)
+        .map(item => ({
+          roleName: item.roleName || item.roleSlug,
+          roleSlug: item.roleSlug,
+          updatedAt: Number(item.lastSummonedAt || item.updatedAt || 0),
+          isOnChain: !!item.isOnChain,
+        }));
 
       all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
       return {
@@ -4227,22 +9643,20 @@ ROLE=<role name>
       };
     } catch (e) {
       console.warn('loadLocalRoleCardsPage failed', e);
+      this.replyFromAgent(`Role card index failed:\n${String(e?.message || e || 'unknown error')}`);
       return { items: [], hasMore: false };
     }
   };
 
   buildLocalRoleCardsMessage = (cards, _offset, hasMore = false) => {
     const lines = [];
-    lines.push('Cards:');
-    lines.push('');
 
     if (!cards.length) {
-      lines.push('(empty)');
-      return lines.join('\n');
+      return this.getRoleUiText('noRoleCards');
     }
 
     cards.forEach(c => {
-      lines.push(`[[/r select ${c.roleName}|${c.roleName}]]`);
+      lines.push(`[[/role summon ${c.roleName}|${c.roleName}]]`);
       lines.push('');
     });
 
@@ -4264,6 +9678,11 @@ ROLE=<role name>
     }
 
     const normalizedArg = normalizeStoryLangCode(args);
+    if (normalizedArg === 'other' || normalizedArg === 'more') {
+      this.appendStoryCommandMessage(this.getSupportedStoryLangListMessage(this.getMoreStoryLangItems()));
+      return true;
+    }
+
     const isSupported = STORY_SUPPORTED_LANGS.some(item => item.code === normalizedArg);
     if (!isSupported) {
       showStatus(this.getStoryMenuText('unsupportedLang', { code: args }), 2000);
@@ -4319,10 +9738,26 @@ ROLE=<role name>
     if (normalized === 'new') {
       return 'new';
     }
+    if (normalized === 'offline') {
+      return 'offline';
+    }
+    if (normalized === 'story') {
+      return 'story';
+    }
     return 'menu';
   };
 
   buildDestinyModeMenuMessage = () => {
+    if (!this.isStoryScope) {
+      return [
+        this.getStoryMenuText('destinyTitle'),
+        '',
+        '[[/d offline|Offline copy version]]',
+        '',
+        '[[/d story|Open Story window]]',
+      ].join('\n');
+    }
+
     return [
       this.getStoryMenuText('destinyTitle'),
       '',
@@ -4403,9 +9838,39 @@ ROLE=<role name>
   handleDestinyCommand = async modeArg => {
     const mode = this.getDestinyModeFromArg(modeArg);
     if (!this.isStoryScope) {
-      const height = await this.replyWithCurrentBlock({ silent: true });
-      this._latestStoryBlockHeight = height;
-      await this.startDestinyRun({ memoryMode: mode === 'continue' ? 'continue' : 'new', condensedMemory: '' });
+      if (mode === 'offline') {
+        const seedPrompt = buildOfflineDestinySeedPrompt(this.agentId);
+        const preview = [
+          'Offline copy version',
+          '',
+          'This is a copyable prompt for GPT and other large models.',
+          'Use the copy link below, then paste the full card into the external model to run it.',
+        ].join('\n');
+        this.replyFromAgentSeedCard(preview, seedPrompt);
+        return;
+      }
+      if (mode === 'story') {
+        await this.persistLastSpaceShortcut('story');
+        const params = this.props.navigation?.state?.params || {};
+        this.props.navigation?.push?.('AgentStory', {
+          namespaceId: params.namespaceId,
+          shortCode: params.shortCode,
+          displayName: params.displayName,
+          walletId: params.walletId,
+          txid: params.txid,
+          rootAddress: params.rootAddress,
+          price: params.price,
+          desc: params.desc,
+          addr: params.addr,
+          profile: params.profile,
+          suppressAutoLinkStart: true,
+          autoCommand: '/d new',
+          autoCommandSource: 'link-story',
+          startStoryOnMount: true,
+        });
+        return;
+      }
+      this.replyFromAgent(this.buildDestinyModeMenuMessage());
       return;
     }
 
@@ -4441,16 +9906,45 @@ ROLE=<role name>
   };
 
   startDestinyRun = async options => {
-    const cached = await this.readStoryBlockCache();
-    const latestHeight = this._latestStoryBlockHeight || cached?.height || null;
+    this.replyFromAgent(this.getRoleUiText('storyModeDisabled'));
+  };
 
-    await Destiny.handleDestinyCommand(this, {
-      buildDestinySeedPrompt: agentId => buildDestinySeedPrompt(agentId, latestHeight),
-      loc,
-      storyLangCode: this.getStoryLangCode(),
-      memoryMode: options?.memoryMode || 'new',
-      condensedMemory: String(options?.condensedMemory || ''),
-    });
+
+  handleReopenCurrentWindow = async () => {
+    if (this.chatScope === 'role') {
+      const active = await this.getActiveRoleData();
+      if (active?.roleName) {
+        await this.handleRoleCallWithName(active.roleName, null, { isContinue: true });
+        return true;
+      }
+      const selected = await this.getCurrentSummonedRoleData();
+      if (selected?.roleName) {
+        if (!this.isPureChatMode()) {
+          await this.handleTriggers('/role menu', null);
+        }
+        await this.handleTriggers('/role chat', null);
+      } else {
+        await this.handleTriggers('/role', null);
+      }
+      return true;
+    }
+
+    if (this.isStoryScope) {
+      await this.handleTriggers('/d', null);
+      return true;
+    }
+
+    if (this.state?.pendingAISetup || this.state?.pendingAISetupStep) {
+      if (this.chatScope === 'role') {
+        await this.startRoleModelSetup();
+      } else {
+        await this.handleTriggers('/a list', null);
+      }
+      return true;
+    }
+
+    await this.handleTriggers('/role menu', null);
+    return true;
   };
 
   getStoryLanguageInstruction = () => {
@@ -4473,253 +9967,17 @@ ROLE=<role name>
     }
   };
 
-  isInteractiveCommand = commandText => {
-    if (!commandText) {
-      return false;
-    }
-    const trimmed = commandText.trim();
-    if (/^\/welcome\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/r\b/i.test(trimmed)) {
-      return true;
-    }
-    return true;
-  };
+  isInteractiveCommand = commandText => isInteractiveCommandText(commandText);
 
-  isValidCommandText = text => {
-    if (!text) {
-      return false;
-    }
-    const trimmed = text.trim();
-    if (!trimmed.startsWith('/')) {
-      return false;
-    }
-    if (/^\/h\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/linkstart\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/a\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/r\s+.+/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/r\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/welcome\s+.+/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/welcome\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/m\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/d(?:\s+(?:continue|new))?$/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/block$/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/lang(?:\s+.+)?$/i.test(trimmed)) {
-      return true;
-    }
-    return false;
-  };
+  isValidCommandText = text => isValidRoleCommandText(text);
 
-  getCommandSegments = text => {
-    if (!text) {
-      return [];
-    }
-    const segments = [];
-    const commandRegex = new RegExp(COMMAND_TOKEN_REGEX);
-    const displayRegex = new RegExp(COMMAND_DISPLAY_TOKEN_REGEX);
-    let lastIndex = 0;
+  getCommandSegments = text => parseCommandSegments(text);
 
-    while (lastIndex < text.length) {
-      commandRegex.lastIndex = lastIndex;
-      displayRegex.lastIndex = lastIndex;
-      const commandMatch = commandRegex.exec(text);
-      const displayMatch = displayRegex.exec(text);
-      let nextMatch = null;
-      let matchType = null;
+  extractStoryChoices = text => extractStoryChoicesFromText(text);
 
-      if (commandMatch && displayMatch) {
-        if (displayMatch.index <= commandMatch.index) {
-          nextMatch = displayMatch;
-          matchType = 'display';
-        } else {
-          nextMatch = commandMatch;
-          matchType = 'command';
-        }
-      } else if (displayMatch) {
-        nextMatch = displayMatch;
-        matchType = 'display';
-      } else if (commandMatch) {
-        nextMatch = commandMatch;
-        matchType = 'command';
-      }
+  parseStoryLineSegments = line => parseStoryLineSegmentsFromText(line);
 
-      if (!nextMatch) {
-        segments.push({ text: text.slice(lastIndex), isCommand: false });
-        break;
-      }
-
-      if (nextMatch.index > lastIndex) {
-        segments.push({ text: text.slice(lastIndex, nextMatch.index), isCommand: false });
-      }
-
-      if (matchType === 'display') {
-        const commandText = nextMatch[1];
-        const displayText = nextMatch[2];
-        segments.push({
-          text: displayText,
-          displayText,
-          commandText,
-          isCommand: this.isInteractiveCommand(commandText),
-        });
-        lastIndex = nextMatch.index + nextMatch[0].length;
-      } else {
-        const commandText = nextMatch[0];
-        segments.push({ text: commandText, isCommand: this.isInteractiveCommand(commandText) });
-        lastIndex = nextMatch.index + nextMatch[0].length;
-      }
-    }
-    return segments;
-  };
-
-  extractStoryChoices = text => {
-    if (!text) {
-      return [];
-    }
-
-    const lines = String(text)
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean);
-    const choices = [];
-    const seenSends = new Set();
-
-    const addChoice = (key, send, label) => {
-      const normalizedSend = String(send || '').trim();
-      if (!normalizedSend || seenSends.has(normalizedSend)) {
-        return;
-      }
-      seenSends.add(normalizedSend);
-      choices.push({ key: String(key || normalizedSend), send: normalizedSend, label: String(label || normalizedSend) });
-    };
-
-    lines.forEach(rawLine => {
-      const line = stripMarkdownWrap(rawLine);
-      const prefixMatch = line.match(STORY_CHOICE_PREFIX_RE);
-      if (prefixMatch) {
-        const marker = (prefixMatch[1] || prefixMatch[2] || prefixMatch[3] || prefixMatch[4] || prefixMatch[5] || '').trim();
-        const content = (prefixMatch[6] || '').trim();
-        if (marker && content.length >= 2) {
-          const send = /^\d+$/.test(marker) ? marker : marker.toUpperCase();
-          addChoice(send, send, line);
-        }
-        return;
-      }
-
-      const ynMatch = line.match(/^\s*(yes|no|y|n)\s*(?:[\/|]\s*(yes|no|y|n))?\s*$/i);
-      if (!ynMatch) {
-        return;
-      }
-
-      const first = ynMatch[1];
-      const second = ynMatch[2];
-      const normalizeBinary = value => {
-        if (!value) {
-          return null;
-        }
-        const lower = value.toLowerCase();
-        if (lower === 'yes' || lower === 'y') {
-          return { key: 'Y', send: 'Y', label: 'Y' };
-        }
-        if (lower === 'no' || lower === 'n') {
-          return { key: 'N', send: 'N', label: 'N' };
-        }
-        return null;
-      };
-
-      const normalizedFirst = normalizeBinary(first);
-      const normalizedSecond = normalizeBinary(second);
-      if (normalizedFirst) {
-        addChoice(normalizedFirst.key, normalizedFirst.send, normalizedFirst.label);
-      }
-      if (normalizedSecond) {
-        addChoice(normalizedSecond.key, normalizedSecond.send, normalizedSecond.label);
-      }
-    });
-
-    return choices;
-  };
-
-  parseStoryLineSegments = line => {
-    const text = String(line || '');
-    if (!text) {
-      return [];
-    }
-
-    const chunks = text.split(/(\s*[\/|]\s*)/);
-    const segments = [];
-
-    chunks.forEach(chunk => {
-      if (!chunk) {
-        return;
-      }
-      const trimmed = stripMarkdownWrap(chunk);
-      const isDivider = /^\s*[\/|]\s*$/.test(chunk);
-      if (!trimmed || isDivider) {
-        segments.push({ type: 'text', text: chunk });
-        return;
-      }
-
-      const prefixMatch = trimmed.match(STORY_CHOICE_PREFIX_RE);
-      if (prefixMatch) {
-        const marker = (prefixMatch[1] || prefixMatch[2] || prefixMatch[3] || prefixMatch[4] || prefixMatch[5] || '').trim();
-        const content = (prefixMatch[6] || '').trim();
-        if (marker && content.length >= 1) {
-          const send = /^\d+$/.test(marker) ? marker : marker.toUpperCase();
-          segments.push({ type: 'choice', raw: chunk, send, display: content });
-          return;
-        }
-      }
-
-      const ynMatch = trimmed.match(/^(yes|no|y|n)\s*$/i);
-      if (ynMatch) {
-        const value = ynMatch[1].toLowerCase();
-        const send = value === 'yes' || value === 'y' ? 'Y' : 'N';
-        segments.push({ type: 'choice', raw: chunk, send, display: trimmed });
-        return;
-      }
-
-      segments.push({ type: 'text', text: chunk });
-    });
-
-    return segments;
-  };
-
-  buildStoryInlineLines = text => {
-    const raw = String(text || '');
-    if (!raw) {
-      return [];
-    }
-
-    return raw.split(/\r?\n/).map(lineRaw => {
-      const segments = this.parseStoryLineSegments(lineRaw);
-      return {
-        type: 'line',
-        segments: segments.length > 0 ? segments : [{ type: 'text', text: lineRaw }],
-        rawLine: lineRaw,
-      };
-    });
-  };
+  buildStoryInlineLines = text => buildStoryInlineLinesFromText(text);
 
   handleCommandPress = commandText => {
     const cmd = String(commandText || '').trim();
@@ -4746,7 +10004,7 @@ ROLE=<role name>
       return;
     }
     Clipboard.setString(messageText);
-    showStatus('Copied to clipboard', 2000);
+    showStatus(this.getRoleUiText('copiedToClipboard'), 2000);
     if (Platform.OS === 'ios') {
       ActionSheet.showActionSheetWithOptions(
         {
@@ -4809,11 +10067,14 @@ ROLE=<role name>
   };
 
   loadMoreHistory = async () => {
+    if (this.state.isViewHistoryMode) {
+      return;
+    }
     if (this.isStoryScope || this.loadingMore) {
       return;
     }
 
-    // 清屏后的第一次上翻：先加载最新日期文件
+    // First scroll-up after clearing: load the latest dated file first
     if (this.state.allMessages.length === 0 && this.loadedDateKeys.length === 0) {
       const keys = this.allDateKeys?.length ? this.allDateKeys : await this.listDateKeys();
       this.allDateKeys = keys;
@@ -4823,7 +10084,8 @@ ROLE=<role name>
 
       this.loadingMore = true;
       const latestKey = keys[0];
-      const msgs = await this.readDayMessages(latestKey);
+      const rawMsgs = await this.readDayMessages(latestKey);
+      const msgs = this.state.isViewHistoryMode ? this.filterViewHistoryRecords(rawMsgs) : rawMsgs;
       const initialCount = Math.min(msgs.length, PAGE_SIZE);
 
       this.setState(
@@ -4866,8 +10128,23 @@ ROLE=<role name>
     }
 
     this.loadingMore = true;
-    const nextKey = this.allDateKeys[nextIndex];
-    const olderMessages = await this.readDayMessages(nextKey);
+    let nextKey = null;
+    let olderMessages = [];
+    let resolvedIndex = nextIndex;
+    while (resolvedIndex >= 0 && resolvedIndex < this.allDateKeys.length) {
+      nextKey = this.allDateKeys[resolvedIndex];
+      const rawOlderMessages = await this.readDayMessages(nextKey);
+      olderMessages = this.state.isViewHistoryMode ? this.filterViewHistoryRecords(rawOlderMessages) : rawOlderMessages;
+      if (olderMessages.length > 0) {
+        break;
+      }
+      this.loadedDateKeys.push(nextKey);
+      resolvedIndex += 1;
+    }
+    if (!nextKey || resolvedIndex < 0 || resolvedIndex >= this.allDateKeys.length || olderMessages.length === 0) {
+      this.loadingMore = false;
+      return;
+    }
     this.setState(
       prevState => {
         const mergedMessages = [...olderMessages, ...prevState.allMessages];
@@ -4887,7 +10164,7 @@ ROLE=<role name>
 
   handleScroll = event => {
     const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
-    if (contentOffset?.y <= 20) {
+    if (!this.state.isViewHistoryMode && contentOffset?.y <= 20) {
       this.loadMoreHistory();
     }
     const paddingToBottom = 80;
@@ -4897,19 +10174,69 @@ ROLE=<role name>
     this.isNearBottom = layoutHeight + offsetY >= contentHeight - paddingToBottom;
   };
 
+  clearPendingBottomScrolls = () => {
+    if (!Array.isArray(this.pendingScrollBottomTimeouts) || !this.pendingScrollBottomTimeouts.length) {
+      return;
+    }
+    this.pendingScrollBottomTimeouts.forEach(timer => clearTimeout(timer));
+    this.pendingScrollBottomTimeouts = [];
+  };
+
+  scheduleBottomFollow = () => {
+    this.clearPendingBottomScrolls();
+    if (!this._isMounted) {
+      return;
+    }
+
+    const run = animated => {
+      if (!this._isMounted) return;
+      this.forceScrollToBottomOnce = true;
+      this.scrollToBottomOffset(animated);
+    };
+
+    requestAnimationFrame(() => run(false));
+    requestAnimationFrame(() => requestAnimationFrame(() => run(false)));
+
+    [40, 120, 260].forEach(delay => {
+      const timer = setTimeout(() => run(false), delay);
+      this.pendingScrollBottomTimeouts.push(timer);
+    });
+  };
+
   scrollToBottomOffset = (animated = true) => {
     if (!this.listRef) {
       return;
     }
+
+    if (this.chatScope === 'role' && typeof this.listRef.scrollToEnd === 'function') {
+      try {
+        this.listRef.scrollToEnd({ animated });
+        requestAnimationFrame(() => {
+          try {
+            this.listRef?.scrollToEnd?.({ animated: false });
+          } catch {}
+        });
+        return;
+      } catch {}
+    }
+
     const offset = Math.max(0, (this.lastContentHeight || 0) + 200);
     this.listRef.scrollToOffset({ offset, animated });
   };
 
   handleContentSizeChange = (width, height) => {
+    const prevHeight = this.lastContentHeight || 0;
     this.lastContentHeight = height || 0;
+    const heightChanged = Math.abs(this.lastContentHeight - prevHeight) > 2;
+    if (this.state.isViewHistoryMode && this._historyPageChanging) {
+      this.forceScrollToBottomOnce = false;
+      this.shouldScrollToEnd = false;
+      this.scrollHistoryReaderToTop(false);
+      return;
+    }
     const shouldFollow = this.forceScrollToBottomOnce || (this.shouldScrollToEnd && this.isNearBottom);
-    if (shouldFollow && this.lastContentHeight > 0) {
-      requestAnimationFrame(() => this.scrollToBottomOffset(true));
+    if (shouldFollow && this.lastContentHeight > 0 && heightChanged) {
+      this.scheduleBottomFollow();
     }
     this.forceScrollToBottomOnce = false;
     this.shouldScrollToEnd = false;
@@ -4958,26 +10285,79 @@ ROLE=<role name>
     return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${time}`;
   };
 
-  getUserAvatar = () => {
-    const { namespaceList } = this.props;
-    const firstId = namespaceList?.order?.[0];
-    const namespace = firstId ? namespaceList?.namespaces?.[firstId] : null;
-    if (!namespace) {
-      return null;
+  loadUserAvatar = async () => {
+    try {
+      const userAvatarUri = await getUserAvatarUri();
+      if (this._isMounted) {
+        this.setState({ userAvatarUri });
+      }
+    } catch (error) {
+      console.warn('Failed to load user avatar for agentrole', error);
     }
-    const avatarUri = buildHeadAssetUri(namespace.shortCode);
-    if (avatarUri) {
-      return { type: 'image', uri: avatarUri };
-    }
-    const displayName = namespace.displayName || ' ';
-    return {
-      type: 'fallback',
-      initials: getInitials(displayName),
-      color: stringToColor(displayName),
-    };
   };
 
-  renderAvatar = sender => {
+  getUserAvatar = () => {
+    if (this.state?.userAvatarUri) {
+      return { type: 'image', uri: this.state.userAvatarUri };
+    }
+    return null;
+  };
+
+  handleUserAvatarPress = () => {
+    const { navigation } = this.props;
+    if (!navigation || typeof navigation.navigate !== 'function') {
+      return;
+    }
+    navigation.navigate('UserAvatarSettings', { agentId: this.agentId });
+  };
+
+  isSystemCallMessage = text => isSystemCallMessageText(text);
+
+  getAgentLocalAvatarUri = () => {
+    const params = this.props.navigation?.state?.params || {};
+    const shortCode = params.shortCode;
+    if (!shortCode) return null;
+    return this.state.agentLocalAvatarUri || null;
+  }
+
+  loadAgentLocalAvatar = async () => {
+    try {
+      const params = this.props.navigation?.state?.params || {};
+      const shortCode = params.shortCode;
+      if (!shortCode) {
+        if (this._isMounted) this.setState({ agentLocalAvatarUri: null });
+        return;
+      }
+      const path = getNamespaceAvatarPath(shortCode);
+      const exists = await RNFS.exists(path);
+      if (this._isMounted) {
+        this.setState({ agentLocalAvatarUri: exists ? `file://${path}` : null });
+      }
+    } catch (error) {
+      console.warn('Failed to load agent local avatar', error);
+    }
+  }
+
+  shouldUseSatoshiPreLLMAvatar = (item = null, visibleIndex = -1) => {
+    const allMessages = Array.isArray(this.state?.allMessages) ? this.state.allMessages : [];
+    if (allMessages.length === 0) {
+      return true;
+    }
+    const firstCompletedLLMIndex = allMessages.findIndex(message =>
+      (message?.sender === 'agent' || message?.role === 'assistant') && message?.requestId && !message?.pending,
+    );
+    if (firstCompletedLLMIndex < 0) {
+      return true;
+    }
+    const itemId = item?.id ? String(item.id) : '';
+    const allIndex = itemId ? allMessages.findIndex(message => String(message?.id || '') === itemId) : -1;
+    if (allIndex >= 0) {
+      return allIndex < firstCompletedLLMIndex;
+    }
+    return visibleIndex >= 0 ? visibleIndex < firstCompletedLLMIndex : false;
+  };
+
+  renderAvatar = (sender, item = null, visibleIndex = -1) => {
     const isUser = sender === 'user';
     if (isUser) {
       const userAvatar = this.getUserAvatar();
@@ -5008,8 +10388,11 @@ ROLE=<role name>
     }
 
     const { shortCode } = this.props.navigation.state.params || {};
-    const avatarUri = buildHeadAssetUri(shortCode);
-    const source = avatarUri ? { uri: avatarUri } : require('../../img/bluebeast.png');
+    const localAvatarUri = this.getAgentLocalAvatarUri();
+    const assetAvatarUri = buildHeadAssetUri(shortCode);
+    const source = (item?._useSatoshiAvatar || this.shouldUseSatoshiPreLLMAvatar(item, visibleIndex))
+      ? SATOSHI_PRE_LLM_AVATAR_SOURCE
+      : (localAvatarUri ? { uri: localAvatarUri } : (assetAvatarUri ? { uri: assetAvatarUri } : require('../../img/bluebeast.png')));
     return (
       <View style={[styles.avatarWrapper, styles.agentAvatarWrapper]}>
         <Image source={source} style={styles.avatarImage} resizeMode="cover" />
@@ -5017,12 +10400,18 @@ ROLE=<role name>
     );
   };
 
+  buildAccessibleMessageText = params => buildAccessibleRoleMessageText(params, key => this.getRoleUiText(key));
+
   renderMessage = ({ item, index }) => {
+    if (!item || typeof item !== 'object') {
+      return null;
+    }
     const showDigest = this.isStoryScope && this.state.storyShortMode && item?._isHistory === true;
     const isStoryDigest = this.isStoryScope && Boolean(item?.ref) && showDigest;
     const isUser = item?.sender === 'user' || item?.role === 'user';
-    const text = showDigest ? item?.digest || item?.summary || item?.text || '' : item?.text || '';
-    const hasCopyLink = Boolean(item.copyText && item.linkLabel) && !isStoryDigest;
+    const text = ensureRenderableText(showDigest ? item?.digest || item?.summary || item?.text || '' : item?.text || '', 'item.text');
+    const hasCopyLink = Boolean(item?.copyText && item?.linkLabel) && !isStoryDigest;
+    const hasInlineCopyLink = hasCopyLink && /\[\[\/role\s+(?:openstoryclone|openmemoryclone)\b/i.test(text);
     const forceCommandRender = item?._renderMode === 'commands';
     const commandSegments =
       isUser && !isStoryDigest && this.isValidCommandText(text)
@@ -5032,8 +10421,24 @@ ROLE=<role name>
     const inlineLines =
       this.isStoryScope && !forceCommandRender && !isUser && !isStoryDigest && !hasCommand ? this.buildStoryInlineLines(text) : null;
     const hasCommandTokens = commandSegments.some(segment => segment.isCommand);
+    const hasInlineChoices =
+      Array.isArray(inlineLines) &&
+      inlineLines.some(lineItem => lineItem?.type === 'choice' || lineItem?.segments?.some(segment => segment?.type === 'choice'));
+    const disableBubblePress = hasCommandTokens || hasInlineChoices;
+    const isSystemCall = !isUser && this.isSystemCallMessage(text);
     const messageTextStyle = [styles.messageText, isUser ? styles.userText : styles.agentText];
     const commandTextStyle = isUser ? styles.commandTextUser : styles.commandText;
+    const accessibleMessageLabel = this.buildAccessibleMessageText({
+      item,
+      text,
+      isUser,
+      showDigest,
+      isStoryDigest,
+      hasCopyLink,
+      stateIsHistory: this.state.isViewHistoryMode,
+      isSystemCall,
+    });
+    const shouldUseHistoryAccessibleBubble = this.state.isViewHistoryMode || disableBubblePress;
     return (
       <>
         {this.shouldShowTimestamp(index) && (
@@ -5045,87 +10450,181 @@ ROLE=<role name>
           {!isUser && (
             <TouchableOpacity
               accessibilityLabel="Open submit form"
+              accessible={!this.state.isViewHistoryMode}
+              importantForAccessibility={this.state.isViewHistoryMode ? 'no' : 'yes'}
               activeOpacity={0.7}
               onPress={() => this.handleAvatarPress(text)}
               style={styles.avatarPressable}
             >
-              {this.renderAvatar('agent')}
+              {this.renderAvatar('agent', item, index)}
             </TouchableOpacity>
           )}
           <View style={[styles.bubbleColumn, isUser ? styles.userBubbleColumn : styles.agentBubbleColumn]}>
-            <TouchableOpacity
-              accessibilityLabel="Chat message"
-              activeOpacity={0.7}
-              onPress={
-                hasCopyLink || hasCommandTokens
-                  ? undefined
-                  : () => (isStoryDigest ? this.handleDigestPress(item) : this.handleMessagePress(showDigest ? item?.text || '' : text))
-              }
-              onLongPress={
-                hasCopyLink || hasCommandTokens || isStoryDigest
-                  ? undefined
-                  : () => this.handleMessageLongPress(showDigest ? item?.text || '' : text)
-              }
-              style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}
-            >
-              <Text style={messageTextStyle}>
-                {inlineLines
-                  ? inlineLines.map((lineItem, lineIndex) => (
-                      <Text key={`${item.id}-ln-${lineIndex}`}>
-                        {lineItem.segments.map((segment, segmentIndex) =>
-                          segment.type === 'choice' ? (
+            {shouldUseHistoryAccessibleBubble ? (
+              <View
+                accessible={this.state.isViewHistoryMode}
+                accessibilityRole={this.state.isViewHistoryMode ? 'text' : undefined}
+                accessibilityLabel={this.state.isViewHistoryMode ? accessibleMessageLabel : undefined}
+                importantForAccessibility={this.state.isViewHistoryMode ? 'yes' : 'auto'}
+                style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble, isSystemCall ? styles.systemCallBubble : null]}
+              >
+                <Text
+                  style={messageTextStyle}
+                  accessible={this.state.isViewHistoryMode ? false : undefined}
+                  importantForAccessibility={this.state.isViewHistoryMode ? 'no' : 'auto'}
+                >
+                  {inlineLines
+                    ? inlineLines.map((lineItem, lineIndex) => (
+                        <Text key={`${item.id}-ln-${lineIndex}`}>
+                          {lineItem.segments.map((segment, segmentIndex) =>
+                            segment.type === 'choice' ? (
+                              <Text
+                                key={`${item.id}-ln-${lineIndex}-seg-${segmentIndex}`}
+                                style={[messageTextStyle, styles.storyChoiceInline]}
+                                onPress={() => this.handleStoryChoicePress(segment.send, segment.display, { raw: segment.raw })}
+                                suppressHighlighting
+                              >
+                                {ensureRenderableText(segment.raw, 'inline.segment.raw')}
+                              </Text>
+                            ) : (
+                              <Text key={`${item.id}-ln-${lineIndex}-seg-${segmentIndex}`} style={messageTextStyle}>
+                                {ensureRenderableText(segment.text, 'inline.segment.text')}
+                              </Text>
+                            ),
+                          )}
+                          {(() => {
+                            if (lineIndex === inlineLines.length - 1) {
+                              return '';
+                            }
+                            const lineHasChoice =
+                              lineItem?.type === 'choice' || lineItem?.segments?.some(segment => segment?.type === 'choice');
+                            return lineHasChoice ? '\n\n' : '\n';
+                          })()}
+                        </Text>
+                      ))
+                    : commandSegments.length === 0
+                      ? ensureRenderableText(text, 'text.fallback')
+                      : commandSegments.map((segment, segmentIndex) =>
+                          segment.isCommand ? (
                             <Text
-                              key={`${item.id}-ln-${lineIndex}-seg-${segmentIndex}`}
-                              style={[messageTextStyle, styles.storyChoiceInline]}
-                              onPress={() => this.handleStoryChoicePress(segment.send, segment.display, { raw: segment.raw })}
-                              suppressHighlighting
+                              key={`${item.id}-command-${segmentIndex}`}
+                              style={[messageTextStyle, commandTextStyle]}
+                              onPress={() => this.handleCommandPress(ensureRenderableText(segment.commandText || segment.text, 'command.press'))}
                             >
-                              {segment.raw}
+                              {ensureRenderableText(segment.displayText || segment.text, 'command.display')}
                             </Text>
                           ) : (
-                            <Text key={`${item.id}-ln-${lineIndex}-seg-${segmentIndex}`} style={messageTextStyle}>
-                              {segment.text}
+                            <Text key={`${item.id}-text-${segmentIndex}`} style={messageTextStyle}>
+                              {ensureRenderableText(segment.text, 'command.segment.text')}
                             </Text>
                           ),
                         )}
-                        {(() => {
-                          if (lineIndex === inlineLines.length - 1) {
-                            return '';
-                          }
-                          const lineHasChoice =
-                            lineItem?.type === 'choice' || lineItem?.segments?.some(segment => segment?.type === 'choice');
-                          return lineHasChoice ? '\n\n' : '\n';
-                        })()}
-                      </Text>
-                    ))
-                  : commandSegments.length === 0
-                    ? text
-                    : commandSegments.map((segment, segmentIndex) =>
-                        segment.isCommand ? (
-                          <Text
-                            key={`${item.id}-command-${segmentIndex}`}
-                            style={[messageTextStyle, commandTextStyle]}
-                            onPress={() => this.handleCommandPress(segment.commandText || segment.text)}
-                          >
-                            {segment.displayText || segment.text}
-                          </Text>
-                        ) : (
-                          <Text key={`${item.id}-text-${segmentIndex}`} style={messageTextStyle}>
-                            {segment.text}
-                          </Text>
-                        ),
-                      )}
-              </Text>
-              {hasCopyLink && (
-                <TouchableOpacity
-                  accessibilityLabel="Copy destiny seed card"
-                  activeOpacity={0.7}
-                  onPress={() => this.handleMessagePress(item.copyText)}
-                >
-                  <Text style={[styles.messageText, styles.linkText]}>{item.linkLabel}</Text>
-                </TouchableOpacity>
-              )}
-            </TouchableOpacity>
+                  {hasInlineCopyLink ? (
+                    <Text
+                      key={`${item.id}-copy-prompt`}
+                      style={[messageTextStyle, commandTextStyle]}
+                      onPress={() => this.handleMessagePress(item.copyText)}
+                      suppressHighlighting
+                    >
+                      {`   ${item.linkLabel}`}
+                    </Text>
+                  ) : null}
+                </Text>
+                {hasCopyLink && !hasInlineCopyLink && (
+                  <TouchableOpacity
+                    accessibilityLabel="Copy destiny seed card"
+                    activeOpacity={0.7}
+                    onPress={() => this.handleMessagePress(item.copyText)}
+                  >
+                    <Text style={[styles.messageText, styles.linkText]}>{item.linkLabel}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              <TouchableOpacity
+                accessibilityLabel={accessibleMessageLabel}
+                activeOpacity={0.7}
+                onPress={
+                  hasCopyLink
+                    ? undefined
+                    : () => (isStoryDigest ? this.handleDigestPress(item) : this.handleMessagePress(showDigest ? item?.text || '' : text))
+                }
+                onLongPress={
+                  hasCopyLink || isStoryDigest
+                    ? undefined
+                    : () => this.handleMessageLongPress(showDigest ? item?.text || '' : text)
+                }
+                style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble, isSystemCall ? styles.systemCallBubble : null]}
+              >
+                <Text style={messageTextStyle}>
+                  {inlineLines
+                    ? inlineLines.map((lineItem, lineIndex) => (
+                        <Text key={`${item.id}-ln-${lineIndex}`}>
+                          {lineItem.segments.map((segment, segmentIndex) =>
+                            segment.type === 'choice' ? (
+                              <Text
+                                key={`${item.id}-ln-${lineIndex}-seg-${segmentIndex}`}
+                                style={[messageTextStyle, styles.storyChoiceInline]}
+                                onPress={() => this.handleStoryChoicePress(segment.send, segment.display, { raw: segment.raw })}
+                                suppressHighlighting
+                              >
+                                {ensureRenderableText(segment.raw, 'inline.segment.raw')}
+                              </Text>
+                            ) : (
+                              <Text key={`${item.id}-ln-${lineIndex}-seg-${segmentIndex}`} style={messageTextStyle}>
+                                {ensureRenderableText(segment.text, 'inline.segment.text')}
+                              </Text>
+                            ),
+                          )}
+                          {(() => {
+                            if (lineIndex === inlineLines.length - 1) {
+                              return '';
+                            }
+                            const lineHasChoice =
+                              lineItem?.type === 'choice' || lineItem?.segments?.some(segment => segment?.type === 'choice');
+                            return lineHasChoice ? '\n\n' : '\n';
+                          })()}
+                        </Text>
+                      ))
+                    : commandSegments.length === 0
+                      ? ensureRenderableText(text, 'text.fallback')
+                      : commandSegments.map((segment, segmentIndex) =>
+                          segment.isCommand ? (
+                            <Text
+                              key={`${item.id}-command-${segmentIndex}`}
+                              style={[messageTextStyle, commandTextStyle]}
+                              onPress={() => this.handleCommandPress(ensureRenderableText(segment.commandText || segment.text, 'command.press'))}
+                            >
+                              {ensureRenderableText(segment.displayText || segment.text, 'command.display')}
+                            </Text>
+                          ) : (
+                            <Text key={`${item.id}-text-${segmentIndex}`} style={messageTextStyle}>
+                              {ensureRenderableText(segment.text, 'command.segment.text')}
+                            </Text>
+                          ),
+                        )}
+                  {hasInlineCopyLink ? (
+                    <Text
+                      key={`${item.id}-copy-prompt`}
+                      style={[messageTextStyle, commandTextStyle]}
+                      onPress={() => this.handleMessagePress(item.copyText)}
+                      suppressHighlighting
+                    >
+                      {`   ${item.linkLabel}`}
+                    </Text>
+                  ) : null}
+                </Text>
+                {hasCopyLink && !hasInlineCopyLink && (
+                  <TouchableOpacity
+                    accessibilityLabel="Copy destiny seed card"
+                    activeOpacity={0.7}
+                    onPress={() => this.handleMessagePress(item.copyText)}
+                  >
+                    <Text style={[styles.messageText, styles.linkText]}>{item.linkLabel}</Text>
+                  </TouchableOpacity>
+                )}
+              </TouchableOpacity>
+            )}
             {isStoryDigest && item.regen === 1 && (
               <TouchableOpacity
                 accessibilityLabel="Regenerate digest"
@@ -5140,8 +10639,10 @@ ROLE=<role name>
           {isUser && (
             <TouchableOpacity
               accessibilityLabel="Open submit form"
+              accessible={!this.state.isViewHistoryMode}
+              importantForAccessibility={this.state.isViewHistoryMode ? 'no' : 'yes'}
               activeOpacity={0.7}
-              onPress={() => this.handleAvatarPress(text)}
+              onPress={this.handleUserAvatarPress}
               style={styles.avatarPressable}
             >
               {this.renderAvatar('user')}
@@ -5153,22 +10654,94 @@ ROLE=<role name>
   };
 
   render() {
+    const isSwitchWorldlineMode = this.state.isViewHistoryMode && this.state.isSwitchWorldlineMode;
+    const historyViewMode = this.state.historyViewMode || null;
+    const isStorySummaryMode = this.state.isViewHistoryMode && historyViewMode === 'story-summary';
+    const historySpeakLabel = isStorySummaryMode
+      ? (this.state.isHistorySpeaking ? this.getRoleUiText('voiceStatus') : (this.getRoleUiText('storySummarySpeak') || 'Read summary'))
+      : (this.state.isHistorySpeaking ? this.getRoleUiText('voiceStatus') : this.getRoleUiText('viewHistoryRecords'));
+    const summaryRecord = isStorySummaryMode && Array.isArray(this.state.historyRawMessages) ? this.state.historyRawMessages[0] || null : null;
+    const historyBannerTitle = isSwitchWorldlineMode
+      ? 'WARNING: WORLDLINE SWITCH'
+      : '';
+    const historyPageCount = Math.max((this.state.historyPages || []).length, 1);
+    const historyPageIndex = Math.max(0, Math.min(historyPageCount - 1, this.state.historyPageIndex || 0));
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, isSwitchWorldlineMode ? styles.warningContainer : null]}>
         <KeyboardAvoidingView
-          style={styles.container}
+          style={[styles.container, isSwitchWorldlineMode ? styles.warningContainer : null]}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
-          <View style={styles.chatContainer}>
+          <View style={[styles.chatContainer, isSwitchWorldlineMode ? styles.warningChatContainer : null]}>
+            {this.state.isViewHistoryMode && (
+              <View style={[styles.historyModeBanner, isSwitchWorldlineMode ? styles.warningHistoryModeBanner : null]}>
+                {!!historyBannerTitle && <Text style={styles.warningHistoryModeTitle}>{historyBannerTitle}</Text>}
+                <View style={styles.historySpeakActions}>
+                  {!isStorySummaryMode && (
+                    <TouchableOpacity
+                      style={[styles.historySpeakButton, isSwitchWorldlineMode ? styles.warningHistorySpeakButton : null]}
+                      onPress={this.handleSpeakViewHistory}
+                    >
+                      <Text style={[styles.historySpeakButtonText, isSwitchWorldlineMode ? styles.warningHistorySpeakButtonText : null]}>{historySpeakLabel}</Text>
+                    </TouchableOpacity>
+                  )}
+                  {isStorySummaryMode && (
+                    <>
+                      <TouchableOpacity
+                        style={[styles.historySpeakButton, isSwitchWorldlineMode ? styles.warningHistorySpeakButton : null]}
+                        onPress={() => this.handleCopyRoleStorySummaryPress(summaryRecord)}
+                      >
+                        <Text style={[styles.historySpeakButtonText, isSwitchWorldlineMode ? styles.warningHistorySpeakButtonText : null]}>{this.getRoleUiText('copyFullStorySummary') || 'Copy full text'}</Text>
+                      </TouchableOpacity>
+                      <View style={{ width: 10 }} />
+                      <TouchableOpacity
+                        style={[styles.historySpeakButton, isSwitchWorldlineMode ? styles.warningHistorySpeakButton : null]}
+                        onPress={() => this.openRoleStorySummaryRecords({ forceRefresh: true }).catch(error => Alert.alert(this.getRoleUiText('storySummaryFailed') || 'Story summary failed', String(error?.message || error || 'unknown')))}
+                      >
+                        <Text style={[styles.historySpeakButtonText, isSwitchWorldlineMode ? styles.warningHistorySpeakButtonText : null]}>{this.getRoleUiText('updateStorySummary') || 'Update summary'}</Text>
+                      </TouchableOpacity>
+                      <View style={{ width: 10 }} />
+                      <TouchableOpacity
+                        style={[
+                          styles.historySpeakButton,
+                          isSwitchWorldlineMode ? styles.warningHistorySpeakButton : null,
+                          this.state.isStorySummaryCommitPending ? { opacity: 0.45 } : null,
+                        ]}
+                        disabled={this.state.isStorySummaryCommitPending}
+                        onPress={() => this.handleCommitRoleStorySummaryPress(summaryRecord)}
+                      >
+                        <Text style={[styles.historySpeakButtonText, isSwitchWorldlineMode ? styles.warningHistorySpeakButtonText : null]}>{this.getRoleUiText('storySummaryCommit') || 'Upload block'}</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+                  {this.state.isHistorySpeaking && (
+                    <TouchableOpacity
+                      style={[styles.historySpeakStopButton, isSwitchWorldlineMode ? styles.warningHistorySpeakStopButton : null]}
+                      onPress={this.handleStopViewHistorySpeak}
+                    >
+                      <Text style={[styles.historySpeakButtonText, isSwitchWorldlineMode ? styles.warningHistorySpeakButtonText : null]}>{this.getRoleUiText('stop')}</Text>
+                    </TouchableOpacity>
+                  )}
+                  <View style={styles.historySpeakSpacer} />
+                  <TouchableOpacity
+                    style={[styles.historyBackButton, isSwitchWorldlineMode ? styles.warningHistoryBackButton : null]}
+                    onPress={this.exitViewHistoryMode}
+                  >
+                    <Text style={[styles.historySpeakButtonText, isSwitchWorldlineMode ? styles.warningHistorySpeakButtonText : null]}>{this.getRoleUiText('returnHere')}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
             <FlatList
               ref={ref => {
                 this.listRef = ref;
               }}
-              data={this.state.messages}
-              keyExtractor={item => item.id}
-              renderItem={this.renderMessage}
-              contentContainerStyle={this.state.messages.length === 0 ? styles.emptyContainer : styles.listContent}
+              data={this.state.isViewHistoryMode ? (this.state.historyPages[this.state.historyPageIndex] || []) : this.state.messages}
+              extraData={this.state.isViewHistoryMode ? this.state.historyPageIndex : this.state.messages.length}
+              keyExtractor={(item, index) => String(item?.id || `fallback-${index}`)}
+              renderItem={this.state.isViewHistoryMode ? this.renderHistoryReaderItem : this.renderMessage}
+              contentContainerStyle={(this.state.isViewHistoryMode ? (this.state.historyPages[this.state.historyPageIndex] || []) : this.state.messages).length === 0 ? styles.emptyContainer : (this.state.isViewHistoryMode ? styles.historyReaderListContent : styles.listContent)}
               ListEmptyComponent={() => (
                 <View style={styles.emptyState}>
                   <Text style={styles.emptyText}>Start a conversation with this agent.</Text>
@@ -5176,30 +10749,100 @@ ROLE=<role name>
               )}
               onContentSizeChange={this.handleContentSizeChange}
               onLayout={() => {
-                if (!this.didInitialScroll && this.state.messages.length > 0) {
+                const activeData = this.state.isViewHistoryMode ? (this.state.historyPages[this.state.historyPageIndex] || []) : this.state.messages;
+                if (!this.didInitialScroll && activeData.length > 0) {
                   this.forceScrollToBottomOnce = true;
                   this.didInitialScroll = true;
+                  requestAnimationFrame(() => this.scrollToBottomOffset(false));
                 }
               }}
               onScroll={this.handleScroll}
               scrollEventThrottle={16}
               keyboardShouldPersistTaps="handled"
             />
+            {this.state.isViewHistoryMode && (
+              <View style={[styles.historyPagerActionsBottom, isSwitchWorldlineMode ? styles.warningHistoryPagerActionsBottom : null]}>
+                <TouchableOpacity
+                  style={[styles.historyPagerButton, styles.historyPagerEdgeButton, isSwitchWorldlineMode ? styles.warningHistoryPagerButton : null]}
+                  onPress={() => this.goHistoryPageTo(0)}
+                >
+                  <Text style={[styles.historyPagerButtonText, isSwitchWorldlineMode ? styles.warningHistoryPagerButtonText : null]}>{this.getRoleUiText('firstPage') || 'First'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.historyPagerButton, styles.historyPagerStepButton, isSwitchWorldlineMode ? styles.warningHistoryPagerButton : null]}
+                  onPress={() => this.goHistoryPage(-1)}
+                >
+                  <Text style={[styles.historyPagerButtonText, isSwitchWorldlineMode ? styles.warningHistoryPagerButtonText : null]}>{this.getRoleUiText('previousPage')}</Text>
+                </TouchableOpacity>
+                <View style={styles.historyPagerSliderWrap}>
+                  <Slider
+                    style={styles.historyPagerSlider}
+                    minimumValue={0}
+                    maximumValue={Math.max(historyPageCount - 1, 0)}
+                    step={1}
+                    value={historyPageIndex}
+                    minimumTrackTintColor={isSwitchWorldlineMode ? '#ffd24a' : '#6f8dff'}
+                    maximumTrackTintColor={isSwitchWorldlineMode ? '#4a2200' : '#24304a'}
+                    thumbTintColor={isSwitchWorldlineMode ? '#ffd24a' : '#ffffff'}
+                    disabled={historyPageCount <= 1}
+                    onSlidingComplete={value => this.goHistoryPageTo(value)}
+                  />
+                </View>
+                <TouchableOpacity
+                  style={[styles.historyPagerButton, styles.historyPagerStepButton, isSwitchWorldlineMode ? styles.warningHistoryPagerButton : null]}
+                  onPress={() => this.goHistoryPage(1)}
+                >
+                  <Text style={[styles.historyPagerButtonText, isSwitchWorldlineMode ? styles.warningHistoryPagerButtonText : null]}>{this.getRoleUiText('nextPage')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.historyPagerButton, styles.historyPagerEdgeButton, isSwitchWorldlineMode ? styles.warningHistoryPagerButton : null]}
+                  onPress={() => this.goHistoryPageTo(historyPageCount - 1)}
+                >
+                  <Text style={[styles.historyPagerButtonText, isSwitchWorldlineMode ? styles.warningHistoryPagerButtonText : null]}>{this.getRoleUiText('lastPage') || 'Last'}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              value={this.state.inputValue}
-              placeholder="Type a message"
-              placeholderTextColor="#6f7587"
-              onChangeText={text => this.setState({ inputValue: text })}
-              onSubmitEditing={this.handleSend}
-              returnKeyType="send"
-            />
-            <TouchableOpacity style={styles.sendButton} onPress={this.handleSend}>
-              <Text style={styles.sendButtonText}>Send</Text>
-            </TouchableOpacity>
-          </View>
+          {!!this.getRoleTalkStatusText() && !this.state.isViewHistoryMode && (
+            <View style={styles.talkStatusContainer}>
+              <Text style={styles.talkStatusText}>{this.getRoleTalkStatusText()}</Text>
+            </View>
+          )}
+          {!this.state.isViewHistoryMode && (
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={styles.input}
+                value={this.state.inputValue}
+                placeholder="Type a message"
+                placeholderTextColor="#6f7587"
+                onChangeText={text => this.setState({ inputValue: text })}
+                onSubmitEditing={this.handleSend}
+                returnKeyType="send"
+              />
+              <TouchableOpacity
+                style={[
+                  styles.talkButton,
+                  this.state.talkState === ROLE_TALK_STATES.LISTENING && styles.talkButtonListening,
+                  (this.state.talkState === ROLE_TALK_STATES.RECOGNIZING || this.state.talkState === ROLE_TALK_STATES.SUBMITTING) && styles.talkButtonBusy,
+                  this.state.talkState === ROLE_TALK_STATES.ERROR && styles.talkButtonError,
+                ]}
+                onPress={this.handleRoleTalkPress}
+                disabled={this.state.talkState === ROLE_TALK_STATES.RECOGNIZING || this.state.talkState === ROLE_TALK_STATES.SUBMITTING}
+              >
+                <Text
+                  style={[
+                    styles.talkButtonLetter,
+                    this.state.talkState === ROLE_TALK_STATES.LISTENING && styles.talkButtonLetterRecording,
+                  ]}
+                >
+                  {this.state.talkState === ROLE_TALK_STATES.LISTENING ? 'R' : 'T'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.sendButton} onPress={this.handleSend}>
+                <Text style={styles.sendButtonText}>Send</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </KeyboardAvoidingView>
       </SafeAreaView>
     );
@@ -5211,227 +10854,3 @@ const mapStateToProps = state => ({
 });
 
 export default connect(mapStateToProps)(AgentChat);
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0a0d15',
-  },
-  headerTitle: {
-    color: '#000000',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  headerTitleButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  headerAction: {
-    paddingHorizontal: 16,
-  },
-  chatContainer: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-  listContent: {
-    paddingBottom: 12,
-  },
-  messageRow: {
-    flexDirection: 'row',
-    marginBottom: 12,
-    alignItems: 'flex-end',
-  },
-  userRow: {
-    justifyContent: 'flex-end',
-  },
-  agentRow: {
-    justifyContent: 'flex-start',
-  },
-  bubbleColumn: {
-    maxWidth: '76%',
-  },
-  userBubbleColumn: {
-    marginRight: 12,
-  },
-  agentBubbleColumn: {
-    marginLeft: 12,
-  },
-  messageBubble: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 16,
-  },
-  userBubble: {
-    backgroundColor: '#1fcd51',
-    borderBottomRightRadius: 2,
-  },
-  agentBubble: {
-    backgroundColor: '#101726',
-    borderBottomLeftRadius: 2,
-    borderWidth: 1,
-    borderColor: '#1f2a44',
-  },
-  messageText: {
-    fontSize: 15,
-    lineHeight: 20,
-  },
-  userText: {
-    color: '#ffffff',
-  },
-  agentText: {
-    color: '#d2d7e0',
-  },
-  linkText: {
-    color: '#0b1224',
-    backgroundColor: '#d6e8ff',
-    textDecorationLine: 'none',
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    borderRadius: 4,
-    overflow: 'hidden',
-    marginTop: 6,
-  },
-  commandText: {
-    color: '#0b1224',
-    backgroundColor: '#d6e8ff',
-    textDecorationLine: 'none',
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  commandTextUser: {
-    color: '#0b1224',
-    backgroundColor: '#d6e8ff',
-    textDecorationLine: 'none',
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  timestampContainer: {
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  timestampText: {
-    color: '#6f7587',
-    fontSize: 13,
-  },
-  avatarWrapper: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#1a2336',
-  },
-  avatarImage: {
-    width: '100%',
-    height: '100%',
-  },
-  avatarPressable: {
-    borderRadius: 12,
-  },
-  agentAvatarWrapper: {
-    borderWidth: 1,
-    borderColor: '#24304a',
-  },
-  userAvatarWrapper: {
-    borderWidth: 1,
-    borderColor: '#1fcd51',
-  },
-  userAvatarBlank: {
-    backgroundColor: '#000000',
-  },
-  userAvatarFallback: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  userAvatarText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  emptyState: {
-    alignItems: 'center',
-  },
-  emptyText: {
-    color: '#6f7587',
-    fontSize: 14,
-  },
-  regenButton: {
-    marginTop: 6,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#4f78ff',
-  },
-  regenButtonText: {
-    color: '#4f78ff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  storyChoiceWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: 8,
-  },
-  storyChoiceBtn: {
-    marginRight: 8,
-    marginBottom: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#2f4d8f',
-    backgroundColor: '#162441',
-  },
-  storyChoiceText: {
-    color: '#d6e8ff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  storyChoiceInline: {
-    color: '#d6e8ff',
-    backgroundColor: '#162441',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#1f2a44',
-    backgroundColor: '#0b1224',
-  },
-  input: {
-    flex: 1,
-    height: 44,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: '#24304a',
-    borderRadius: 12,
-    color: '#ffffff',
-    backgroundColor: '#0f162b',
-  },
-  sendButton: {
-    marginLeft: 10,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: KevaColors.actionText,
-  },
-  sendButtonText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-});

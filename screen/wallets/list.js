@@ -1,6 +1,7 @@
 import React, { Component } from 'react';
 import { View, StatusBar, TouchableOpacity, Text, StyleSheet, InteractionManager, RefreshControl, SectionList, Alert } from 'react-native';
-import { SafeBlueArea, WalletsCarousel, BlueHeaderDefaultMain, BlueTransactionListItem, BlueRoundIcon } from '../../BlueComponents';
+import { SafeBlueArea, WalletsCarousel, BlueTransactionListItem, BlueRoundIcon } from '../../BlueComponents';
+import Icon from 'react-native-vector-icons/Ionicons';
 import { NavigationEvents } from 'react-navigation';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import PropTypes from 'prop-types';
@@ -259,14 +260,14 @@ export default class WalletsList extends Component {
 
   renderListHeaderComponent = () => {
     return (
-      <View style={{ backgroundColor: '#FFFFFF' }}>
+      <View style={{ backgroundColor: '#03080d', borderTopWidth: 1, borderTopColor: 'rgba(0, 229, 255, 0.18)' }}>
         <Text
           style={{
             paddingLeft: 16,
             fontWeight: 'bold',
             fontSize: 24,
             marginVertical: 8,
-            color: BlueApp.settings.foregroundColor,
+            color: '#eaffff',
           }}
         >
           {loc.transactions.list.title}
@@ -285,8 +286,8 @@ export default class WalletsList extends Component {
 
   onPageSelected = e => {
     const index = e.nativeEvent.position;
-    StatusBar.setBarStyle(index === 1 ? 'dark-content' : 'light-content');
-    index === 1 ? StatusBar.setBackgroundColor("#ffffff") : StatusBar.setBackgroundColor(WalletGradient.headerColorFor(this.props.navigation.state.params.wallet.type));
+    StatusBar.setBarStyle('light-content');
+    StatusBar.setBackgroundColor('#03080d');
     this.setState({ cameraPreviewIsPaused: index === 1 || index === undefined, viewPagerIndex: index });
   };
 
@@ -300,24 +301,78 @@ export default class WalletsList extends Component {
   renderTransactionListsRow = data => {
     return (
       <View style={{ marginHorizontal: 4 }}>
-        <BlueTransactionListItem item={data.item} itemPriceUnit={data.item.walletPreferredBalanceUnit} />
+        <BlueTransactionListItem item={data.item} itemPriceUnit={data.item.walletPreferredBalanceUnit} transactionListTheme="dark" />
       </View>
     );
   };
 
   renderNavigationHeader = () => {
+    const canGoBack = this.props.navigation && typeof this.props.navigation.goBack === 'function';
+
     return (
-      <View style={{ height: 44, alignItems: 'flex-end', justifyContent: 'center' }}>
+      <View
+        style={{
+          minHeight: 64,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 12,
+          backgroundColor: '#06131b',
+          borderBottomWidth: 1,
+          borderBottomColor: 'rgba(0, 229, 255, 0.28)',
+        }}
+      >
+        <TouchableOpacity
+          testID="WalletsBackButton"
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          style={{
+            width: 40,
+            height: 40,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          onPress={() => {
+            if (canGoBack) {
+              this.props.navigation.goBack(null);
+            } else {
+              this.props.navigation.navigate('Tabs');
+            }
+          }}
+        >
+          <Icon name="ios-arrow-back" size={28} color="#9ffcff" />
+        </TouchableOpacity>
+
+        <Text
+          style={{
+            flex: 1,
+            marginLeft: 4,
+            fontWeight: 'bold',
+            fontSize: 28,
+            color: '#eaffff',
+            letterSpacing: 0.4,
+          }}
+          numberOfLines={1}
+        >
+          {loc.wallets.list.title}
+        </Text>
+
         <TouchableOpacity
           testID="AddWalletButton"
-          style={{ paddingHorizontal: 16, position: 'relative', right: -6, top: -3 }}
+          style={{
+            width: 40,
+            height: 40,
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginTop: -20,
+          }}
           onPress={() => {
             !BlueApp.getWallets().some(wallet => wallet.type === PlaceholderWallet.type)
               ? this.props.navigation.navigate('AddWallet')
               : null
           }}
         >
-          <BlueRoundIcon color="#c83f6d" name="plus" />
+          <BlueRoundIcon color="#00bcd4" name="plus" />
         </TouchableOpacity>
       </View>
     );
@@ -350,16 +405,7 @@ export default class WalletsList extends Component {
   renderSectionHeader = ({ section }) => {
     switch (section.key) {
       case WalletsListSections.CAROUSEL:
-        return (
-          <BlueHeaderDefaultMain
-            leftText={loc.wallets.list.title}
-            onNewWalletPress={
-              !BlueApp.getWallets().some(wallet => wallet.type === PlaceholderWallet.type)
-                ? () => this.props.navigation.navigate('AddWallet')
-                : null
-            }
-          />
-        );
+        return null;
       case WalletsListSections.TRANSACTIONS:
         return this.renderListHeaderComponent();
       default:
@@ -376,7 +422,7 @@ export default class WalletsList extends Component {
               <Text
                 style={{
                   fontSize: 18,
-                  color: '#9aa0aa',
+                  color: '#83cbd1',
                   textAlign: 'center',
                 }}
               >
@@ -385,7 +431,7 @@ export default class WalletsList extends Component {
               <Text
                 style={{
                   fontSize: 18,
-                  color: '#9aa0aa',
+                  color: '#b9fbff',
                   textAlign: 'center',
                   fontWeight: '600',
                 }}
@@ -440,6 +486,8 @@ export default class WalletsList extends Component {
           <View style={styles.walletsListWrapper}>
             {this.renderNavigationHeader()}
             <SectionList
+              style={styles.sectionList}
+              contentContainerStyle={styles.sectionListContent}
               refreshControl={
                 <RefreshControl onRefresh={() => this.refreshTransactions()} refreshing={!this.state.isFlatListRefreshControlHidden} />
               }
@@ -462,12 +510,19 @@ export default class WalletsList extends Component {
 
 const styles = StyleSheet.create({
   wrapper: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#03080d',
     flex: 1,
   },
   walletsListWrapper: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#03080d',
+  },
+  sectionList: {
+    backgroundColor: '#03080d',
+  },
+  sectionListContent: {
+    backgroundColor: '#03080d',
+    paddingBottom: 24,
   },
   scanQRWrapper: {
     flex: 1,

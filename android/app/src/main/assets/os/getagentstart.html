@@ -5,190 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Get Agents / Boot</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
-    :root {
-      --bg: #0b0c0d;
-      --fg: #ffffff;
-      --accent: #59fbea;
-      --accent-2: #28f428;
-    }
-
     html, body {
-      background: var(--bg);
-      color: var(--fg);
-      font-family: 'Share Tech Mono', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
       margin: 0;
       padding: 0;
+      width: 100%;
       height: 100%;
+      background: #000;
       overflow: hidden;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .boot-overlay {
-      position: fixed;
-      inset: 0;
-      background: radial-gradient(circle at 20% 20%, rgba(12, 80, 97, 0.32), rgba(0, 0, 0, 0.94));
-      z-index: 1000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      --portal-duration: 900ms;
-      transition: opacity 0.65s ease, transform 0.65s ease;
-    }
-
-    .boot-overlay.boot-overlay--portal .boot-overlay-inner {
-      opacity: 0;
-      transform: scale(0.94);
-      transition: opacity 0.3s ease, transform 0.3s ease;
-    }
-
-    .boot-overlay::after {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(180deg, #1b3de4 0%, #132cbe 45%, #0b1e99 100%);
-      transform: scaleY(0.02);
-      transform-origin: center;
-      opacity: 0;
-      pointer-events: none;
-    }
-
-    .boot-overlay.boot-overlay--portal::after {
-      opacity: 1;
-      animation: bootPortalOpen var(--portal-duration) ease forwards;
-    }
-
-    @keyframes bootPortalOpen {
-      0% {
-        transform: scaleY(0.02);
-        opacity: 1;
-      }
-      60% {
-        transform: scaleY(1.05);
-        opacity: 1;
-      }
-      100% {
-        transform: scaleY(1.3);
-        opacity: 0;
-      }
-    }
-
-    .boot-overlay-inner {
-      width: min(520px, 90vw);
-      max-height: 70vh;
-      border: 1px solid rgba(0, 234, 255, 0.35);
-      border-radius: 18px;
-      padding: 32px 30px 26px;
-      background: rgba(1, 9, 11, 0.92);
-      box-shadow: 0 0 35px rgba(0, 237, 255, 0.18);
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
-    }
-
-    .boot-logo {
-      font-size: 18px;
-      letter-spacing: 0.5em;
-      text-transform: uppercase;
-      color: var(--accent);
-      text-shadow: 0 0 8px rgba(89, 251, 234, 0.6);
-    }
-
-    .boot-log {
-      flex: 1;
-      overflow-x: hidden;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      font-size: 14px;
-      color: var(--fg);
-    }
-
-    .boot-line {
-      opacity: 0;
-      transform: translateY(6px);
-      transition: opacity 0.35s ease, transform 0.35s ease;
-      color: rgba(255, 255, 255, 0.82);
-      letter-spacing: 0.08em;
-    }
-
-    .boot-line::before {
-      content: '> ';
-      color: var(--accent-2);
-    }
-
-    .boot-line.visible {
-      opacity: 1;
-      transform: translateY(0);
     }
   </style>
 </head>
 <body>
-  <div class="boot-overlay" id="bootOverlay">
-    <div class="boot-overlay-inner">
-      <div class="boot-logo">KEVA//AGENT OPS</div>
-      <div class="boot-log" id="bootLog"></div>
-    </div>
-  </div>
-
   <script>
-    const bootOverlay = document.getElementById('bootOverlay');
-    const bootLogEl = document.getElementById('bootLog');
-    const MAX_LINES = 5;
-    const REDIRECT_TARGET = 'getagents.html';
-    const BOOT_LINES = [
-      'SYS> Initializing GETA terminal…',
-      'CORE> Loading identity holograms…',
-      'NET> Calibrating Kevacoin clock drift…',
-      'OS> Spooling Super-Agent Network uplink…',
-      'LINK> Preparing final hand-off…',
-    ];
-
-    function appendLine(message) {
-      if (!bootLogEl) return;
-      const line = document.createElement('div');
-      line.className = 'boot-line';
-      line.textContent = message;
-      bootLogEl.appendChild(line);
-      bootLogEl.scrollTop = bootLogEl.scrollHeight;
-      requestAnimationFrame(() => line.classList.add('visible'));
-    }
-
-    function beginPortalTransition() {
-      if (!bootOverlay) {
-        window.location.href = REDIRECT_TARGET;
-        return;
-      }
-      bootOverlay.classList.add('boot-overlay--portal');
-      const duration = parseInt(getComputedStyle(bootOverlay).getPropertyValue('--portal-duration'), 10) || 900;
-      setTimeout(() => {
-        window.location.href = REDIRECT_TARGET;
-      }, duration + 150);
-    }
-
-    function startBootSequence() {
-      let index = 0;
-      const tick = () => {
-        appendLine(BOOT_LINES[index]);
-        index += 1;
-        if (index < Math.min(BOOT_LINES.length, MAX_LINES)) {
-          setTimeout(tick, 260);
-        } else {
-          setTimeout(beginPortalTransition, 400);
-        }
-      };
-      tick();
-    }
-
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', startBootSequence);
-    } else {
-      startBootSequence();
-    }
+    window.location.replace('getagents.html');
   </script>
 </body>
 </html>

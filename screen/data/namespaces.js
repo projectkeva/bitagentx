@@ -18,6 +18,7 @@ import {
   Keyboard,
   Image,
   InteractionManager,
+  Alert,
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/Ionicons';
@@ -44,10 +45,22 @@ import {
 import { HDSegwitP2SHWallet,  } from '../../class';
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 import Biometric from '../../class/biometrics';
+import { requestServerNamespace, getCachedServerNamespaceResult } from '../../class/namespace-api';
 import { Button } from 'react-native-elements';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+import ImagePicker from 'react-native-image-crop-picker';
+import RNFS from 'react-native-fs';
+import AsyncStorage from '@react-native-community/async-storage';
+import { readStoryJsonFile, getAlphaStatePath } from './story_alpha';
+import {
+  exportStoryRecordToFile,
+  importStoryRecordFromFile,
+  isStoryRecordImportCancel,
+} from './story_record_io';
 const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
 const createHash = require('create-hash');
+const SATOSHI_STATUS_KEY = 'satoshi_agent_status_v1';
+const setSatoshiStatus = status => AsyncStorage.setItem(SATOSHI_STATUS_KEY, status).catch(() => {});
 
 let BlueApp = require('../../BlueApp');
 let loc = require('../../loc');
@@ -74,10 +87,18 @@ import {
   removeConversationMetadataForPeer,
   setConversationMetadata,
 } from './followChatStorage';
+import {
+  getCachedNamespaceUiLang,
+  getNamespaceText,
+  resolveNamespaceUiLanguage,
+} from './namespace_i18n';
 
 const COPY_ICON = (<Icon name="ios-copy" size={22} color={KevaColors.extraLightText}
                          style={{ paddingVertical: 5, paddingHorizontal: 5, position: 'relative', left: -3 }}
                   />)
+
+const LOCAL_NAMESPACE_AVATAR_DIR = `${RNFS.DocumentDirectoryPath}/namespace_avatars`;
+const getNamespaceAvatarPath = namespaceId => `${LOCAL_NAMESPACE_AVATAR_DIR}/${encodeURIComponent(String(namespaceId || 'unknown'))}.jpg`;
 
 let _g_cleanLockedFund;
 let _g_checkLockedFund;
@@ -108,10 +129,85 @@ const computeAlphaValue = id => {
   }
 };
 
+const blendChannel = (from, to, ratio) => {
+  const t = Math.max(0, Math.min(1, ratio));
+  return Math.round(from + (to - from) * t);
+};
+
+const buildAlphaColorComponents = alphaValue => {
+  const normalized = normalizeAlphaValue(alphaValue);
+  if (normalized === null || normalized === 0) return { r: 255, g: 255, b: 255 };
+  const intensity = Math.abs(normalized) / 99;
+  const white = { r: 255, g: 255, b: 255 };
+  const target = normalized < 0 ? { r: 12, g: 176, b: 96 } : { r: 24, g: 128, b: 255 };
+  return {
+    r: blendChannel(white.r, target.r, intensity),
+    g: blendChannel(white.g, target.g, intensity),
+    b: blendChannel(white.b, target.b, intensity),
+  };
+};
+
+const toRgbaString = ({ r, g, b }, alpha = 1) => `rgba(${r}, ${g}, ${b}, ${alpha})`;
+
+const getAlphaGlowDetails = alphaValue => {
+  const components = buildAlphaColorComponents(alphaValue);
+  return {
+    glowColor: toRgbaString(components, 0.95),
+    glowSoftColor: toRgbaString(components, 0.22),
+  };
+};
+
+const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
+const alphaFileValueCache = new Map();
+
+const normalizeAlphaValue = value => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  if (n > 99) return 99;
+  if (n < -99) return -99;
+  return Math.round(n);
+};
+
+const getCachedAlphaValue = shortCode => {
+  if (!shortCode) return null;
+  return alphaFileValueCache.has(shortCode) ? alphaFileValueCache.get(shortCode) : null;
+};
+
+const primeNamespaceAlphaValue = async shortCode => {
+  if (!shortCode) return null;
+  if (alphaFileValueCache.has(shortCode)) {
+    return alphaFileValueCache.get(shortCode);
+  }
+  try {
+    const alphaState = await readStoryJsonFile(getAlphaStatePath(`${CHAT_DIR}/${encodeURIComponent(String(shortCode || ''))}/story`));
+    const normalized = normalizeAlphaValue(alphaState?.currentAlpha);
+    alphaFileValueCache.set(shortCode, normalized);
+    return normalized;
+  } catch (error) {
+    const fallbackAlpha = computeAlphaValue(shortCode);
+    alphaFileValueCache.set(shortCode, fallbackAlpha);
+    return fallbackAlpha;
+  }
+};
+
+const resolveNamespaceAlphaValue = shortCode => {
+  const normalizedShortCode = normalizeShortCode(shortCode);
+  if (!normalizedShortCode) return null;
+  const cached = getCachedAlphaValue(normalizedShortCode);
+  if (cached !== null) {
+    return cached;
+  }
+  return computeAlphaValue(normalizedShortCode);
+};
+
+const clearNamespaceAlphaCache = () => {
+  alphaFileValueCache.clear();
+};
+
 const avatarUriCache = new Map();
 
 const selectAvatarCandidateUri = (candidateUris = [], failedUris = [], generatedUri = null) => {
-  if (generatedUri) return null; 
+  if (generatedUri) return null;
   for (const candidate of candidateUris) {
     if (!candidate) continue;
     if (failedUris && failedUris.includes(candidate)) continue;
@@ -126,10 +222,10 @@ const TAG_DM_PREFIX = '#DM';
 const TAG_CHAT_PREFIX = '#CHAT';
 const TAG_GLOBAL_CHAT = '#chatxkeva';
 const ACTION_PAGES = [
-  ['Message', 'Chat', 'Role', 'Story'],
-  ['Profile', 'Task', 'Room', 'DNA'],
+  ['Profile', 'Role', 'Chat', 'Story'],
+  ['Message', 'Task', 'Room', 'DNA'],
   ['Wallet', 'Market', 'Asset', 'Game'],
-  ['Message', 'Link', 'Log', 'Task'],
+  ['Profile', 'Link', 'Log', 'Task'],
 ];
 
 const normalizeShortCode = shortCode => {
@@ -151,7 +247,10 @@ class Namespace extends React.Component {
       avatarCandidateRequestId: 0,
       avatarFailedUris: [],
       generatedAvatarUri: null,
+      localAvatarUri: null,
       actionPageIndex: 0,
+      resolvedAlphaValue: null,
+      namespaceUiLang: getCachedNamespaceUiLang(props.data),
     };
 
     this._avatarRequestId = 0;
@@ -163,41 +262,26 @@ class Namespace extends React.Component {
     this._style = {
       ...Platform.select({
         ios: {
-          transform: [{
-            rotate: this._active.interpolate({
-              inputRange: [0, 1],
-              outputRange: [0, -0.04],
-            }),
-          }],
-          shadowRadius: this._active.interpolate({
-            inputRange: [0, 1],
-            outputRange: [2, 10],
-          }),
+          transform: [{ rotate: '0deg' }],
+          shadowRadius: 2,
         },
 
         android: {
-          transform: [{
-            rotate: this._active.interpolate({
-              inputRange: [0, 1],
-              outputRange: ['0deg', '-5deg'],
-            }),
-          }],
-          elevation: this._active.interpolate({
-            inputRange: [0, 1],
-            outputRange: [2, 6],
-          }),
+          transform: [{ rotate: '0deg' }],
+          elevation: 2,
         },
       }),
-      opacity: this._active.interpolate({
-        inputRange: [0, 1],
-        outputRange: [1, 0.7],
-      }),
+      opacity: 1,
     };
   }
 
   componentDidMount() {
     this._isMounted = true;
     this.prepareGeneratedAvatar(this.props.data);
+    this.loadLocalAvatar(this.props.data);
+    this.loadResolvedAlphaValue(this.props.data);
+    this.loadNamespaceUiLanguage(this.props.data);
+    this._focusListener = this.props.navigation?.addListener?.('willFocus', () => this.loadNamespaceUiLanguage(this.props.data, true));
   }
 
   componentDidUpdate(prevProps) {
@@ -205,6 +289,23 @@ class Namespace extends React.Component {
     const currentData = this.props.data || {};
     if (prevData.shortCode !== currentData.shortCode || prevData.id !== currentData.id) {
       this.prepareGeneratedAvatar(currentData);
+    }
+    if (
+      prevData.shortCode !== currentData.shortCode ||
+      prevData.id !== currentData.id
+    ) {
+      this.loadResolvedAlphaValue(currentData);
+      this.loadNamespaceUiLanguage(currentData, true);
+    }
+    if (prevProps.avatarRefreshKey !== this.props.avatarRefreshKey) {
+      this.loadLocalAvatar(currentData);
+    }
+  }
+
+  loadNamespaceUiLanguage = async (namespace = this.props.data, force = false) => {
+    const lang = await resolveNamespaceUiLanguage(namespace, force);
+    if (this._isMounted && lang && lang !== this.state.namespaceUiLang) {
+      this.setState({ namespaceUiLang: lang });
     }
   }
 
@@ -214,11 +315,125 @@ class Namespace extends React.Component {
       this._avatarHandle.cancel();
     }
     this._avatarHandle = null;
+    if (this._focusListener && this._focusListener.remove) {
+      this._focusListener.remove();
+    }
+    this._focusListener = null;
   }
 
   onInfo = () => {
     let namespace = this.props.data;
     this.props.onInfo(namespace, this.props.isOther);
+  }
+
+  getNamespaceStorageId = (namespace = this.props.data) => {
+    const shortCode = namespace && namespace.shortCode;
+    return shortCode ? String(shortCode) : '';
+  }
+
+  ensureLocalAvatarDir = async () => {
+    const exists = await RNFS.exists(LOCAL_NAMESPACE_AVATAR_DIR);
+    if (!exists) {
+      await RNFS.mkdir(LOCAL_NAMESPACE_AVATAR_DIR);
+    }
+  }
+
+  loadResolvedAlphaValue = async (namespace = this.props.data) => {
+    const shortCode = normalizeShortCode(namespace && namespace.shortCode);
+    if (!shortCode) {
+      if (this._isMounted) {
+        this.setState({ resolvedAlphaValue: null });
+      }
+      return;
+    }
+    const alphaValue = await primeNamespaceAlphaValue(shortCode);
+    if (this._isMounted && normalizeShortCode(this.props?.data?.shortCode) === shortCode) {
+      this.setState({ resolvedAlphaValue: alphaValue });
+    }
+  }
+
+  loadLocalAvatar = async (namespace = this.props.data) => {
+    try {
+      const storageId = this.getNamespaceStorageId(namespace);
+      if (!storageId) {
+        if (this._isMounted) this.setState({ localAvatarUri: null });
+        return;
+      }
+      await this.ensureLocalAvatarDir();
+      const path = getNamespaceAvatarPath(storageId);
+      const exists = await RNFS.exists(path);
+      if (this._isMounted) {
+        this.setState({ localAvatarUri: exists ? `file://${path}` : null });
+      }
+    } catch (error) {
+      console.warn('Failed to load local namespace avatar', error);
+    }
+  }
+
+  pickLocalAvatar = async (namespace = this.props.data) => {
+    try {
+      const storageId = this.getNamespaceStorageId(namespace);
+      if (!storageId) {
+        toastError('Shortcode required before setting local avatar');
+        return;
+      }
+      const picked = await ImagePicker.openPicker({
+        mediaType: 'photo',
+        cropping: true,
+        compressImageQuality: 0.9,
+        forceJpg: true,
+      });
+      const sourcePath = picked && picked.path;
+      if (!sourcePath) return;
+      await this.ensureLocalAvatarDir();
+      const targetPath = getNamespaceAvatarPath(storageId);
+      if (await RNFS.exists(targetPath)) {
+        await RNFS.unlink(targetPath).catch(() => {});
+      }
+      await RNFS.copyFile(sourcePath, targetPath);
+      if (this._isMounted) {
+        this.setState({ localAvatarUri: `file://${targetPath}` });
+      }
+      Toast.show('Local avatar updated', {
+        position: Toast.positions.TOP,
+        backgroundColor: '#53DD6C',
+      });
+    } catch (error) {
+      if (error && (String(error.code || '').includes('E_PICKER_CANCELLED') || String(error.message || '').toLowerCase().includes('cancel'))) {
+        return;
+      }
+      console.warn('Failed to pick local avatar', error);
+      toastError('Failed to set local avatar');
+    }
+  }
+
+  removeLocalAvatar = async (namespace = this.props.data) => {
+    try {
+      const storageId = this.getNamespaceStorageId(namespace);
+      if (!storageId) return;
+      const path = getNamespaceAvatarPath(storageId);
+      if (await RNFS.exists(path)) {
+        await RNFS.unlink(path);
+      }
+      if (this._isMounted) {
+        this.setState({ localAvatarUri: null });
+      }
+      Toast.show('Local avatar removed', {
+        position: Toast.positions.TOP,
+        backgroundColor: '#53DD6C',
+      });
+    } catch (error) {
+      console.warn('Failed to remove local avatar', error);
+      toastError('Failed to remove local avatar');
+    }
+  }
+
+  onAvatarPress = () => {
+    if (this.props.isOther) {
+      this.onKey();
+      return;
+    }
+    this.onInfo();
   }
 
   onSoldorOffer = () => {
@@ -259,11 +474,13 @@ class Namespace extends React.Component {
 
   UNSAFE_componentWillReceiveProps(nextProps) {
     if (this.props.active !== nextProps.active) {
-      Animated.timing(this._active, {
-        duration: 100,
-        easing: Easing.bounce,
-        toValue: Number(nextProps.active),
-      }).start();
+      this._active.setValue(Number(nextProps.active));
+    }
+    const prevShortCode = normalizeShortCode(this.props?.data?.shortCode);
+    const nextShortCode = normalizeShortCode(nextProps?.data?.shortCode);
+    if (prevShortCode !== nextShortCode) {
+      this.setState({ resolvedAlphaValue: null });
+      this.loadResolvedAlphaValue(nextProps.data);
     }
   }
 
@@ -280,6 +497,8 @@ class Namespace extends React.Component {
 
   onPressAction = label => {
     switch (label) {
+      case 'Profile':
+        return this.onAvatarPress?.();
       case 'Message':
         return this.onMessage?.();
       case 'Chat':
@@ -408,6 +627,9 @@ class Namespace extends React.Component {
       return;
     }
     const namespaceId = data.id || data.namespaceId;
+    const debugPath = `${RNFS.DocumentDirectoryPath}/agent_chats/_params_debug.log`;
+    RNFS.mkdir(`${RNFS.DocumentDirectoryPath}/agent_chats`).catch(() => {});
+    RNFS.appendFile(debugPath, `${new Date().toISOString()} namespaces onStory data=${JSON.stringify({ namespaceId, shortCode: data.shortCode, displayName: data.displayName, walletId: data.walletId, txid: data.txId, rootAddress: data.rootAddress, price: data.price, desc: data.desc, addr: data.addr, profile: data.profile })}\n`, 'utf8').catch(() => {});
     navigation.push('AgentStory', {
       namespaceId,
       shortCode: data.shortCode,
@@ -419,8 +641,10 @@ class Namespace extends React.Component {
       desc: data.desc,
       addr: data.addr,
       profile: data.profile,
-      autoCommand: '/d',
       suppressAutoLinkStart: true,
+      autoCommand: '/d new',
+      autoCommandSource: 'link-story',
+      startStoryOnMount: true,
     });
   }
 
@@ -432,6 +656,9 @@ class Namespace extends React.Component {
     if (!this.props.canChat) return;
 
     const namespaceId = data.id || data.namespaceId;
+    const debugPath = `${RNFS.DocumentDirectoryPath}/agent_chats/_params_debug.log`;
+    RNFS.mkdir(`${RNFS.DocumentDirectoryPath}/agent_chats`).catch(() => {});
+    RNFS.appendFile(debugPath, `${new Date().toISOString()} namespaces onRole data=${JSON.stringify({ namespaceId, shortCode: data.shortCode, displayName: data.displayName, walletId: data.walletId, txid: data.txId, rootAddress: data.rootAddress, price: data.price, desc: data.desc, addr: data.addr, profile: data.profile, autoCommand: '/role', roleEntrySource: 'namespace-button' })}\n`, 'utf8').catch(() => {});
 
     navigation.push('AgentRole', {
       namespaceId,
@@ -445,6 +672,7 @@ class Namespace extends React.Component {
       addr: data.addr,
       profile: data.profile,
       autoCommand: '/role',
+      roleEntrySource: 'namespace-button',
       suppressAutoLinkStart: true,
     });
   }
@@ -476,7 +704,7 @@ class Namespace extends React.Component {
     const { autoCommand, suppressAutoLinkStart } = options;
 
     if (!isOther) {
-      navigation.push('AgentChat', {
+      navigation.push('AgentRole', {
         namespaceId,
         shortCode: data.shortCode,
         displayName: data.displayName,
@@ -487,8 +715,11 @@ class Namespace extends React.Component {
         desc: data.desc,
         addr: data.addr,
         profile: data.profile,
-        autoCommand,
-        suppressAutoLinkStart,
+        autoCommand: '/role chat',
+        roleEntrySource: 'namespace-chat-button',
+        pureChatMode: true,
+        headerModeTitle: 'Chat',
+        suppressAutoLinkStart: true,
       });
       return;
     }
@@ -522,13 +753,14 @@ class Namespace extends React.Component {
     const {canDelete, onDelete} = this.props;
     const {titleAvatar, colorAvatar} = this.getAvatar(namespace.displayName);
     const isForSale = !!namespace.price;
-    const displayNameWithShortcode = namespace.shortCode
-      ? `${namespace.displayName} @${namespace.shortCode}`
-      : namespace.displayName;
+    const displayNameText = namespace.displayName;
+    const shortCodeLabelText = namespace.shortCode ? `@${namespace.shortCode}` : '';
     const shortCodeLevel = calculateLevelFromShortcode(namespace.shortCode, {
       currentBlockHeight: this.props.latestBlockHeight,
     });
-    const alphaValue = namespace.shortCode ? computeAlphaValue(namespace.shortCode) : null;
+    const alphaValue = namespace.shortCode
+      ? (this.state.resolvedAlphaValue !== null ? this.state.resolvedAlphaValue : resolveNamespaceAlphaValue(namespace.shortCode))
+      : null;
     const alphaLabelText = Number.isFinite(alphaValue)
       ? `[ α${alphaValue > 0 ? `+${alphaValue}` : alphaValue} ]`
       : '';
@@ -542,11 +774,32 @@ class Namespace extends React.Component {
       avatarCandidateRequestId,
       avatarFailedUris,
       generatedAvatarUri,
+      localAvatarUri,
     } = this.state;
 
     const avatarCandidateUri = selectAvatarCandidateUri(avatarCandidateUris, avatarFailedUris, generatedAvatarUri);
-    const shouldProbeAvatar = !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
-    const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
+    const shouldProbeAvatar = !localAvatarUri && !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
+    const avatarSource = localAvatarUri ? { uri: localAvatarUri } : (generatedAvatarUri ? { uri: generatedAvatarUri } : undefined);
+
+    const namespaceText = key => getNamespaceText(key, this.state.namespaceUiLang);
+
+    const { glowColor: alphaGlowColor, glowSoftColor: alphaGlowSoftColor } = getAlphaGlowDetails(alphaValue);
+    const alphaGlowStyle = alphaGlowColor ? {
+      shadowColor: alphaGlowColor,
+      shadowOpacity: 0.95,
+      shadowRadius: 15,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 10,
+    } : null;
+    const alphaNeonHaloStyle = alphaGlowColor ? {
+      borderColor: alphaGlowColor,
+      backgroundColor: alphaGlowSoftColor,
+      shadowColor: alphaGlowColor,
+      shadowOpacity: 0.75,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 8,
+    } : null;
 
     const avatarContent = avatarSource ? (
       <View style={styles.generatedAvatarContainer}>
@@ -557,37 +810,29 @@ class Namespace extends React.Component {
         <Text style={styles.fallbackAvatarLabel}>{titleAvatar}</Text>
       </View>
     );
-    const renderActionButton = ({ label, disabled, onPress }) => {
+    const renderActionButton = ({ label, text, disabled, onPress }) => {
+      const displayText = text || namespaceText(label);
       if (disabled) {
         return (
           <View key={label} style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-            <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>{label}</Text>
+            <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>{displayText}</Text>
           </View>
         );
       }
 
       return (
         <TouchableOpacity key={label} style={styles.spaceActionButton} onPress={onPress}>
-          <Text style={styles.spaceActionText}>{label}</Text>
+          <Text style={styles.spaceActionText}>{displayText}</Text>
         </TouchableOpacity>
       );
     };
     return (
-      <Animated.View
-        style={[
-          this._style,
-          styles.cardContainer,
-        ]}
-      >
-        <LinearGradient
-          colors={['#0b1224', '#0f162b', '#0b1224']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.neonCard}
-        >
+      <View style={styles.cardContainer}>
+        <View style={styles.neonCard}>
           <View style={styles.cardInner}>
             <View style={styles.headerRow}>
-              <TouchableOpacity style={[styles.avatarWrapper, styles.neonAvatarWrapper]} onPress={this.onInfo}>
+              <TouchableOpacity style={[styles.avatarWrapper, styles.neonAvatarWrapper, alphaGlowStyle]} onPress={this.onAvatarPress}>
+                {alphaNeonHaloStyle ? <View pointerEvents="none" style={[styles.avatarNeonHalo, alphaNeonHaloStyle]} /> : null}
                 {shouldProbeAvatar && (
                   <Image
                     source={{ uri: avatarCandidateUri }}
@@ -599,20 +844,23 @@ class Namespace extends React.Component {
                 {avatarContent}
               </TouchableOpacity>
               <View style={styles.titleArea}>
-                <View style={styles.titleBlock}>
+                <TouchableOpacity style={styles.titleBlock} onPress={this.onKey} activeOpacity={0.7}>
                   <Text
                     style={[styles.cardTitleText, isForSale && styles.saleTitle]}
                     numberOfLines={1}
                     ellipsizeMode="tail"
                   >
-                    {displayNameWithShortcode}
+                    {displayNameText}
                   </Text>
                   <View style={styles.levelRow}>
+                    {shortCodeLabelText ? (
+                      <Text style={styles.shortCodeLevelLabel}>{shortCodeLabelText}</Text>
+                    ) : null}
                     {levelLabelText && (
                       <Text style={styles.levelLabel}>{levelLabelText}</Text>
                     )}
                   </View>
-                </View>
+                </TouchableOpacity>
                 <View style={styles.actionContainer}>
                   {
                     !namespace.shortCode &&
@@ -633,18 +881,13 @@ class Namespace extends React.Component {
                 </View>
               </TouchableOpacity>
             </View>
-            <LinearGradient
-              colors={['transparent', 'rgba(125, 211, 252, 0.65)', 'transparent']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.accentLine}
-            />
+            <View style={styles.accentLine} />
             {isMyCard ? (
               <View style={styles.spaceActionGrid}>
                 <View style={styles.spaceActionRowMulti}>
                   {ACTION_PAGES[this.state.actionPageIndex].map(label => {
                     const isChatAction = label === 'Chat' || label === 'Story' || label === 'Role';
-                    const hasAction = label === 'Message' || isChatAction;
+                    const hasAction = label === 'Message' || label === 'Profile' || isChatAction;
                     const disabled = !hasAction || (isChatAction && !canChat);
                     const onPress = disabled ? undefined : () => this.onPressAction(label);
                     return renderActionButton({ label, disabled, onPress });
@@ -660,21 +903,21 @@ class Namespace extends React.Component {
               <View style={styles.spaceActionRow}>
                 {canChat ? (
                   <TouchableOpacity style={styles.spaceActionButton} onPress={this.onChat}>
-                    <Text style={styles.spaceActionText}>Message</Text>
+                    <Text style={styles.spaceActionText}>{namespaceText('Message')}</Text>
                   </TouchableOpacity>
                 ) : (
                   <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-                    <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Message</Text>
+                    <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>{namespaceText('Message')}</Text>
                   </View>
                 )}
                 <View style={[styles.spaceActionButton, styles.spaceActionButtonDisabled]}>
-                  <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>Link</Text>
+                  <Text style={[styles.spaceActionText, styles.spaceActionTextDisabled]}>{namespaceText('Link')}</Text>
                 </View>
               </View>
             )}
           </View>
-        </LinearGradient>
-      </Animated.View>
+        </View>
+      </View>
     )
   }
 
@@ -690,14 +933,9 @@ const GuestInbox = ({ navigation }) => {
   const avatarColor = stringToColor(guestSeed);
 
   return (
-    <Animated.View style={[styles.cardContainer]}>
+    <View style={[styles.cardContainer]}>
       <TouchableOpacity activeOpacity={0.9} onPress={handleOpenGuestChat}>
-        <LinearGradient
-          colors={['#0b1224', '#0f162b', '#0b1224']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.neonCard}
-        >
+        <View style={styles.neonCard}>
           <View style={styles.cardInner}>
             <View style={styles.headerRow}>
               <View style={[styles.avatarWrapper, styles.neonAvatarWrapper]}>
@@ -726,16 +964,11 @@ const GuestInbox = ({ navigation }) => {
                 </View>
               </TouchableOpacity>
             </View>
-            <LinearGradient
-              colors={['transparent', 'rgba(125, 211, 252, 0.65)', 'transparent']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.accentLine}
-            />
+            <View style={styles.accentLine} />
           </View>
-        </LinearGradient>
+        </View>
       </TouchableOpacity>
-    </Animated.View>
+    </View>
   );
 };
 
@@ -756,6 +989,9 @@ class MyNamespaces extends React.Component {
       inputMode: false,
       lockedFund: {},
       latestBlockHeight: undefined,
+      applyServerNamespaceLoading: false,
+      applyServerNamespaceAddress: null,
+      applyServerNamespaceResult: null,
     };
   }
 
@@ -1041,6 +1277,77 @@ class MyNamespaces extends React.Component {
     }
   }
 
+  getApplyNamespaceAddress = async () => {
+    const wallets = BlueApp.getWallets();
+    const wallet = wallets && wallets[0];
+    if (!wallet) {
+      throw new Error('No wallet');
+    }
+    const address = wallet.getAddressAsync ? await wallet.getAddressAsync() : wallet.getAddress();
+    if (!address) {
+      throw new Error('No wallet address');
+    }
+    return address;
+  }
+
+  restoreCachedServerNamespaceResult = async () => {
+    try {
+      const address = await this.getApplyNamespaceAddress();
+      const cached = await getCachedServerNamespaceResult(address);
+      if (cached) {
+        this.setState({ applyServerNamespaceAddress: address, applyServerNamespaceResult: cached });
+      }
+    } catch (err) {
+      // No wallet yet is fine unless the user actively asks to apply.
+    }
+  }
+
+  consumeApplyServerNamespaceParam = () => {
+    if (this.props.navigation && this.props.navigation.getParam('applyServerNamespace')) {
+      this.props.navigation.setParams({ applyServerNamespace: false });
+      this.onApplyServerNamespace();
+    }
+  }
+
+  onApplyServerNamespace = async () => {
+    if (this.state.applyServerNamespaceLoading) {
+      return;
+    }
+    this.setState({ applyServerNamespaceLoading: true });
+    try {
+      const address = await this.getApplyNamespaceAddress();
+      const cached = await getCachedServerNamespaceResult(address);
+      if (cached && (cached.status === 'sent' || cached.status === 'already_sent')) {
+        this.setState({ applyServerNamespaceAddress: address, applyServerNamespaceResult: cached });
+        await setSatoshiStatus('ready');
+        Toast.show('Namespace ready', { position: Toast.positions.TOP, backgroundColor: '#53DD6C' });
+        await this.refreshNamespaces();
+        await BlueApp.saveToDisk();
+        return;
+      }
+
+      const result = await requestServerNamespace(address);
+      this.setState({ applyServerNamespaceAddress: address, applyServerNamespaceResult: result });
+      if (result.status === 'sent' || result.status === 'already_sent') {
+        await setSatoshiStatus('ready');
+        Toast.show('Namespace ready', { position: Toast.positions.TOP, backgroundColor: '#53DD6C' });
+        await this.refreshNamespaces();
+        await BlueApp.saveToDisk();
+      } else if (result.status === 'processing') {
+        await setSatoshiStatus('requesting');
+        Toast.show('处理中', { position: Toast.positions.TOP });
+      } else {
+        await setSatoshiStatus('unavailable');
+        toastError(result.message || result.status || 'Namespace request failed');
+      }
+    } catch (err) {
+      await setSatoshiStatus('unavailable');
+      toastError(err.message || 'Namespace request failed');
+    } finally {
+      this.setState({ applyServerNamespaceLoading: false });
+    }
+  }
+
   fetchNamespaces = async () => {
     const { dispatch } = this.props;
     const wallets = BlueApp.getWallets();
@@ -1083,12 +1390,24 @@ class MyNamespaces extends React.Component {
       console.error(err);
     }
     await this.updateLatestBlockHeight();
+    await this.restoreCachedServerNamespaceResult();
     this.isBiometricUseCapableAndEnabled = await Biometric.isBiometricUseCapableAndEnabled();
+
+    this.consumeApplyServerNamespaceParam();
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.applyServerNamespaceRequestKey !== this.props.applyServerNamespaceRequestKey) {
+      this.onApplyServerNamespace();
+      return;
+    }
+    this.consumeApplyServerNamespaceParam();
   }
 
   refreshNamespaces = async () => {
     this.setState({isRefreshing: true});
     try {
+      clearNamespaceAlphaCache();
       await BlueElectrum.ping();
       await this.fetchNamespaces();
       await this.updateLatestBlockHeight();
@@ -1129,7 +1448,7 @@ class MyNamespaces extends React.Component {
   }
 
   render() {
-    const { navigation, namespaceList, onInfo, onWait } = this.props;
+    const { navigation, namespaceList, onInfo, onWait, avatarRefreshKey } = this.props;
     const canAdd = this.state.nsName && this.state.nsName.length > 0;
     const inputMode = this.state.inputMode;
     const hasLockedFund = this.state.lockedAmount > 0;
@@ -1206,6 +1525,7 @@ class MyNamespaces extends React.Component {
                   namespaceList={namespaceList}
                   myNamespaceId={namespaceList.order[0]}
                   canChat={true}
+                  avatarRefreshKey={avatarRefreshKey}
                   key={key}
                 />
               );
@@ -1546,7 +1866,7 @@ class OtherNamespaces extends React.Component {
   }
 
   render() {
-    const { navigation, otherNamespaceList, onInfo, namespaceList } = this.props;
+    const { navigation, otherNamespaceList, onInfo, namespaceList, avatarRefreshKey } = this.props;
     const canSearch = this.state.nsName && this.state.nsName.length > 0;
     const inputMode = this.state.inputMode;
     const { guestItems, followedByMap, followingGuestPairs } = this.state;
@@ -1633,6 +1953,7 @@ class OtherNamespaces extends React.Component {
                   namespaceList={namespaceList}
                   canChat={true}
                   isMutual={isMutual}
+                  avatarRefreshKey={avatarRefreshKey}
                 />
               );
             }}
@@ -1668,6 +1989,11 @@ class Namespaces extends React.Component {
       spinning: false,
       index: 0,
       nsIsOther: false,
+      nsDataAlphaValue: null,
+      modalWalletAddress: '',
+      namespaceUiLang: getCachedNamespaceUiLang(),
+      avatarRefreshKey: 0,
+      applyServerNamespaceRequestKey: 0,
       routes: [
         { key: 'first', title: loc.namespaces.my_data },
         { key: 'second', title: loc.namespaces.others }
@@ -1705,19 +2031,90 @@ class Namespaces extends React.Component {
     if (targetTab) {
       navigation.setParams({ initialTab: null });
     }
+    if (navigation.getParam('applyServerNamespace')) {
+      navigation.setParams({ applyServerNamespace: false });
+      this.setState(prevState => ({
+        index: 0,
+        applyServerNamespaceRequestKey: prevState.applyServerNamespaceRequestKey + 1,
+      }));
+    }
     if (navigation.getParam('openGuest')) {
       navigation.setParams({ openGuest: false });
       navigation.push('GuestChat', { mode: 'guest' });
     }
+    const openNamespaceInfo = navigation.getParam('openNamespaceInfo');
+    if (openNamespaceInfo && (openNamespaceInfo.id || openNamespaceInfo.namespaceId)) {
+      navigation.setParams({ openNamespaceInfo: null });
+      this.onNSInfo(openNamespaceInfo, false);
+    }
   };
 
   onNSInfo = (nsData, isOther = false) => {
+    const shortCode = normalizeShortCode(nsData && nsData.shortCode);
     this.setState({
       nsData: nsData,
       codeErr: null,
       isModalVisible: true,
       nsIsOther: !!isOther,
+      nsDataAlphaValue: shortCode ? getCachedAlphaValue(shortCode) : null,
+      modalWalletAddress: '',
+      namespaceUiLang: getCachedNamespaceUiLang(nsData),
+    }, () => {
+      if (shortCode) {
+        this.loadModalAlphaValue(nsData);
+      }
+      this.loadModalNamespaceUiLanguage(nsData, true);
+      this.loadModalWalletAddress(nsData);
     });
+  }
+
+  loadModalWalletAddress = async (namespace = this.state.nsData) => {
+    const namespaceId = String(namespace?.namespaceId || namespace?.id || '');
+    const walletId = namespace?.walletId;
+    if (!walletId) {
+      this.setState({ modalWalletAddress: '' });
+      return;
+    }
+
+    try {
+      const wallets = BlueApp.getWallets();
+      const wallet = wallets.find(w => w.getID && w.getID() == walletId);
+      if (!wallet) {
+        this.setState({ modalWalletAddress: '' });
+        return;
+      }
+      const address = wallet.getAddressAsync
+        ? await wallet.getAddressAsync()
+        : (wallet.getAddress ? wallet.getAddress() : '');
+      const currentNamespaceId = String(this.state?.nsData?.namespaceId || this.state?.nsData?.id || '');
+      if (namespaceId === currentNamespaceId) {
+        this.setState({ modalWalletAddress: String(address || '').trim() });
+      }
+    } catch (error) {
+      console.warn('Failed to resolve modal wallet address', error);
+      this.setState({ modalWalletAddress: '' });
+    }
+  }
+
+  loadModalNamespaceUiLanguage = async (namespace = this.state.nsData, force = false) => {
+    const lang = await resolveNamespaceUiLanguage(namespace, force);
+    const currentId = normalizeShortCode(this.state?.nsData?.shortCode) || String(this.state?.nsData?.namespaceId || this.state?.nsData?.id || '');
+    const nextId = normalizeShortCode(namespace?.shortCode) || String(namespace?.namespaceId || namespace?.id || '');
+    if (currentId === nextId && lang && lang !== this.state.namespaceUiLang) {
+      this.setState({ namespaceUiLang: lang });
+    }
+  }
+
+  loadModalAlphaValue = async (namespace = this.state.nsData) => {
+    const shortCode = normalizeShortCode(namespace && namespace.shortCode);
+    if (!shortCode) {
+      this.setState({ nsDataAlphaValue: null });
+      return;
+    }
+    const alphaValue = await primeNamespaceAlphaValue(shortCode);
+    if (normalizeShortCode(this.state?.nsData?.shortCode) === shortCode) {
+      this.setState({ nsDataAlphaValue: alphaValue });
+    }
   }
 
   unfollowNamespace = async namespaceId => {
@@ -1734,6 +2131,26 @@ class Namespaces extends React.Component {
     await removeConversationMetadataForPeer(namespaceId);
   }
 
+  openEditProfileFromModal = (namespace) => {
+    const { navigation } = this.props;
+    if (!navigation || !namespace || !namespace.walletId || this.state.nsIsOther) {
+      return;
+    }
+    const namespaceId = namespace.id || namespace.namespaceId;
+    this.setState({ isModalVisible: false }, () => {
+      navigation.navigate('EditProfile', {
+        walletId: namespace.walletId,
+        namespaceId,
+        namespaceInfo: {
+          ...namespace,
+          id: namespaceId,
+          namespaceId,
+          displayName: namespace.displayName,
+        },
+      });
+    });
+  }
+
   openTransfer = (namespace) => {
     const { navigation } = this.props;
     if (!navigation || !namespace) {
@@ -1744,6 +2161,266 @@ class Namespaces extends React.Component {
       namespaceId: namespace.id || namespace.namespaceId,
       walletId: namespace.walletId,
     });
+  }
+
+  openSellNFT = (namespace) => {
+    const { navigation } = this.props;
+    if (!navigation || !namespace) {
+      return;
+    }
+    this.setState({ isModalVisible: false });
+    navigation.push('SellNFT', {
+      walletId: namespace.walletId,
+      namespaceId: namespace.id || namespace.namespaceId,
+      namespaceInfo: namespace,
+    });
+  }
+
+  onClearRoleDatas = namespace => {
+    const { navigation } = this.props;
+    if (!navigation || !namespace) return;
+    Alert.alert(
+      'Initialize role data?',
+      'This will clear current role state, role index, and all role cards.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: () => {
+            this.setState({ isModalVisible: false });
+            navigation.push('AgentRole', {
+              namespaceId: namespace.id || namespace.namespaceId,
+              shortCode: namespace.shortCode,
+              displayName: namespace.displayName,
+              walletId: namespace.walletId,
+              txid: namespace.txId,
+              rootAddress: namespace.rootAddress,
+              price: namespace.price,
+              desc: namespace.desc,
+              addr: namespace.addr,
+              profile: namespace.profile,
+              autoCommand: '/role clearall',
+              suppressAutoLinkStart: true,
+            });
+          },
+        },
+      ],
+    );
+  }
+
+  onClearStoryDatas = namespace => {
+    const { navigation } = this.props;
+    if (!navigation || !namespace) return;
+    Alert.alert(
+      'Clear',
+      'This will clear current story data and local story cache.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: () => {
+            this.setState({ isModalVisible: false });
+            navigation.push('AgentStory', {
+              namespaceId: namespace.id || namespace.namespaceId,
+              shortCode: namespace.shortCode,
+              displayName: namespace.displayName,
+              walletId: namespace.walletId,
+              txid: namespace.txId,
+              rootAddress: namespace.rootAddress,
+              price: namespace.price,
+              desc: namespace.desc,
+              addr: namespace.addr,
+              profile: namespace.profile,
+              clearStoryOnMount: true,
+              suppressAutoLinkStart: true,
+            });
+          },
+        },
+      ],
+    );
+  }
+  openStoryFromModal = (namespace, options = {}) => {
+    const { navigation } = this.props;
+    if (!navigation || !namespace) return;
+    navigation.push('AgentStory', {
+      namespaceId: namespace.id || namespace.namespaceId,
+      shortCode: namespace.shortCode,
+      displayName: namespace.displayName,
+      walletId: namespace.walletId,
+      txid: namespace.txId,
+      rootAddress: namespace.rootAddress,
+      price: namespace.price,
+      desc: namespace.desc,
+      addr: namespace.addr,
+      profile: namespace.profile,
+      suppressAutoLinkStart: true,
+      ...options,
+    });
+  }
+
+  openRoleFromModal = (namespace, options = {}) => {
+    const { navigation } = this.props;
+    if (!navigation || !namespace) return;
+    navigation.push('AgentRole', {
+      namespaceId: namespace.id || namespace.namespaceId,
+      shortCode: namespace.shortCode,
+      displayName: namespace.displayName,
+      walletId: namespace.walletId,
+      txid: namespace.txId,
+      rootAddress: namespace.rootAddress,
+      price: namespace.price,
+      desc: namespace.desc,
+      addr: namespace.addr,
+      profile: namespace.profile,
+      suppressAutoLinkStart: true,
+      roleEntrySource: 'namespace-profile-story-actions',
+      ...options,
+    });
+  }
+
+  onOpenStoryRecordsFromModal = namespace => {
+    if (!namespace) return;
+    this.setState({ isModalVisible: false }, () => {
+      this.openRoleFromModal(namespace, { autoCommand: '/role story records' });
+    });
+  }
+
+  onCloneStoryFromModal = namespace => {
+    if (!namespace) return;
+    this.setState({ isModalVisible: false }, () => {
+      this.openRoleFromModal(namespace, { autoCommand: '/role story clone' });
+    });
+  }
+
+  onSwitchWorldlineFromModal = namespace => {
+    if (!namespace) return;
+    this.setState({ isModalVisible: false }, () => {
+      this.openRoleFromModal(namespace, { autoCommand: '/role story switch-worldline' });
+    });
+  }
+
+  onOpenRoleMemoryFromModal = namespace => {
+    if (!namespace) return;
+    this.setState({ isModalVisible: false }, () => {
+      this.openRoleFromModal(namespace, { autoCommand: '/role memory' });
+    });
+  }
+
+  onExportRoleRecordFromModal = namespace => {
+    if (!namespace) return;
+    this.setState({ isModalVisible: false }, () => {
+      this.openRoleFromModal(namespace, { autoCommand: '/role export' });
+    });
+  }
+
+  onImportRoleRecordFromModal = namespace => {
+    if (!namespace) return;
+    this.setState({ isModalVisible: false }, () => {
+      this.openRoleFromModal(namespace, { autoCommand: '/role import' });
+    });
+  }
+
+  onCloneRoleMemoryFromModal = namespace => {
+    if (!namespace) return;
+    this.setState({ isModalVisible: false }, () => {
+      this.openRoleFromModal(namespace, { autoCommand: '/role summary clone' });
+    });
+  }
+
+  onOpenRoleLanguageFromModal = namespace => {
+    if (!namespace) return;
+    this.setState({ isModalVisible: false }, () => {
+      this.openRoleFromModal(namespace, { autoCommand: '/role lang list' });
+    });
+  }
+
+  onOpenRoleModelFromModal = namespace => {
+    if (!namespace) return;
+    this.setState({ isModalVisible: false }, () => {
+      this.openRoleFromModal(namespace, { autoCommand: '/rolemodel' });
+    });
+  }
+
+  onOpenRoleVoiceFromModal = namespace => {
+    if (!namespace) return;
+    this.setState({ isModalVisible: false }, () => {
+      this.openRoleFromModal(namespace, { autoCommand: '/role talkmenu' });
+    });
+  }
+
+  onExportStoryDatas = async namespace => {
+    if (!namespace) return;
+    try {
+      const result = await exportStoryRecordToFile(namespace);
+      const filePath = String(result && result.filePath ? result.filePath : '').trim();
+      Alert.alert(
+        'Export story record',
+        `Story record exported.${filePath ? `\n\n${filePath}` : ''}`,
+        [
+          filePath ? {
+            text: 'Copy Path',
+            onPress: () => {
+              Clipboard.setString(filePath);
+              Toast.show(loc.general.copiedToClipboard, {
+                position: Toast.positions.TOP,
+                backgroundColor: '#53DD6C',
+              });
+            },
+          } : null,
+          { text: 'OK' },
+        ].filter(Boolean),
+      );
+    } catch (error) {
+      console.warn('Failed to export story record', error);
+      toastError(`Export story failed: ${String(error && error.message ? error.message : error || 'unknown')}`);
+    }
+  }
+
+  onImportStoryDatas = namespace => {
+    if (!namespace) return;
+    Alert.alert(
+      'Import story record?',
+      'This will replace the current local story record for this namespace with the selected xKEVA story export file. A backup of the current local story folder will be kept before importing.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Import',
+          onPress: async () => {
+            try {
+              const result = await importStoryRecordFromFile(namespace);
+              if (result && result.cancelled) return;
+              clearNamespaceAlphaCache();
+              await this.loadModalAlphaValue(namespace);
+              Alert.alert(
+                'Import complete',
+                `Story record restored. Files imported: ${result && result.writtenCount ? result.writtenCount : 0}.`,
+                [
+                  { text: 'OK' },
+                  {
+                    text: 'Open Story',
+                    onPress: () => {
+                      this.setState({ isModalVisible: false }, () => {
+                        this.openStoryFromModal(namespace, {
+                          autoCommand: '/d continue',
+                          autoCommandSource: 'story-import',
+                          startStoryOnMount: true,
+                        });
+                      });
+                    },
+                  },
+                ],
+              );
+            } catch (error) {
+              if (isStoryRecordImportCancel(error)) return;
+              console.warn('Failed to import story record', error);
+              toastError(`Import story failed: ${String(error && error.message ? error.message : error || 'unknown')}`);
+            }
+          },
+        },
+      ],
+    );
   }
 
   onWait = (namespaceId, displayName, refresh) => {
@@ -1763,28 +2440,126 @@ class Namespaces extends React.Component {
     });
   }
 
+  getModalNamespaceStorageId = (namespace = this.state.nsData) => {
+    const shortCode = namespace && namespace.shortCode;
+    return shortCode ? String(shortCode) : '';
+  }
+
+  ensureModalLocalAvatarDir = async () => {
+    const exists = await RNFS.exists(LOCAL_NAMESPACE_AVATAR_DIR);
+    if (!exists) {
+      await RNFS.mkdir(LOCAL_NAMESPACE_AVATAR_DIR);
+    }
+  }
+
+  pickLocalAvatar = async (namespace = this.state.nsData) => {
+    try {
+      const storageId = this.getModalNamespaceStorageId(namespace);
+      if (!storageId) {
+        toastError('Shortcode required before setting local avatar');
+        return;
+      }
+      const picked = await ImagePicker.openPicker({
+        mediaType: 'photo',
+        cropping: true,
+        compressImageQuality: 0.9,
+        forceJpg: true,
+      });
+      const sourcePath = picked && picked.path;
+      if (!sourcePath) return;
+      await this.ensureModalLocalAvatarDir();
+      const targetPath = getNamespaceAvatarPath(storageId);
+      if (await RNFS.exists(targetPath)) {
+        await RNFS.unlink(targetPath).catch(() => {});
+      }
+      await RNFS.copyFile(sourcePath, targetPath);
+      this.setState({ localAvatarUri: `file://${targetPath}` });
+      Toast.show('Local avatar updated', {
+        position: Toast.positions.TOP,
+        backgroundColor: '#53DD6C',
+      });
+    } catch (error) {
+      if (error && (String(error.code || '').includes('E_PICKER_CANCELLED') || String(error.message || '').toLowerCase().includes('cancel'))) {
+        return;
+      }
+      console.warn('Failed to pick local avatar', error);
+      toastError('Failed to set local avatar');
+    }
+  }
+
+  removeLocalAvatar = async (namespace = this.state.nsData) => {
+    try {
+      const storageId = this.getModalNamespaceStorageId(namespace);
+      if (!storageId) return;
+      const path = getNamespaceAvatarPath(storageId);
+      if (await RNFS.exists(path)) {
+        await RNFS.unlink(path);
+      }
+      this.setState(prevState => ({
+        localAvatarUri: null,
+        avatarRefreshKey: prevState.avatarRefreshKey + 1,
+      }));
+      Toast.show('Local avatar removed', {
+        position: Toast.positions.TOP,
+        backgroundColor: '#53DD6C',
+      });
+    } catch (error) {
+      console.warn('Failed to remove local avatar', error);
+      toastError('Failed to remove local avatar');
+    }
+  }
+
+  onRemoveLocalAvatarFromModal = namespace => {
+    if (!namespace) return;
+    Alert.alert(
+      'Remove avatar?',
+      'This will delete the local avatar on this device.',
+      [
+        { text: loc.general.cancel, style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => this.removeLocalAvatar(namespace),
+        },
+      ],
+    );
+  }
+
   getNSModal() {
     const nsData = this.state.nsData;
     if (!nsData) {
       return null;
     }
 
-    const titleStyle ={
-      fontSize: 17,
-      fontWeight: '700',
-      marginTop: 15,
-      marginBottom: 0,
-      color: KevaColors.darkText,
-    };
-    const contentStyle ={
-      fontSize: 16,
-      color: KevaColors.lightText,
-      paddingTop: 5,
-    };
-    const container = {
-      flexDirection: 'column',
-      justifyContent: 'flex-start',
-    }
+    const namespaceText = key => getNamespaceText(key, this.state.namespaceUiLang);
+    const profileWalletAddress = String(this.state.modalWalletAddress || '').trim();
+    const profileAddressText = profileWalletAddress || 'Loading wallet address...';
+    const titleAvatar = getInitials(nsData.displayName || '');
+    const colorAvatar = stringToColor(nsData.displayName || '');
+    const modalGeneratedAvatarUri = buildHeadAssetUriCandidates(nsData.shortCode)[0] || null;
+    const modalAvatarSource = this.state.localAvatarUri
+      ? { uri: this.state.localAvatarUri }
+      : (modalGeneratedAvatarUri ? { uri: modalGeneratedAvatarUri } : null);
+    const modalAlphaValue = nsData.shortCode
+      ? (this.state.nsDataAlphaValue !== null ? this.state.nsDataAlphaValue : resolveNamespaceAlphaValue(nsData.shortCode))
+      : null;
+    const { glowColor: modalAlphaGlowColor, glowSoftColor: modalAlphaGlowSoftColor } = getAlphaGlowDetails(modalAlphaValue);
+    const modalAlphaGlowStyle = modalAlphaGlowColor ? {
+      shadowColor: modalAlphaGlowColor,
+      shadowOpacity: 0.95,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 12,
+    } : null;
+    const modalAlphaHaloStyle = modalAlphaGlowColor ? {
+      borderColor: modalAlphaGlowColor,
+      backgroundColor: modalAlphaGlowSoftColor,
+      shadowColor: modalAlphaGlowColor,
+      shadowOpacity: 0.78,
+      shadowRadius: 22,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 10,
+    } : null;
     return (
       <Modal style={styles.modalShow} backdrop={true}
         swipeDirection="down"
@@ -1798,58 +2573,229 @@ class Namespaces extends React.Component {
             </Text>
           </TouchableOpacity>
           {ModalHandle}
-          <Text style={{color: '#fff', fontSize: 16}}>
-              {loc.general.close}
-          </Text>
+          <View style={{width: 44}} />
         </View>
-        <View style={{ marginHorizontal: 10}}>
-          <Text style={[titleStyle, {marginTop: 5}]}>{'Name'}</Text>
-          <Text style={contentStyle}>{nsData.displayName}</Text>
-
-          <Text style={titleStyle}>{'ID'}</Text>
-          <View style={container}>
-            <Text style={contentStyle}>{nsData.id}</Text>
-            <TouchableOpacity onPress={() => {this.copyString(nsData.id)}}>
-              {COPY_ICON}
+        <ScrollView style={styles.infoModalScroll} contentContainerStyle={styles.infoModalContent}>
+          <View style={styles.infoIdentityCard}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={styles.infoAvatarButton}
+              onPress={() => this.pickLocalAvatar(nsData)}
+              onLongPress={() => {
+                if (this.state.localAvatarUri) {
+                  this.onRemoveLocalAvatarFromModal(nsData);
+                }
+              }}
+            >
+              <View style={[styles.infoAvatarNeonWrapper, modalAlphaGlowStyle]}>
+                {modalAlphaHaloStyle ? <View pointerEvents="none" style={[styles.infoAvatarNeonHalo, modalAlphaHaloStyle]} /> : null}
+                {modalAvatarSource ? (
+                  <Image source={modalAvatarSource} style={styles.infoAvatarImage} />
+                ) : (
+                  <View style={[styles.infoAvatarFallback, { backgroundColor: colorAvatar }]}>
+                    <Text style={styles.infoAvatarFallbackLabel}>{titleAvatar}</Text>
+                  </View>
+                )}
+              </View>
             </TouchableOpacity>
-          </View>
 
-          <Text style={titleStyle}>{loc.namespaces.shortcode}</Text>
-          <View style={container}>
-            {nsData.shortCode ?
-              <>
-                <Text style={contentStyle}>{nsData.shortCode}</Text>
-                <TouchableOpacity onPress={() => {this.copyString(nsData.shortCode)}}>
+            <View style={styles.infoIdentityMeta}>
+              <View style={styles.infoMetaInlineRow}>
+                <Text style={[styles.infoMetaLabel, styles.infoMetaInlineLabel]}>{'Name'}</Text>
+                <Text style={[styles.infoMetaValue, styles.infoMetaInlineValue]} numberOfLines={1} ellipsizeMode='tail'>{nsData.displayName}</Text>
+                {!this.state.nsIsOther && !!nsData.walletId ? (
+                  <TouchableOpacity
+                    style={styles.infoNameEditButton}
+                    onPress={() => this.openEditProfileFromModal(nsData)}
+                    activeOpacity={0.75}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <MCIcon name="pencil-outline" size={18} color={KevaColors.actionText} />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+
+              <View style={styles.infoMetaAddressRow}>
+                <Text
+                  style={[styles.infoMetaValue, styles.infoWalletAddressText]}
+                  numberOfLines={1}
+                  ellipsizeMode='tail'
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.65}
+                >{profileAddressText}</Text>
+                <TouchableOpacity style={styles.inlineCopyButton} onPress={() => {this.copyString(profileWalletAddress)}}>
                   {COPY_ICON}
                 </TouchableOpacity>
-              </>
-              :
-              <Text style={contentStyle}>{loc.general.unconfirmed}</Text>
-            }
+              </View>
+
+              <View style={styles.infoMetaInlineRowLast}>
+                <Text style={[styles.infoMetaLabel, styles.infoMetaInlineLabel]}>{'ID'}</Text>
+                {nsData.shortCode ?
+                  <>
+                    <Text style={[styles.infoMetaValue, styles.infoMetaInlineValue]} numberOfLines={1} ellipsizeMode='tail'>{nsData.shortCode}</Text>
+                    <TouchableOpacity style={styles.inlineCopyButton} onPress={() => {this.copyString(nsData.shortCode)}}>
+                      {COPY_ICON}
+                    </TouchableOpacity>
+                  </>
+                  :
+                  <Text style={styles.infoMetaValue}>{loc.general.unconfirmed}</Text>
+                }
+              </View>
+            </View>
           </View>
-          {nsData.walletId && (
-            <KevaButton
-              type='secondary'
-              caption={loc.namespaces.transfer}
-              style={styles.transferAction}
-              onPress={() => this.openTransfer(nsData)}
-            />
-          )}
-          {this.state.nsIsOther && (
-            <KevaButton
-              type='secondary'
-              caption={loc.namespaces.hide}
-              style={styles.transferAction}
-              onPress={() => this.onUnfollowFromModal(nsData)}
-            />
-          )}
-        </View>
+
+          {!this.state.nsIsOther && !!nsData.walletId ? (
+            <View style={styles.consoleSectionCard}>
+              <Text style={styles.consoleSectionTitle}>{namespaceText('agent')}</Text>
+              <>
+                <View style={styles.consoleActionRow}>
+                  <KevaButton
+                    type='secondary'
+                    caption={`  ${namespaceText('avatar')}  `}
+                    style={styles.consoleActionButton}
+                    onPress={() => this.onRemoveLocalAvatarFromModal(nsData)}
+                  />
+                  <KevaButton
+                    type='secondary'
+                    caption={`  ${namespaceText('transfer')}  `}
+                    style={styles.consoleActionButton}
+                    onPress={() => this.openTransfer(nsData)}
+                  />
+                  <KevaButton
+                    type='secondary'
+                    caption={`  ${namespaceText('sell')}  `}
+                    style={styles.consoleActionButton}
+                    onPress={() => this.openSellNFT(nsData)}
+                  />
+                </View>
+                <View style={styles.consoleActionRow}>
+                  <KevaButton
+                    type='secondary'
+                    caption={`  ${namespaceText('language')}  `}
+                    style={styles.consoleActionButton}
+                    onPress={() => this.onOpenRoleLanguageFromModal(nsData)}
+                  />
+                  <KevaButton
+                    type='secondary'
+                    caption={`  ${namespaceText('model')}  `}
+                    style={styles.consoleActionButton}
+                    onPress={() => this.onOpenRoleModelFromModal(nsData)}
+                  />
+                  <KevaButton
+                    type='secondary'
+                    caption={`  ${namespaceText('voice')}  `}
+                    style={styles.consoleActionButton}
+                    onPress={() => this.onOpenRoleVoiceFromModal(nsData)}
+                  />
+                </View>
+              </>
+            </View>
+          ) : null}
+
+          <View style={styles.consoleSectionCard}>
+            <Text style={styles.consoleSectionTitle}>{namespaceText('roleSection')}</Text>
+            {!!nsData.walletId && !this.state.nsIsOther ? (
+              <View style={styles.consoleActionRow}>
+                <KevaButton
+                  type='secondary'
+                  caption={`  ${namespaceText('memory')}  `}
+                  style={styles.consoleActionButton}
+                  onPress={() => this.onOpenRoleMemoryFromModal(nsData)}
+                />
+                <KevaButton
+                  type='secondary'
+                  caption={`  ${namespaceText('save')}  `}
+                  style={styles.consoleActionButton}
+                  onPress={() => this.onExportRoleRecordFromModal(nsData)}
+                />
+                <KevaButton
+                  type='secondary'
+                  caption={`  ${namespaceText('load')}  `}
+                  style={styles.consoleActionButton}
+                  onPress={() => this.onImportRoleRecordFromModal(nsData)}
+                />
+                <KevaButton
+                  type='secondary'
+                  caption={`  ${namespaceText('clone')}  `}
+                  style={styles.consoleActionButton}
+                  onPress={() => this.onCloneRoleMemoryFromModal(nsData)}
+                />
+                <KevaButton
+                  type='secondary'
+                  caption={`  ${namespaceText('clear')}  `}
+                  style={styles.consoleActionButton}
+                  onPress={() => this.onClearRoleDatas(nsData)}
+                />
+              </View>
+            ) : (
+              <Text style={styles.consoleSectionHint}>{namespaceText('roleActionsOwnOnly')}</Text>
+            )}
+          </View>
+
+          <View style={styles.consoleSectionCard}>
+            <Text style={styles.consoleSectionTitle}>{namespaceText('storySection')}</Text>
+            {!!nsData.walletId && !this.state.nsIsOther ? (
+              <>
+                <View style={styles.consoleActionRow}>
+                  <KevaButton
+                    type='secondary'
+                    caption={`  ${namespaceText('save')}  `}
+                    style={styles.consoleActionButton}
+                    onPress={() => this.onExportStoryDatas(nsData)}
+                  />
+                  <KevaButton
+                    type='secondary'
+                    caption={`  ${namespaceText('load')}  `}
+                    style={styles.consoleActionButton}
+                    onPress={() => this.onImportStoryDatas(nsData)}
+                  />
+                  <KevaButton
+                    type='secondary'
+                    caption={`  ${namespaceText('records')}  `}
+                    style={styles.consoleActionButton}
+                    onPress={() => this.onOpenStoryRecordsFromModal(nsData)}
+                  />
+                  <KevaButton
+                    type='secondary'
+                    caption={`  ${namespaceText('clone')}  `}
+                    style={styles.consoleActionButton}
+                    onPress={() => this.onCloneStoryFromModal(nsData)}
+                  />
+                </View>
+                <View style={styles.consoleActionRow}>
+                  <KevaButton
+                    type='secondary'
+                    caption={`  ${namespaceText('timeline')}  `}
+                    style={styles.consoleActionButton}
+                    onPress={() => this.onSwitchWorldlineFromModal(nsData)}
+                  />
+                  <KevaButton
+                    type='secondary'
+                    caption={`  ${namespaceText('clear')}  `}
+                    style={styles.consoleActionButton}
+                    onPress={() => this.onClearStoryDatas(nsData)}
+                  />
+                </View>
+              </>
+            ) : null}
+            {this.state.nsIsOther ? (
+              <View style={styles.consoleActionRow}>
+                <KevaButton
+                  type='secondary'
+                  caption={loc.namespaces.hide}
+                  style={styles.consoleActionButton}
+                  onPress={() => this.onUnfollowFromModal(nsData)}
+                />
+              </View>
+            ) : null}
+          </View>
+        </ScrollView>
       </Modal>
     )
   }
 
   closeModal = () => {
-    this.setState({ codeErr: null, isModalVisible: false, nsIsOther: false });
+    this.setState({ codeErr: null, isModalVisible: false, nsIsOther: false, nsDataAlphaValue: null });
   }
 
   onUnfollowFromModal = async nsData => {
@@ -1954,33 +2900,33 @@ class Namespaces extends React.Component {
       fontSize: 16,
     });
     return (
-      <LinearGradient
-        colors={['#050915', '#061025', '#050915']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.screenBackground}
-      >
+      <View style={styles.screenBackground}>
         <SafeAreaView style={styles.topContainer}>
           {this.getNSModal()}
           {this.getPendingModal()}
           <TabView
             navigationState={this.state}
             renderScene={({ route }) => {
-              switch (route.key) {
-                case 'first':
-                  return <MyNamespaces dispatch={dispatch} navigation={navigation} namespaceList={namespaceList} onInfo={this.onNSInfo} onWait={this.onWait}/>;
-                case 'second':
-                  return (
-                    <OtherNamespaces
-                      dispatch={dispatch}
-                      navigation={navigation}
-                      otherNamespaceList={otherNamespaceList}
-                      namespaceList={namespaceList}
-                      onInfo={this.onNSInfo}
-                    />
-                  );
+              if (route.key === 'first') {
+                return <MyNamespaces dispatch={dispatch} navigation={navigation} namespaceList={namespaceList} onInfo={this.onNSInfo} onWait={this.onWait} avatarRefreshKey={this.state.avatarRefreshKey} applyServerNamespaceRequestKey={this.state.applyServerNamespaceRequestKey}/>;
               }
+              if (route.key === 'second') {
+                return (
+                  <OtherNamespaces
+                    dispatch={dispatch}
+                    navigation={navigation}
+                    otherNamespaceList={otherNamespaceList}
+                    namespaceList={namespaceList}
+                    onInfo={this.onNSInfo}
+                    avatarRefreshKey={this.state.avatarRefreshKey}
+                    applyServerNamespaceRequestKey={this.state.applyServerNamespaceRequestKey}
+                  />
+                );
+              }
+              return <View />;
             }}
+            lazy
+            removeClippedSubviews={false}
             onIndexChange={index => this.setState({ index })}
             initialLayout={{ width: Dimensions.get('window').width }}
             renderTabBar={props =>
@@ -1998,7 +2944,7 @@ class Namespaces extends React.Component {
             }
           />
         </SafeAreaView>
-      </LinearGradient>
+      </View>
     );
   }
 
@@ -2017,11 +2963,23 @@ export default NamespacesScreen = connect(mapStateToProps)(Namespaces)
 var styles = StyleSheet.create({
   screenBackground: {
     flex: 1,
+    backgroundColor: '#050505',
   },
   avatarWrapper: {
-    padding: 5,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'visible',
+  },
+  avatarNeonHalo: {
+    position: 'absolute',
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    borderWidth: 1,
+    opacity: 0.85,
   },
   generatedAvatarImage: {
     width: 50,
@@ -2077,17 +3035,22 @@ var styles = StyleSheet.create({
   neonCard: {
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(94, 234, 212, 0.4)',
-    shadowColor: '#7dd3fc',
-    shadowOpacity: 0.22,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
+    borderColor: 'rgba(255, 255, 255, 0.10)',
+    backgroundColor: '#0a0a0a',
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
     overflow: 'hidden',
   },
   cardInner: {
     paddingHorizontal: 14,
     paddingVertical: 14,
+    backgroundColor: '#0d1420',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#182233',
   },
   headerRow: {
     flexDirection: 'row',
@@ -2095,8 +3058,7 @@ var styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   neonAvatarWrapper: {
-    paddingVertical: 6,
-    paddingRight: 12,
+    marginRight: 12,
   },
   titleArea: {
     flex: 1,
@@ -2120,9 +3082,9 @@ var styles = StyleSheet.create({
     marginBottom: 0
   },
   section: {
-    backgroundColor: 'white',
+    backgroundColor: '#0d1420',
     borderBottomWidth: 1 / PixelRatio.get(),
-    borderBottomColor: '#e8e8e8',
+    borderBottomColor: '#1b2336',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -2130,16 +3092,16 @@ var styles = StyleSheet.create({
     paddingHorizontal: 10
   },
   detail: {
-    color: '#5E5959',
+    color: '#7f9bb8',
     fontSize: 13,
     paddingTop: 3
   },
   sectionText: {
-    color: '#5E5959',
+    color: '#d6e8ff',
     fontSize: 16,
   },
   resultText: {
-    color: '#918C8C',
+    color: '#9fc2ff',
     fontSize: 15,
     top: -1,
     paddingRight: 5
@@ -2151,7 +3113,7 @@ var styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: "center",
     marginHorizontal: 12,
-    backgroundColor: '#fff',
+    backgroundColor: '#0d1420',
     borderRadius: 12,
     marginTop: 14,
   },
@@ -2173,6 +3135,12 @@ var styles = StyleSheet.create({
     fontSize: 13,
     color: 'rgba(125, 211, 252, 0.9)',
     paddingHorizontal: 6,
+  },
+  shortCodeLevelLabel: {
+    fontSize: 13,
+    color: 'rgba(125, 211, 252, 0.95)',
+    paddingLeft: 6,
+    paddingRight: 2,
   },
   chatButton: {
     marginLeft: 6,
@@ -2323,9 +3291,10 @@ var styles = StyleSheet.create({
     padding: 10,
   },
   accentLine: {
-    height: 2,
+    height: 1,
     marginTop: 12,
     borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
   spaceActionRow: {
     flexDirection: 'row',
@@ -2386,7 +3355,7 @@ var styles = StyleSheet.create({
   },
   modalShow: {
     borderRadius: 10,
-    backgroundColor: '#fff',
+    backgroundColor: '#0a0f18',
     justifyContent: 'flex-start',
     marginHorizontal: 0,
     marginBottom: 0,
@@ -2407,7 +3376,8 @@ var styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderBottomWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
+    borderColor: '#1b2336',
+    backgroundColor: '#0a0f18',
   },
   codeErr: {
     marginTop: 20,
@@ -2506,6 +3476,189 @@ var styles = StyleSheet.create({
   transferAction: {
     marginTop: 18,
     alignSelf: 'flex-start',
+  },
+  transferActionRow: {
+    marginTop: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  transferActionInline: {
+    marginRight: 10,
+  },
+  infoModalScroll: {
+    flexGrow: 0,
+  },
+  infoModalContent: {
+    paddingHorizontal: 12,
+    paddingBottom: 20,
+    backgroundColor: '#0a0f18',
+  },
+  infoIdentityCard: {
+    backgroundColor: '#08111f',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#1f2a44',
+    padding: 16,
+    marginBottom: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  infoIdentityMeta: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  infoMetaRow: {
+    marginBottom: 14,
+  },
+  infoMetaRowLast: {
+    marginBottom: 0,
+  },
+  infoMetaInlineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  infoMetaInlineRowLast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 0,
+  },
+  infoMetaAddressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  infoMetaLabel: {
+    fontSize: 12,
+    color: '#7DD3FC',
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    marginBottom: 5,
+  },
+  infoMetaValue: {
+    fontSize: 16,
+    color: '#E2E8F0',
+  },
+  infoMetaInlineLabel: {
+    marginBottom: 0,
+    marginRight: 6,
+  },
+  infoMetaInlineValue: {
+    flexShrink: 1,
+  },
+  infoMetaValueStack: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  infoMetaSubValue: {
+    marginTop: 4,
+    color: 'rgba(226,232,240,0.72)',
+    fontSize: 12,
+  },
+  consoleSectionCard: {
+    backgroundColor: '#08111f',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#1f2a44',
+    padding: 16,
+    marginBottom: 14,
+  },
+  consoleSectionTitle: {
+    fontSize: 12,
+    color: '#7DD3FC',
+    fontWeight: '700',
+    letterSpacing: 1.3,
+    marginBottom: 8,
+  },
+  consoleSectionBody: {
+    fontSize: 14,
+    color: '#94A3B8',
+    lineHeight: 20,
+  },
+  consoleSectionHint: {
+    fontSize: 13,
+    color: '#64748B',
+    marginTop: 12,
+  },
+  consoleActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 14,
+  },
+  consoleActionButton: {
+    marginRight: 10,
+    marginBottom: 8,
+  },
+  infoAvatarButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 120,
+  },
+  infoAvatarNeonWrapper: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
+  },
+  infoAvatarNeonHalo: {
+    position: 'absolute',
+    width: 106,
+    height: 106,
+    borderRadius: 53,
+    borderWidth: 1,
+    opacity: 0.86,
+  },
+  infoAvatarImage: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+  },
+  infoAvatarFallback: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoAvatarFallbackLabel: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  infoAvatarHint: {
+    fontSize: 13,
+    color: KevaColors.actionText,
+    textAlign: 'center',
+  },
+  infoAvatarSubHint: {
+    fontSize: 11,
+    color: KevaColors.lightText,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  inlineValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  inlineValueText: {
+    flex: 1,
+  },
+  infoWalletAddressText: {
+    flex: 1,
+    fontSize: 12,
+    letterSpacing: -0.25,
+  },
+  inlineCopyButton: {
+    marginLeft: 'auto',
+    paddingLeft: 8,
+  },
+  infoNameEditButton: {
+    marginLeft: 6,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
   },
   emptyMessage: {
     fontSize: 18,

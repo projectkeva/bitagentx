@@ -46,21 +46,31 @@ class Client {
         tls: protocol === 'tls',
         timeout: TIMEOUT
       };
-      this.conn = net.createConnection(options, () => {
-        this.conn.on('data', chunk => {
-          this.conn.setTimeout(0);
+      const conn = net.createConnection(options, () => {
+        if (this.conn !== conn) {
+          return;
+        }
+        conn.on('data', chunk => {
+          if (this.conn !== conn) {
+            return;
+          }
+          conn.setTimeout(0);
           this.onRecv(chunk);
         });
-        this.conn.on('end', e => {
-          this.conn.setTimeout(0);
+        conn.on('end', e => {
+          if (this.conn !== conn) {
+            return;
+          }
+          conn.setTimeout(0);
           this.onEnd(e);
         });
-        this.conn.on('error', e => {
+        conn.on('error', e => {
           this.onError(e);
         });
         resolve();
       });
-      this.conn.on('error', errorHandler);
+      this.conn = conn;
+      conn.on('error', errorHandler);
     });
   }
 

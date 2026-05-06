@@ -60,36 +60,37 @@ async function handleDestinyCommand(chat, deps) {
     return;
   }
 
-  const params = chat?.props?.navigation?.state?.params || {};
-  const { namespaceId, shortCode } = params || {};
-  const agentId = shortCode || namespaceId;
-
-  const seedPrompt = buildDestinySeedPrompt(agentId);
-
-  if (isLLMActive(chat)) {
-    const lockedLanguage = storyLangCode ? languageNameFromCode(storyLangCode) : pickGameLanguage(loc);
-    const autostartHeader =
-      'IMPORTANT:\n' +
-      `- Language: ${lockedLanguage}. Reply only in ${lockedLanguage}.\n` +
-      '- Do NOT ask the player to choose a language.\n' +
-      '- Start the interactive game immediately.\n\n';
-
-    chat.replyFromAgent(memoryMode === 'continue' ? 'Continuing story from latest records...' : 'Starting a new story run...');
-    await chat.replyFromLLM(autostartHeader + removeLanguageHandshake(seedPrompt), null, {
-      silentUser: true,
-      useRecentHistory: memoryMode === 'continue',
-      memoryMode,
-      condensedMemory,
-    });
+  if (!isLLMActive(chat)) {
+    chat.replyFromAgent('Story now runs only through a loaded model. Use /a to load an LLM, then run /d again.');
     return;
   }
 
-  const cardText = `Destiny Seed Card\nAgent ID: ${agentId || 'Unknown'}\nReady to copy the full card.`;
+  const params = chat?.props?.navigation?.state?.params || {};
+  const { namespaceId, shortCode } = params || {};
+  const agentId = shortCode || namespaceId;
+  const seedPrompt = buildDestinySeedPrompt(agentId);
+  const lockedLanguage = storyLangCode ? languageNameFromCode(storyLangCode) : pickGameLanguage(loc);
+  const isFirstTurn = memoryMode !== 'continue';
+  const autostartHeader =
+    'RUNTIME_HARD_CONSTRAINTS:\n' +
+    `- Language: ${lockedLanguage}. Reply only in ${lockedLanguage}.\n` +
+    '- Start the interactive game immediately.\n' +
+    '- The agent is physically inside the Story world. The user is a remote commander linked through a live comms channel.\n' +
+    (isFirstTurn
+      ? '- First reply only: open with one short in-character line, then continue as a live comms report from inside the world.\n' +
+        '- First reply only: do not write literary narration, monologue, diary text, detached scene-setting prose, or system setup wording.\n' +
+        '- First reply only: clearly report successful login/entry, signal/comms status, what the role currently sees, what is happening nearby, and what order the commander wants to give next.\n' +
+        '- First reply only: keep it grounded, sensory, immediate, interactive, and framed as a field transmission rather than omniscient narration.\n'
+      : '') +
+    '\n';
 
-  chat.replyFromAgentSeedCard(cardText, seedPrompt);
-  chat.replyFromAgent(
-    'Click the link above to copy. Paste into GPT, Grok, DeepSeek, or any base model to start the Interactive Destiny story game. When you finish the run, paste the result here to commit it on-chain for your next level. Have fun!',
-  );
+  chat.replyFromAgent(memoryMode === 'continue' ? 'Continuing story from latest records...' : 'Connecting to the All Generative Universe System network…');
+  await chat.replyFromLLM(autostartHeader + removeLanguageHandshake(seedPrompt), null, {
+    silentUser: true,
+    useRecentHistory: memoryMode === 'continue',
+    memoryMode,
+    condensedMemory,
+  });
 }
 
 module.exports = {

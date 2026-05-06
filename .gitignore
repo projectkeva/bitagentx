@@ -67,3 +67,14 @@ artifacts/
 buildxkeva.bat
 android/app/src/main/assets/index.android.bundle
 android/build-debug-openclaw.log
+
+# OpenClaw/appd local verification artifacts
+.artifacts/
+.android-toolchain/
+.backup*/
+541-screenshots/
+*.bak.542
+.tmp_*
+package-lock.json
+scripts/env.android-mac.sh
+scripts/start-metro-daemon.sh

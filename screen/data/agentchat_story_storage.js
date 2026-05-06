@@ -21,6 +21,8 @@ export const getStoryRawPath = (storyScopeDir, dayKey) => `${storyScopeDir}/raw/
 
 export const getStoryDigestPath = (storyScopeDir, dayKey) => `${storyScopeDir}/digest/${dayKey}.json`;
 
+export const getStoryCurrentPath = storyScopeDir => `${storyScopeDir}/current_story.json`;
+
 export const ensureStoryDirs = async storyScopeDir => {
   const ensure = async dir => {
     const exists = await RNFS.exists(dir);

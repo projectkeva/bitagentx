@@ -1,8 +1,11 @@
-kevacoin-linux — <a href="https://github.com/kevacoin-project/kevacoin/releases/download/v0.16.8.0/kevacoin-0.16.8.0.tar.gz" download>下载</a>
-
-kevacoin-win — <a href="https://github.com/kevacoin-project/kevacoin/releases/download/v0.16.8.0/kevacoin-0.16.8-win64-setup.exe" download>下载</a>
-
-kevacoin-mac — <a href="https://github.com/kevacoin-project/kevacoin/releases/download/v0.16.8.0/Kevacoin-Qt.dmg" download>下载</a>
-
-kevacoin-android.apk — <a href="https://github.com/kevacoin-project/keva_wallet/releases/download/v9.0.3/kevacoin-wallet_9.0.3.apk" download>下载</a>
-
+<div class="download-section download-section-xkeva">
+  <div class="download-section-title">XKEVA</div>
+  <div class="download-row"><span class="download-name">bitAgent X</span><a class="download-btn" href="https://github.com/projectkeva/app/releases">Download</a></div>
+</div>
+<div class="download-section download-section-kevacoin">
+  <div class="download-section-title">Kevacoin</div>
+  <div class="download-row"><span class="download-name">kevacoin-linux</span><a class="download-btn" href="https://github.com/kevacoin-project/kevacoin/releases/download/v0.16.8.0/kevacoin-0.16.8.0.tar.gz" download>Download</a></div>
+  <div class="download-row"><span class="download-name">kevacoin-win</span><a class="download-btn" href="https://github.com/kevacoin-project/kevacoin/releases/download/v0.16.8.0/kevacoin-0.16.8-win64-setup.exe" download>Download</a></div>
+  <div class="download-row"><span class="download-name">kevacoin-mac</span><a class="download-btn" href="https://github.com/kevacoin-project/kevacoin/releases/download/v0.16.8.0/Kevacoin-Qt.dmg" download>Download</a></div>
+  <div class="download-row"><span class="download-name">kevacoin-android.apk</span><a class="download-btn" href="https://github.com/kevacoin-project/keva_wallet/releases/download/v9.0.3/kevacoin-wallet_9.0.3.apk" download>Download</a></div>
+</div>

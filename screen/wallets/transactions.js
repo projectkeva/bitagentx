@@ -30,7 +30,6 @@ import {
   BlueWalletNavigationHeader,
   BlueAlertWalletExportReminder,
 } from '../../BlueComponents';
-import WalletGradient from '../../class/walletGradient';
 import { Icon } from 'react-native-elements';
 import { LightningCustodianWallet, WatchOnlyWallet } from '../../class';
 import Modal from 'react-native-modal';
@@ -39,7 +38,6 @@ import HandoffSettings from '../../class/handoff';
 import Handoff from 'react-native-handoff';
 import ActionSheet from '../ActionSheet';
 import { showStatus, hideStatus, enableStatus, THIN_BORDER } from '../../util';
-import KevaColors from '../../common/KevaColors';
 /** @type {AppStorage} */
 let BlueApp = require('../../BlueApp');
 let loc = require('../../loc');
@@ -62,17 +60,18 @@ export default class WalletTransactions extends Component {
             })
           }
         >
-          <Icon name="kebab-horizontal" type="octicon" size={22} color="#FFFFFF" />
+          <Icon name="kebab-horizontal" type="octicon" size={22} color="#9ffcff" />
         </TouchableOpacity>
       ),
       headerStyle: {
-        backgroundColor: WalletGradient.headerColorFor(navigation.state.params.wallet.type),
-        borderBottomWidth: 0,
+        backgroundColor: '#06131b',
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(0, 229, 255, 0.28)',
         elevation: 0,
         shadowRadius: 0,
         shadowColor: 'transparent',
       },
-      headerTintColor: '#FFFFFF',
+      headerTintColor: '#9ffcff',
       ...(IS_ANDROID ? TransitionPresets.SlideFromRightIOS : {}),
     };
   };
@@ -257,7 +256,7 @@ export default class WalletTransactions extends Component {
             marginBottom: 8,
             fontWeight: 'bold',
             fontSize: 24,
-            color: BlueApp.settings.foregroundColor,
+            color: '#eaffff',
           }}
         >
           {loc.transactions.list.title}
@@ -345,7 +344,9 @@ export default class WalletTransactions extends Component {
             }
           }}
           style={{
-            backgroundColor: '#f2f2f2',
+            backgroundColor: '#06131b',
+            borderColor: 'rgba(0, 229, 255, 0.34)',
+            borderWidth: 1,
             borderRadius: 9,
             minHeight: 49,
             flex: 1,
@@ -355,7 +356,7 @@ export default class WalletTransactions extends Component {
             alignItems: 'center',
           }}
         >
-          <Text style={{ color: '#062453', fontSize: 18 }}>marketplace</Text>
+          <Text style={{ color: '#9ffcff', fontSize: 18 }}>marketplace</Text>
         </TouchableOpacity>
       ),
       ios:
@@ -365,7 +366,9 @@ export default class WalletTransactions extends Component {
               Linking.openURL('https://bluewallet.io/marketplace/');
             }}
             style={{
-              backgroundColor: '#f2f2f2',
+              backgroundColor: '#06131b',
+              borderColor: 'rgba(0, 229, 255, 0.34)',
+              borderWidth: 1,
               borderRadius: 9,
               minHeight: 49,
               flex: 1,
@@ -375,8 +378,8 @@ export default class WalletTransactions extends Component {
               alignItems: 'center',
             }}
           >
-            <Icon name="external-link" size={18} type="font-awesome" color="#9aa0aa" />
-            <Text style={{ color: '#062453', fontSize: 18, marginHorizontal: 8 }}>marketplace</Text>
+            <Icon name="external-link" size={18} type="font-awesome" color="#8befff" />
+            <Text style={{ color: '#9ffcff', fontSize: 18, marginHorizontal: 8 }}>marketplace</Text>
           </TouchableOpacity>
         ) : null,
     });
@@ -394,7 +397,9 @@ export default class WalletTransactions extends Component {
         }}
         style={{
           marginLeft: 5,
-          backgroundColor: '#f2f2f2',
+          backgroundColor: '#06131b',
+          borderColor: 'rgba(0, 229, 255, 0.34)',
+          borderWidth: 1,
           borderRadius: 9,
           minHeight: 49,
           flex: 1,
@@ -404,7 +409,7 @@ export default class WalletTransactions extends Component {
           alignItems: 'center',
         }}
       >
-        <Text style={{ color: '#062453', fontSize: 18 }}>LApp Browser</Text>
+        <Text style={{ color: '#9ffcff', fontSize: 18 }}>LApp Browser</Text>
       </TouchableOpacity>
     );
   };
@@ -418,7 +423,9 @@ export default class WalletTransactions extends Component {
         }
         style={{
           marginLeft: 5,
-          backgroundColor: '#f2f2f2',
+          backgroundColor: '#06131b',
+          borderColor: 'rgba(0, 229, 255, 0.34)',
+          borderWidth: 1,
           borderRadius: 9,
           minHeight: 49,
           flex: 1,
@@ -430,7 +437,7 @@ export default class WalletTransactions extends Component {
       >
         <Text
           style={{
-            color: '#062453',
+            color: '#9ffcff',
             fontSize: 18,
           }}
         >
@@ -488,6 +495,7 @@ export default class WalletTransactions extends Component {
           item={item.item}
           itemPriceUnit={this.state.wallet.getPreferredBalanceUnit()}
           shouldRefresh={this.state.timeElapsed}
+          transactionListTheme="dark"
         />
       </View>
     );
@@ -597,7 +605,7 @@ export default class WalletTransactions extends Component {
         <NavigationEvents
           onWillFocus={() => {
             StatusBar.setBarStyle('light-content');
-            StatusBar.setBackgroundColor(WalletGradient.headerColorFor(this.props.navigation.state.params.wallet.type));
+            StatusBar.setBackgroundColor('#03080d');
             this.redrawScreen();
           }}
           onWillBlur={() => this.onWillBlur()}
@@ -610,6 +618,7 @@ export default class WalletTransactions extends Component {
               this.setState({ wallet }, () => InteractionManager.runAfterInteractions(() => BlueApp.saveToDisk()));
             })
           }
+          navigationHeaderTheme="dark-agent"
           onManageFundsPressed={() => {
             if (this.state.wallet.getUserHasSavedExport()) {
               this.setState({ isManageFundsModalVisible: true });
@@ -628,7 +637,7 @@ export default class WalletTransactions extends Component {
             }
           }}
         />
-        <View style={{ backgroundColor: '#FFFFFF', flex: 1 }}>
+        <View style={{ backgroundColor: '#03080d', flex: 1 }}>
           <FlatList
             ListHeaderComponent={this.renderListHeaderComponent}
             onEndReachedThreshold={0.3}
@@ -657,7 +666,7 @@ export default class WalletTransactions extends Component {
                   numberOfLines={0}
                   style={{
                     fontSize: 18,
-                    color: '#9aa0aa',
+                    color: '#83cbd1',
                     textAlign: 'center',
                     marginVertical: 16,
                   }}
@@ -668,7 +677,7 @@ export default class WalletTransactions extends Component {
                   <Text
                     style={{
                       fontSize: 18,
-                      color: '#9aa0aa',
+                      color: '#b9fbff',
                       textAlign: 'center',
                       fontWeight: '600',
                     }}
@@ -722,14 +731,14 @@ export default class WalletTransactions extends Component {
           style={{
             flexDirection: 'row',
             alignSelf: 'center',
-            backgroundColor: '#fff',
+            backgroundColor: '#06131b',
             position: 'absolute',
             bottom: 30,
             borderRadius: 30,
             minHeight: 48,
             borderWidth: THIN_BORDER,
-            borderColor: KevaColors.cellBorder,
-            shadowColor: "#000",
+            borderColor: 'rgba(0, 229, 255, 0.34)',
+            shadowColor: "#00e5ff",
             shadowOffset: {
               width: 0,
               height: 6,
@@ -822,12 +831,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
-    borderColor: 'rgba(0, 0, 0, 0.1)',
+    borderColor: 'rgba(0, 229, 255, 0.22)',
     minHeight: 200,
     height: 200,
   },
   advancedTransactionOptionsModalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#06131b',
     padding: 22,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,

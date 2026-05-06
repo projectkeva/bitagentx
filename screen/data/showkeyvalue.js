@@ -10,6 +10,7 @@ import {
   StatusBar,
   InteractionManager,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import HTMLView from 'react-native-htmlview';
 import { createThumbnail } from "react-native-create-thumbnail";
@@ -18,6 +19,7 @@ import MIcon from 'react-native-vector-icons/MaterialIcons';
 import Icon from 'react-native-vector-icons/Ionicons';
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
+const KevaButton = require('../../common/KevaButton');
 import { THIN_BORDER, timeConverter, toastError, getInitials, stringToColor } from "../../util";
 import {
   parseSpecialKey,
@@ -31,12 +33,17 @@ import {
 import VideoPlayer from 'react-native-video-player';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import { Image } from 'react-native-elements';
+import RNFS from 'react-native-fs';
+import LinearGradient from 'react-native-linear-gradient';
 const loc = require('../../loc');
 import { connect } from 'react-redux';
 import { extractMedia, getImageGatewayURL, removeMedia, replaceMedia } from './mediaManager';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+const createHash = require('create-hash');
 
 const MAX_TIME = 3147483647;
+const LOCAL_NAMESPACE_AVATAR_DIR = `${RNFS.DocumentDirectoryPath}/namespace_avatars`;
+const getNamespaceAvatarPath = namespaceId => `${LOCAL_NAMESPACE_AVATAR_DIR}/${encodeURIComponent(String(namespaceId || 'unknown'))}.jpg`;
 
 const selectAvatarCandidateUri = (candidateUris = [], failedUris = [], generatedUri = null) => {
   if (generatedUri) return null;
@@ -48,6 +55,53 @@ const selectAvatarCandidateUri = (candidateUris = [], failedUris = [], generated
   return null;
 };
 
+const clampAlpha = value => {
+  if (!Number.isFinite(value)) return null;
+  return Math.max(-99, Math.min(99, value));
+};
+
+const blendChannel = (from, to, ratio) => {
+  const t = Math.max(0, Math.min(1, ratio));
+  return Math.round(from + (to - from) * t);
+};
+
+const computeAlphaValue = id => {
+  try {
+    const seed0 = Buffer.from(createHash('sha256').update(`${id || ''}projectkeva`).digest());
+    const attrBytes = Buffer.from(':alpha');
+    const seedBytes = Buffer.from(createHash('sha256').update(Buffer.concat([seed0, attrBytes])).digest());
+    const hi = seedBytes.readUInt32BE(0);
+    const lo = seedBytes.readUInt32BE(4);
+    return -99 + (((hi ^ lo) >>> 0) % 199);
+  } catch (err) {
+    console.warn(err);
+    return null;
+  }
+};
+
+const buildAlphaColorComponents = alphaValue => {
+  const clamped = clampAlpha(alphaValue);
+  if (clamped === null || clamped === 0) return { r: 255, g: 255, b: 255 };
+  const intensity = Math.abs(clamped) / 99;
+  const white = { r: 255, g: 255, b: 255 };
+  const target = clamped < 0 ? { r: 12, g: 176, b: 96 } : { r: 24, g: 128, b: 255 };
+  return {
+    r: blendChannel(white.r, target.r, intensity),
+    g: blendChannel(white.g, target.g, intensity),
+    b: blendChannel(white.b, target.b, intensity),
+  };
+};
+
+const toRgbaString = ({ r, g, b }, alpha = 1) => `rgba(${r}, ${g}, ${b}, ${alpha})`;
+
+const getAlphaGlowDetails = shortCode => {
+  const components = buildAlphaColorComponents(computeAlphaValue(shortCode));
+  return {
+    glowColor: toRgbaString(components, 0.95),
+    glowSoftColor: toRgbaString(components, 0.22),
+  };
+};
+
 class NamespaceAvatar extends React.PureComponent {
   constructor(props) {
     super(props);
@@ -56,6 +110,7 @@ class NamespaceAvatar extends React.PureComponent {
       avatarCandidateRequestId: 0,
       avatarFailedUris: [],
       generatedAvatarUri: null,
+      localAvatarUri: null,
     };
     this._avatarRequestId = 0;
     this._avatarHandle = null;
@@ -64,11 +119,13 @@ class NamespaceAvatar extends React.PureComponent {
 
   componentDidMount() {
     this._isMounted = true;
+    this.loadLocalAvatar(this.props.shortCode);
     this.prepareGeneratedAvatar(this.props.shortCode);
   }
 
   componentDidUpdate(prevProps) {
     if (prevProps.shortCode !== this.props.shortCode) {
+      this.loadLocalAvatar(this.props.shortCode);
       this.prepareGeneratedAvatar(this.props.shortCode);
     }
   }
@@ -80,6 +137,22 @@ class NamespaceAvatar extends React.PureComponent {
     }
     this._avatarHandle = null;
   }
+
+  loadLocalAvatar = async shortCode => {
+    try {
+      if (!shortCode) {
+        if (this._isMounted) this.setState({ localAvatarUri: null });
+        return;
+      }
+      const path = getNamespaceAvatarPath(shortCode);
+      const exists = await RNFS.exists(path);
+      if (this._isMounted) {
+        this.setState({ localAvatarUri: exists ? `file://${path}?t=${Date.now()}` : null });
+      }
+    } catch (error) {
+      console.warn('Failed to load showkeyvalue local avatar', error);
+    }
+  };
 
   prepareGeneratedAvatar = shortCode => {
     if (this._avatarHandle && typeof this._avatarHandle.cancel === 'function') {
@@ -178,14 +251,38 @@ class NamespaceAvatar extends React.PureComponent {
       textStyle,
     } = this.props;
 
-    const { avatarCandidateUris, avatarCandidateRequestId, avatarFailedUris, generatedAvatarUri } = this.state;
+    const { avatarCandidateUris, avatarCandidateRequestId, avatarFailedUris, generatedAvatarUri, localAvatarUri } = this.state;
     const avatarCandidateUri = selectAvatarCandidateUri(avatarCandidateUris, avatarFailedUris, generatedAvatarUri);
-    const shouldProbeAvatar = !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
+    const shouldProbeAvatar = !localAvatarUri && !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
     const fallbackInitials = getInitials(displayName);
     const fallbackColor = stringToColor(displayName);
     const borderRadius = size / 2;
     const fallbackFontSize = Math.max(12, Math.round(size * 0.45));
-    const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
+    const avatarSource = localAvatarUri ? { uri: localAvatarUri } : (generatedAvatarUri ? { uri: generatedAvatarUri } : undefined);
+    const { glowColor, glowSoftColor } = getAlphaGlowDetails(shortCode);
+    const haloSize = size + 22;
+    const haloStyle = {
+      width: haloSize,
+      height: haloSize,
+      borderRadius: haloSize / 2,
+      shadowColor: glowColor,
+      shadowOpacity: 0.95,
+      shadowRadius: 15,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 10,
+    };
+    const neonHaloStyle = {
+      width: size + 18,
+      height: size + 18,
+      borderRadius: (size + 18) / 2,
+      borderColor: glowColor,
+      backgroundColor: glowSoftColor,
+      shadowColor: glowColor,
+      shadowOpacity: 0.75,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 8,
+    };
 
     const avatarContent = avatarSource ? (
       <View style={[styles.avatarGeneratedContainer, { borderRadius }]}>
@@ -198,16 +295,19 @@ class NamespaceAvatar extends React.PureComponent {
     );
 
     const content = (
-      <View style={[styles.avatarWrapperBase, { width: size, height: size, borderRadius }, containerStyle]}>
-        {shouldProbeAvatar && (
-          <RNImage
-            source={{ uri: avatarCandidateUri }}
-            style={styles.avatarProbe}
-            onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
-            onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
-          />
-        )}
-        {avatarContent}
+      <View style={[styles.avatarNeonWrapper, haloStyle, containerStyle]}>
+        <View pointerEvents="none" style={[styles.avatarNeonHalo, neonHaloStyle]} />
+        <View style={[styles.avatarWrapperBase, { width: size, height: size, borderRadius }]}>
+          {shouldProbeAvatar && (
+            <RNImage
+              source={{ uri: avatarCandidateUri }}
+              style={styles.avatarProbe}
+              onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
+              onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
+            />
+          )}
+          {avatarContent}
+        </View>
       </View>
     );
 
@@ -296,6 +396,9 @@ class ShowKeyValue extends React.Component {
       opacity: 0,
       replyCount: 0,
       replies: [],
+      showFragmentNamespaceModal: false,
+      pendingFragmentText: '',
+      fragmentNamespaceId: '',
     };
 
     this.LARGE_IMAGE_ICON = (
@@ -350,6 +453,8 @@ class ShowKeyValue extends React.Component {
       key = keyValue.key;
       value = keyValue.value;
     }
+
+    this.setState({ key: key || '', value: value || '' });
 
     const {mediaCID, mimeType} = extractMedia(value);
     const {mediaInfoList, dispatch} = this.props;
@@ -770,42 +875,87 @@ class ShowKeyValue extends React.Component {
   }
 
   onShare = (key, value) => {
-    const {navigation, namespaceList} = this.props;
-    const {index, type, namespaceId, updateHashtag, hashtags} = navigation.state.params;
-    // Must have a namespace.
-    if (Object.keys(namespaceList).length == 0) {
+    const {namespaceList} = this.props;
+    const fragmentText = String(value || this.state.value || '').trim();
+    if (!fragmentText) {
+      toastError('No readable content available.');
+      return;
+    }
+    const namespaces = namespaceList?.namespaces || {};
+    const ids = Object.keys(namespaces);
+    if (!ids.length) {
       toastError(loc.namespaces.create_namespace_first);
       return;
     }
+    this.setState({
+      showFragmentNamespaceModal: true,
+      pendingFragmentText: fragmentText,
+      fragmentNamespaceId: this.state.fragmentNamespaceId || namespaces[ids[0]].id,
+    });
+  }
 
-    const shareInfo = parseSpecialKey(key);
-    if (shareInfo.keyType != 'share') {
-      // This is not a share post.
-      const {shareTxid} = navigation.state.params;
-      navigation.navigate('ShareKeyValue', {
-        namespaceId,
-        index,
-        type,
-        shareTxid,
-        origKey: key,
-        origValue: value,
-        updateHashtag,
-        hashtags,
-        onShareDone: this.onShareDone,
-      });
+  openFragmentWithNamespace = () => {
+    const {navigation, namespaceList} = this.props;
+    const namespaces = namespaceList?.namespaces || {};
+    const namespaceId = this.state.fragmentNamespaceId;
+    const namespace = namespaces[namespaceId];
+    const fragmentText = String(this.state.pendingFragmentText || '').trim();
+    if (!namespace || !fragmentText) {
+      toastError('No readable content available.');
       return;
     }
-
-    // This is a share post, share the shared post instead.
-    const txidToShare = shareInfo.partialTxId;
-    let {shareValue} = this.state;
-    navigation.navigate('ShareKeyValue', {
-      namespaceId,
-      index, type,
-      shareTxid: txidToShare,
-      origValue: shareValue,
-      updateHashtag,
+    this.setState({ showFragmentNamespaceModal: false, pendingFragmentText: '' });
+    navigation.push('AgentRole', {
+      namespaceId: namespace.id,
+      shortCode: namespace.shortCode,
+      displayName: namespace.displayName,
+      walletId: namespace.walletId,
+      txid: namespace.txid || namespace.txId,
+      rootAddress: namespace.rootAddress,
+      price: namespace.price,
+      desc: namespace.desc,
+      addr: namespace.addr,
+      profile: namespace.profile,
+      autoStoryFragmentText: fragmentText,
+      roleEntrySource: 'keyvalue-forward-quote-fragment',
+      suppressAutoLinkStart: true,
     });
+  }
+
+  renderFragmentNamespaceModal = () => {
+    const namespaces = this.props.namespaceList?.namespaces || {};
+    const items = Object.keys(namespaces).map(id => ({ label: namespaces[id].displayName || namespaces[id].shortCode || id, value: namespaces[id].id, shortCode: namespaces[id].shortCode }));
+    if (!this.state.showFragmentNamespaceModal) {
+      return null;
+    }
+    return (
+      <Modal visible transparent animationType="fade" onRequestClose={() => this.setState({ showFragmentNamespaceModal: false })}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.fragmentModalCard}>
+            <Text style={styles.fragmentModalTitle}>Choose a namespace</Text>
+            <ScrollView style={styles.fragmentNamespaceList} nestedScrollEnabled>
+              {items.map(item => {
+                const selected = item.value === this.state.fragmentNamespaceId;
+                return (
+                  <TouchableOpacity
+                    key={item.value}
+                    style={[styles.fragmentNamespaceOption, selected ? styles.fragmentNamespaceOptionSelected : null]}
+                    onPress={() => this.setState({ fragmentNamespaceId: item.value })}
+                  >
+                    <Text style={[styles.fragmentNamespaceOptionText, selected ? styles.fragmentNamespaceOptionTextSelected : null]} numberOfLines={1}>
+                      {item.label}
+                    </Text>
+                    {!!item.shortCode && <Text style={styles.fragmentNamespaceOptionShortCode}>@{item.shortCode}</Text>}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <KevaButton type="secondary" style={styles.fragmentModalButton} caption="Next" onPress={this.openFragmentWithNamespace} />
+            <KevaButton type="secondary" style={styles.fragmentModalButton} caption="Cancel" onPress={() => this.setState({ showFragmentNamespaceModal: false, pendingFragmentText: '' })} />
+          </View>
+        </View>
+      </Modal>
+    );
   }
 
   render() {
@@ -847,7 +997,13 @@ class ShowKeyValue extends React.Component {
 
     const listHeader = (
       <View style={styles.container}>
-        <View style={styles.keyContainer}>
+        {this.renderFragmentNamespaceModal()}
+        <LinearGradient
+          colors={['#0b1224', '#0f162b', '#0b1224']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.keyContainer}
+        >
           <NamespaceAvatar
             displayName={displayName}
             shortCode={shortCode}
@@ -868,8 +1024,13 @@ class ShowKeyValue extends React.Component {
             </View>
             <Text style={styles.key} selectable>{displayKey}</Text>
           </View>
-        </View>
-        <View style={styles.valueContainer}>
+        </LinearGradient>
+        <LinearGradient
+          colors={['#0b1224', '#0f162b', '#0b1224']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.valueContainer}
+        >
           { isRaw ?
             <Text style={styles.value} selectable>{value}</Text>
           :
@@ -880,9 +1041,14 @@ class ShowKeyValue extends React.Component {
               renderNode={this.renderNode}
             />
           }
-        </View>
+        </LinearGradient>
         { this.getShareContent(key) }
-        <View style={styles.actionContainer}>
+        <LinearGradient
+          colors={['#0b1224', '#0f162b', '#0b1224']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.actionContainer}
+        >
           <View style={{flexDirection: 'row'}}>
             <TouchableOpacity onPress={() => this.onReply()} style={{flexDirection: 'row'}}>
               <MIcon name="chat-bubble-outline" size={22} style={styles.talkIcon} />
@@ -905,7 +1071,7 @@ class ShowKeyValue extends React.Component {
           <TouchableOpacity onPress={() => this.onToggleRaw()}>
             <MIcon name="format-clear" size={22} style={this.state.isRaw ? styles.rawIcon : styles.actionIcon} />
           </TouchableOpacity>
-        </View>
+        </LinearGradient>
       </View>
     );
     return (
@@ -913,7 +1079,7 @@ class ShowKeyValue extends React.Component {
         style={styles.listStyle}
         ListHeaderComponent={listHeader}
         removeClippedSubviews={false}
-        contentContainerStyle={{paddingBottom: 100}}
+        contentContainerStyle={styles.listContent}
         data={replies}
         onRefresh={() => this.fetchReplies()}
         refreshing={this.state.isRefreshing}
@@ -937,6 +1103,16 @@ function mapStateToProps(state) {
 export default ShowKeyValueScreen = connect(mapStateToProps)(ShowKeyValue);
 
 var styles = StyleSheet.create({
+  avatarNeonWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
+  },
+  avatarNeonHalo: {
+    position: 'absolute',
+    borderWidth: 1,
+    opacity: 0.85,
+  },
   avatarWrapperBase: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -970,113 +1146,146 @@ var styles = StyleSheet.create({
     opacity: 0,
   },
   container: {
-    backgroundColor: KevaColors.background,
+    backgroundColor: 'transparent',
+  },
+  listStyle: {
+    flex: 1,
+    backgroundColor: '#050915',
+  },
+  listContent: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 120,
   },
   keyContainer: {
-    marginVertical: 10,
-    borderWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
-    padding: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.32)',
+    backgroundColor: 'transparent',
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     flexDirection: 'row',
+    shadowColor: '#7dd3fc',
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
+    overflow: 'hidden',
   },
   key: {
     fontSize: 16,
-    color: KevaColors.darkText,
+    color: '#E5E7EB',
     flex: 1,
     flexWrap: 'wrap',
+    lineHeight: 24,
   },
   value: {
     fontSize: 16,
-    color: KevaColors.darkText,
+    color: '#CBD5E1',
     lineHeight: 25,
   },
   valueContainer: {
-    marginTop: 2,
-    borderWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
-    padding: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.32)',
+    backgroundColor: 'transparent',
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    shadowColor: '#7dd3fc',
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+    overflow: 'hidden',
   },
   actionContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    borderBottomWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
-    padding: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.32)',
+    backgroundColor: 'transparent',
+    borderRadius: 18,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    overflow: 'hidden',
   },
   talkIcon: {
-    color: KevaColors.arrowIcon,
+    color: '#93C5FD',
     paddingLeft: 15,
     paddingRight: 2,
     paddingVertical: 2
   },
   shareIcon: {
-    color: KevaColors.arrowIcon,
+    color: '#93C5FD',
     paddingLeft: 15,
     paddingRight: 2,
     paddingVertical: 2
   },
   actionIcon: {
-    color: KevaColors.arrowIcon,
+    color: '#93C5FD',
     paddingHorizontal: 15,
     paddingVertical: 2
   },
   rawIcon: {
-    color: KevaColors.actionText,
+    color: '#7DD3FC',
     paddingHorizontal: 15,
     paddingVertical: 2
   },
   count: {
-    color: KevaColors.arrowIcon,
-    paddingVertical: 2
+    color: '#E0F2FE',
+    paddingVertical: 2,
+    fontWeight: '600',
   },
   reply: {
     flexDirection: 'row',
     justifyContent: 'flex-start',
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    backgroundColor:'#fff',
-    borderBottomWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginVertical: 6,
+    borderRadius: 16,
+    backgroundColor:'#0b1224',
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.25)',
   },
   replyValue: {
     fontSize: 16,
-    color: KevaColors.darkText,
+    color: '#CBD5E1',
     paddingVertical: 5,
     lineHeight: 25,
   },
   timestamp: {
-    color: KevaColors.extraLightText,
+    color: '#9CA3AF',
     alignSelf: 'center',
     fontSize: 13,
   },
   timestampReply: {
-    color: KevaColors.extraLightText,
+    color: '#9CA3AF',
     alignSelf: 'flex-start',
     fontSize: 13,
   },
   sender: {
     fontSize: 16,
     fontWeight: '700',
-    color: KevaColors.darkText,
+    color: '#E5E7EB',
     alignSelf: 'center',
     maxWidth: 220,
   },
   shortCode: {
     fontSize: 16,
     fontWeight: '700',
-    color: KevaColors.actionText,
+    color: '#7DD3FC',
   },
   shortCodeReply: {
     fontSize: 16,
     fontWeight: '700',
-    color: KevaColors.actionText,
+    color: '#7DD3FC',
   },
   senderBar: {
     borderLeftWidth: 4,
-    borderColor: KevaColors.cellBorder,
+    borderColor: 'rgba(125, 211, 252, 0.55)',
     width: 0,
     paddingLeft: 3,
     paddingRight: 7,
@@ -1085,13 +1294,13 @@ var styles = StyleSheet.create({
   shareContainer: {
     flexDirection: 'column',
     justifyContent: 'flex-start',
-    backgroundColor: '#fff',
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    borderWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    borderRadius: 12,
-    margin: 10,
+    backgroundColor: '#0b1224',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.25)',
+    borderRadius: 16,
+    marginVertical: 8,
   },
   videoContainer: {
     position: 'absolute',
@@ -1111,34 +1320,88 @@ var styles = StyleSheet.create({
   },
   htmlText: {
     fontSize: 16,
-    color: KevaColors.darkText,
+    color: '#CBD5E1',
     lineHeight: 23
   },
   htmlLink: {
     fontSize: 16,
-    color: KevaColors.actionText,
+    color: '#7DD3FC',
     lineHeight: 23
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  fragmentModalCard: {
+    backgroundColor: '#0b1224',
+    borderColor: 'rgba(94, 234, 212, 0.35)',
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 20,
+  },
+  fragmentModalTitle: {
+    color: '#E5E7EB',
+    fontSize: 17,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 18,
+  },
+  fragmentModalButton: {
+    marginTop: 14,
+  },
+  fragmentNamespaceList: {
+    maxHeight: 260,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.35)',
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#111827',
+  },
+  fragmentNamespaceOption: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(94, 234, 212, 0.18)',
+  },
+  fragmentNamespaceOptionSelected: {
+    backgroundColor: '#164E63',
+  },
+  fragmentNamespaceOptionText: {
+    color: '#E5E7EB',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  fragmentNamespaceOptionTextSelected: {
+    color: '#FFFFFF',
+  },
+  fragmentNamespaceOptionShortCode: {
+    color: '#7DD3FC',
+    fontSize: 13,
+    marginTop: 3,
   }
 });
 
 export const htmlStyles = StyleSheet.create({
   div: {
     fontSize: 16,
-    color: KevaColors.darkText,
+    color: '#CBD5E1',
     lineHeight: 25,
     padding: 0,
     marginBottom: 0,
   },
   p: {
     fontSize: 16,
-    color: KevaColors.darkText,
+    color: '#CBD5E1',
     lineHeight: 25,
     padding: 0,
     margin: 0,
   },
   a: {
     fontSize: 16,
-    color: '#0000ee',
+    color: '#7DD3FC',
     lineHeight: 25,
     padding: 0,
     margin: 0,
@@ -1147,7 +1410,7 @@ export const htmlStyles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     alignSelf: 'center',
-    color: KevaColors.darkText,
+    color: '#E5E7EB',
     lineHeight: 25,
     paddingVertical: 20,
     textAlign: 'center',

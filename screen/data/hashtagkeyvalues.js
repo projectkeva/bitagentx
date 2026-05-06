@@ -12,7 +12,6 @@ import {
   Image as RNImage,
   ActivityIndicator,
 } from 'react-native';
-const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { THIN_BORDER, toastError } from '../../util';
 import {
@@ -27,7 +26,7 @@ import MIcon from 'react-native-vector-icons/MaterialIcons';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { connect } from 'react-redux'
 import { createThumbnail } from "react-native-create-thumbnail";
-import { Avatar, Image } from 'react-native-elements';
+import { Image } from 'react-native-elements';
 import { setMediaInfo, } from '../../actions'
 import {
   getHashtagScriptHash, parseSpecialKey, getSpecialKeyText, decodeBase64,
@@ -37,15 +36,40 @@ import Toast from 'react-native-root-toast';
 import { timeConverter, stringToColor, getInitials, SCREEN_WIDTH, } from "../../util";
 import Biometric from '../../class/biometrics';
 import { extractMedia, getImageGatewayURL, removeMedia } from './mediaManager';
+import LinearGradient from 'react-native-linear-gradient';
+import styles from './hashtagkeyvalues_template';
+import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
 
 const PLAY_ICON  = <MIcon name="play-arrow" size={50} color="#fff"/>;
 const IMAGE_ICON = <Icon name="ios-image" size={50} color="#fff"/>;
+
+const selectAvatarCandidateUri = (candidateUris = [], failedUris = [], generatedUri = null) => {
+  if (generatedUri) return null;
+  for (const candidate of candidateUris) {
+    if (!candidate) continue;
+    if (failedUris && failedUris.includes(candidate)) continue;
+    return candidate;
+  }
+  return null;
+};
 
 class Item extends React.Component {
 
   constructor(props) {
     super(props);
-    this.state = { loading: false, selectedImage: null, isRefreshing: false, thumbnail: null };
+    this.state = {
+      loading: false,
+      selectedImage: null,
+      isRefreshing: false,
+      thumbnail: null,
+      avatarCandidateUris: [],
+      avatarCandidateRequestId: 0,
+      avatarFailedUris: [],
+      generatedAvatarUri: null,
+    };
+    this._avatarRequestId = 0;
+    this._avatarHandle = null;
+    this._isMounted = false;
   }
 
   onEdit = () => {
@@ -71,8 +95,120 @@ class Item extends React.Component {
   }
 
   async componentDidMount() {
+    this._isMounted = true;
+    this.prepareGeneratedAvatar(this.getShortCode());
     InteractionManager.runAfterInteractions(async () => {
       await this._componentDidMount();
+    });
+  }
+
+  componentDidUpdate(prevProps) {
+    const prevShortCode = this.getShortCode(prevProps);
+    const currentShortCode = this.getShortCode();
+    if (prevShortCode !== currentShortCode) {
+      this.prepareGeneratedAvatar(currentShortCode);
+    }
+  }
+
+  componentWillUnmount() {
+    this._isMounted = false;
+    if (this._avatarHandle && typeof this._avatarHandle.cancel === 'function') {
+      this._avatarHandle.cancel();
+    }
+    this._avatarHandle = null;
+  }
+
+  getShortCode = (props = this.props) => {
+    const { item } = props;
+    if (item && item.shortCode) {
+      return item.shortCode;
+    }
+    return null;
+  }
+
+  prepareGeneratedAvatar = shortCode => {
+    if (this._avatarHandle && typeof this._avatarHandle.cancel === 'function') {
+      this._avatarHandle.cancel();
+    }
+
+    if (!shortCode) {
+      if (this._isMounted) {
+        this.setState({
+          avatarCandidateUris: [],
+          avatarCandidateRequestId: 0,
+          avatarFailedUris: [],
+          generatedAvatarUri: null,
+        });
+      }
+      this._avatarHandle = null;
+      return;
+    }
+
+    const requestId = ++this._avatarRequestId;
+
+    const scheduleTask = () => {
+      this._avatarHandle = null;
+      const candidateUris = buildHeadAssetUriCandidates(shortCode);
+      if (!this._isMounted || requestId !== this._avatarRequestId) {
+        return;
+      }
+      if (!candidateUris || candidateUris.length === 0) {
+        this.setState({
+          avatarCandidateUris: [],
+          avatarCandidateRequestId: 0,
+          avatarFailedUris: [],
+          generatedAvatarUri: null,
+        });
+        return;
+      }
+      this.setState(prevState => {
+        const prevCandidateUris = prevState.avatarCandidateUris || [];
+        const sameCandidates =
+          prevCandidateUris.length === candidateUris.length &&
+          prevCandidateUris.every((uri, idx) => uri === candidateUris[idx]);
+        return {
+          avatarCandidateUris: candidateUris,
+          avatarCandidateRequestId: requestId,
+          avatarFailedUris: sameCandidates ? prevState.avatarFailedUris || [] : [],
+          generatedAvatarUri: sameCandidates ? prevState.generatedAvatarUri : null,
+        };
+      });
+    };
+
+    const handle = InteractionManager.runAfterInteractions(() => {
+      scheduleTask();
+    });
+
+    if (handle && typeof handle.cancel === 'function') {
+      this._avatarHandle = handle;
+    } else {
+      scheduleTask();
+    }
+  }
+
+  onAvatarLoadSuccess = (uri, requestId) => {
+    if (!this._isMounted || requestId !== this._avatarRequestId) {
+      return;
+    }
+    this.setState({
+      generatedAvatarUri: uri,
+      avatarFailedUris: [],
+    });
+  }
+
+  onAvatarLoadError = (uri, requestId) => {
+    if (!this._isMounted || requestId !== this._avatarRequestId) {
+      return;
+    }
+    this.setState(prevState => {
+      const prevFailed = prevState.avatarFailedUris || [];
+      if (prevFailed.includes(uri) && prevState.generatedAvatarUri === null) {
+        return null;
+      }
+      return {
+        generatedAvatarUri: null,
+        avatarFailedUris: prevFailed.concat(uri),
+      };
     });
   }
 
@@ -102,8 +238,8 @@ class Item extends React.Component {
   }
 
   render() {
-    let {item, onShow, onReply, onShare, onReward} = this.props;
-    let {thumbnail} = this.state;
+    let {item, index = 0, onShow, onReply, onShare, onReward} = this.props;
+    let {thumbnail, avatarCandidateUris, avatarCandidateRequestId, avatarFailedUris, generatedAvatarUri} = this.state;
     const {mediaCID, mimeType} = extractMedia(item.value);
     let displayKey = item.key;
     const {keyType} = parseSpecialKey(item.key);
@@ -111,29 +247,29 @@ class Item extends React.Component {
       displayKey = getSpecialKeyText(keyType);
     }
 
+    const avatarCandidateUri = selectAvatarCandidateUri(avatarCandidateUris, avatarFailedUris, generatedAvatarUri);
+    const shouldProbeAvatar = !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
+    const fallbackInitials = getInitials(item.displayName);
+    const fallbackColor = stringToColor(item.displayName);
+    const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
+    const avatarContent = avatarSource ? (
+      <View style={styles.generatedAvatarContainer}>
+        <RNImage source={avatarSource} style={styles.generatedAvatarImage} />
+      </View>
+    ) : (
+      <View style={[styles.fallbackAvatar, { backgroundColor: fallbackColor }]}>
+        <Text style={styles.fallbackAvatarLabel}>{fallbackInitials}</Text>
+      </View>
+    );
+
     return (
-      <View style={styles.card}>
+      <View style={[styles.card, styles.masonryCard, index % 2 === 0 ? styles.masonryCardLeft : styles.masonryCardRight]}>
         <TouchableOpacity onPress={() => onShow(item.tx, item.height, item.shortCode, item.displayName)}>
-          <View style={{flex:1,paddingHorizontal:10,paddingTop:2}}>
-            <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between'}}>
-              <View style={{paddingRight: 10}}>
-                <Avatar rounded size="small" title={getInitials(item.displayName)} containerStyle={{backgroundColor: stringToColor(item.displayName)}}/>
-              </View>
-              <Text style={styles.keyDesc} numberOfLines={1} ellipsizeMode="tail">{displayKey}</Text>
-              <View style={{flexDirection: 'row', alignItems:'center',justifyContent:'flex-start'}}>
-                <View style={{height: 50}}/>
-              </View>
-            </View>
-            {(item.height > 0) ?
-              <Text style={styles.timestamp}>{timeConverter(item.time) + '     ' + loc.namespaces.height + ' ' + item.height}</Text>
-              :
-              <Text style={styles.timestamp}>{loc.general.unconfirmed}</Text>
-            }
-            <Text style={styles.valueDesc} numberOfLines={3} ellipsizeMode="tail">{this.stripHtml(removeMedia(item.value))}</Text>
+          <View style={styles.cardValueArea}>
             {
               mediaCID && (
                 mimeType.startsWith('video') ?
-                <View style={{width: 160, height: 120, marginBottom: 5}}>
+                <View style={styles.previewVideoContainer}>
                   <Image source={{uri: thumbnail}}
                     style={styles.previewVideo}
                   />
@@ -145,30 +281,42 @@ class Item extends React.Component {
                 <Image style={styles.previewImage}
                   source={{uri: getImageGatewayURL(mediaCID)}}
                   PlaceholderContent={IMAGE_ICON}
-                  placeholderStyle={{backgroundColor: '#ddd'}}
+                  placeholderStyle={{backgroundColor: '#0b1224'}}
                 />
               )
             }
+            <Text style={styles.valueDesc} numberOfLines={mediaCID ? 4 : 9} ellipsizeMode="tail">{this.stripHtml(removeMedia(item.value))}</Text>
           </View>
         </TouchableOpacity>
-        <View style={{flexDirection: 'row'}}>
-          <TouchableOpacity onPress={() => onReply(item.tx)} style={{flexDirection: 'row'}}>
-            <MIcon name="chat-bubble-outline" size={22} style={styles.talkIcon} />
-            {(item.replies > 0) && <Text style={styles.count}>{item.replies}</Text>}
+        <View style={styles.cardMetaArea}>
+          <TouchableOpacity onPress={() => onShow(item.tx, item.height, item.shortCode, item.displayName)}>
+            <Text style={styles.keyDesc} numberOfLines={2} ellipsizeMode="tail">{displayKey}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => onShare(item.tx, item.key, item.value, item.height)} style={{flexDirection: 'row'}}>
-            <MIcon name="cached" size={22} style={styles.shareIcon} />
-            {(item.shares > 0) && <Text style={styles.count}>{item.shares}</Text>}
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => onReward(item.tx, item.key, item.value, item.height)} style={{flexDirection: 'row'}}>
-            {
-              item.favorite ?
-                <MIcon name="favorite" size={22} style={[styles.shareIcon, {color: KevaColors.favorite}]} />
-              :
-                <MIcon name="favorite-border" size={22} style={styles.shareIcon} />
-            }
-            {(item.likes > 0) && <Text style={styles.count}>{item.likes}</Text> }
-          </TouchableOpacity>
+          <View style={styles.cardFooterRow}>
+            <TouchableOpacity style={styles.cardAuthorRow} onPress={() => onShow(item.tx, item.height, item.shortCode, item.displayName)}>
+              <View style={styles.avatarWrapper}>
+                {shouldProbeAvatar && (
+                  <Image
+                    source={{ uri: avatarCandidateUri }}
+                    style={styles.avatarProbe}
+                    onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
+                    onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
+                  />
+                )}
+                {avatarContent}
+              </View>
+              <Text style={styles.authorName} numberOfLines={1}>{item.displayName || item.shortCode}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => onReward(item.tx, item.key, item.value, item.height)} style={styles.likeButton}>
+              {
+                item.favorite ?
+                  <MIcon name="favorite" size={20} style={[styles.likeIcon, {color: KevaColors.favorite}]} />
+                :
+                  <MIcon name="favorite-border" size={20} style={styles.likeIcon} />
+              }
+              {(item.likes > 0) && <Text style={styles.count}>{item.likes}</Text> }
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     )
@@ -202,7 +350,7 @@ class HashtagKeyValues extends React.Component {
     ...BlueNavigationStyle(),
     title: '',
     tabBarVisible: false,
-    headerStyle: { backgroundColor: '#fff', elevation:0, shadowColor: 'transparent', borderBottomWidth: THIN_BORDER, borderColor: KevaColors.cellBorder },
+    headerStyle: { backgroundColor: '#050915', elevation:0, shadowColor: 'transparent', borderBottomWidth: THIN_BORDER, borderColor: 'rgba(125, 211, 252, 0.2)' },
   });
 
   progressCallback = (totalToFetch, fetched) => {
@@ -463,6 +611,12 @@ class HashtagKeyValues extends React.Component {
     const footerLoader = this.state.isLoadingMore ? <BlueLoading style={{paddingTop: 30, paddingBottom: 400}} /> : null;
 
     return (
+      <LinearGradient
+        colors={['#050915', '#061025', '#050915']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.screenBackground}
+      >
       <SafeAreaView style={styles.topContainer}>
         <View style={styles.inputContainer}>
           <TouchableOpacity onPress={this.closeItemAni}>
@@ -476,6 +630,7 @@ class HashtagKeyValues extends React.Component {
             onChangeText={hashtag => this.setState({ hashtag: hashtag, searched: false })}
             value={hashtag}
             placeholder={loc.namespaces.search_hashtag}
+            placeholderTextColor={'#94A3B8'}
             multiline={false}
             underlineColorAndroid='rgba(0,0,0,0)'
             returnKeyType='search'
@@ -499,7 +654,9 @@ class HashtagKeyValues extends React.Component {
           (mergeList && mergeList.length > 0 ) ?
           <FlatList
             style={styles.listStyle}
-            contentContainerStyle={{paddingBottom: 400, backgroundColor: '#fff'}}
+            contentContainerStyle={styles.listContent}
+            columnWrapperStyle={styles.masonryRow}
+            numColumns={2}
             data={mergeList}
             onRefresh={() => this.refreshKeyValues()}
             onEndReached={() => {this.loadMoreKeyValues()}}
@@ -509,7 +666,7 @@ class HashtagKeyValues extends React.Component {
             keyExtractor={(item, index) => item.key + index}
             ListFooterComponent={footerLoader}
             renderItem={({item, index}) =>
-              <Item item={item} key={index} dispatch={dispatch} onDelete={this.onDelete}
+              <Item item={item} index={index} key={index} dispatch={dispatch} onDelete={this.onDelete}
                 onShow={this.onShow}
                 onReply={this.onReply}
                 onShare={this.onShare}
@@ -522,12 +679,13 @@ class HashtagKeyValues extends React.Component {
           :
           <View style={{justifyContent: 'center', alignItems: 'center'}}>
             <RNImage source={require('../../img/other_no_data.png')} style={{ width: SCREEN_WIDTH*0.33, height: SCREEN_WIDTH*0.33, marginTop: 50, marginBottom: 10 }} />
-            <Text style={{padding: 10, fontSize: 24, textAlign: 'center', color: KevaColors.darkText}}>
+            <Text style={{padding: 20, fontSize: 20, textAlign: 'center', color: KevaColors.inactiveText}}>
               {(searched && hashtag.length > 0) ? (loc.namespaces.no_hashtag + hashtag) : loc.namespaces.hashtag_help}
             </Text>
           </View>
         }
       </SafeAreaView>
+      </LinearGradient>
     );
   }
 
@@ -542,187 +700,3 @@ function mapStateToProps(state) {
 }
 
 export default HashtagKeyValuesScreen = connect(mapStateToProps)(HashtagKeyValues);
-
-var styles = StyleSheet.create({
-  topContainer: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  container: {
-    flex:1,
-  },
-  listStyle: {
-    flex: 1,
-    borderBottomWidth: 1,
-    borderColor: KevaColors.cellBorder,
-  },
-  card: {
-    backgroundColor:'#fff',
-    marginVertical:0,
-    borderBottomWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-  },
-  keyDesc: {
-    flex: 1,
-    fontSize:16,
-    color: KevaColors.darkText,
-  },
-  valueDesc: {
-    flex: 1,
-    fontSize:15,
-    marginBottom: 10,
-    color: KevaColors.lightText
-  },
-  actionIcon: {
-    color: KevaColors.arrowIcon,
-    paddingHorizontal: 15,
-    paddingVertical: 7
-  },
-  talkIcon: {
-    color: KevaColors.arrowIcon,
-    paddingLeft: 15,
-    paddingRight: 2,
-    paddingVertical: 7
-  },
-  shareIcon: {
-    color: KevaColors.arrowIcon,
-    paddingLeft: 15,
-    paddingRight: 2,
-    paddingVertical: 7
-  },
-  count: {
-    color: KevaColors.arrowIcon,
-    paddingVertical: 7
-  },
-  modal: {
-    borderRadius:10,
-    backgroundColor: KevaColors.backgroundLight,
-    zIndex:999999,
-    flexDirection: 'column',
-    justifyContent: 'flex-start',
-    marginHorizontal: 0,
-    marginBottom: 0,
-    android: {
-      marginTop: 20,
-    },
-    ios: {
-      marginTop: 50,
-    }
-  },
-  modalHeader: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderTopLeftRadius: 10,
-    borderTopRightRadius: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  modalDelete: {
-    height: 300,
-    alignSelf: 'center',
-    justifyContent: 'flex-start'
-  },
-  modalText: {
-    fontSize: 18,
-    color: KevaColors.lightText,
-  },
-  waitText: {
-    fontSize: 16,
-    color: KevaColors.lightText,
-    paddingTop: 10,
-  },
-  modalFee: {
-    fontSize: 18,
-    color: KevaColors.statusColor,
-  },
-  modalErr: {
-    fontSize: 16,
-    marginTop: 20,
-  },
-  codeErr: {
-    marginTop: 10,
-    marginHorizontal: 7,
-    flexDirection: 'row'
-  },
-  codeErrText: {
-    color: KevaColors.errColor
-  },
-  action: {
-    fontSize: 17,
-    paddingVertical: 10
-  },
-  inAction: {
-    fontSize: 17,
-    paddingVertical: 10,
-    paddingHorizontal: 7,
-    color: KevaColors.inactiveText
-  },
-  timestamp: {
-    color: KevaColors.extraLightText,
-    fontSize: 13,
-    position: 'relative',
-    top: -5,
-  },
-  previewImage: {
-    width: 90,
-    height:90,
-    alignSelf: 'flex-start',
-    borderRadius: 6,
-  },
-  previewVideo: {
-    width: 160,
-    height: 120,
-    alignSelf: 'flex-start',
-    borderRadius: 0,
-  },
-  playIcon: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  inputContainer: {
-    paddingBottom: 5,
-    paddingLeft: 8,
-    backgroundColor: '#fff',
-    borderBottomWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  textInput:
-  {
-    flex: 1,
-    borderRadius: 10,
-    backgroundColor: '#f1f3f4',
-    android: {
-      paddingTop: 3,
-      paddingBottom: 3,
-    },
-    ios: {
-      paddingTop: 8,
-      paddingBottom: 8,
-    },
-    paddingLeft: 7,
-    paddingRight: 36,
-    fontSize: 15,
-  },
-  searchIcon: {
-    width: 42,
-    height: 42,
-    color: KevaColors.actionText,
-    paddingVertical: 5,
-    paddingHorizontal: 9,
-    android: {
-      top: 4,
-    },
-    ios: {
-      top: 3,
-    }
-  },
-});

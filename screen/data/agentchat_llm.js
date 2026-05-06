@@ -203,7 +203,25 @@ export function attachAgentChatLLM(agent, deps) {
           seen.add(id);
           models.push(id);
         });
-        return models.slice(0, 30);
+
+        const isOpenAI = /(^|\.)openai\.com\/?/i.test(root);
+        const openAINonChatPattern = /^(text-embedding-|tts-|whisper-|dall-e-|omni-moderation|babbage-|davinci-)/i;
+        const chatModels = isOpenAI ? models.filter(id => !openAINonChatPattern.test(id)) : models;
+        const rankModel = id => {
+          const name = String(id || '').toLowerCase();
+          if (/^gpt-5\.5/.test(name)) return 0;
+          if (/^gpt-5\.4/.test(name)) return 1;
+          if (/^gpt-5\.3/.test(name)) return 2;
+          if (/^gpt-5\.2/.test(name)) return 3;
+          if (/^gpt-5\.1/.test(name)) return 4;
+          if (/^gpt-5/.test(name)) return 5;
+          if (/^gpt-4/.test(name)) return 10;
+          if (/^o\d|^o[134]|^chatgpt/.test(name)) return 20;
+          return 50;
+        };
+        return chatModels
+          .sort((a, b) => rankModel(a) - rankModel(b) || String(a).localeCompare(String(b)))
+          .slice(0, 80);
       } catch (error) {
         console.warn('Failed to fetch openai compatible models', error);
         return [];
@@ -279,11 +297,14 @@ export function attachAgentChatLLM(agent, deps) {
         throw new Error('Failed to load models');
       }
 
+      const savedModel = llmConfig && llmConfig.provider === providerName ? String(llmConfig.model || '').trim() : '';
+      const defaultModel = String(providerDef?.defaultModel || '').trim();
       const selectedModel =
         modelOverride ||
-        (llmConfig && llmConfig.provider === providerName ? llmConfig.model : '') ||
+        (savedModel && models.includes(savedModel) ? savedModel : '') ||
+        (defaultModel && models.includes(defaultModel) ? defaultModel : '') ||
         models[0] ||
-        providerDef?.defaultModel ||
+        defaultModel ||
         'default';
 
       const next = { provider: providerName, baseUrl, apiKey, model: selectedModel, updatedAt: Date.now() };
@@ -300,17 +321,24 @@ export function attachAgentChatLLM(agent, deps) {
 
       agent.currentLLMConfig = next;
 
-      const modeLabel = apiKey ? 'cloud' : 'local';
+      const modelDisplay = String(selectedModel || providerDef?.defaultModel || providerName || 'default').trim();
+      const roleModelLabel = typeof agent.getRoleUiText === 'function'
+        ? (agent.getRoleUiText('model') || 'Model')
+        : 'Model';
+      const modelEntryLabel = `[[/rolemodel|${roleModelLabel}]]  ${modelDisplay}`;
       const hello = startup
-        ? `Provider restored: ${providerName} (${modeLabel})`
-        : `Provider loaded: ${providerName} (${modeLabel}) model=${selectedModel}`;
+        ? modelEntryLabel
+        : `${roleModelLabel}  ${modelDisplay}`;
 
       if (startup) {
-        agent.replyFromAgent(hello);
+        const suppressStartupModelNotice = agent?._suppressSystemMessages === true
+          || (typeof agent?.isPureChatMode === 'function' && agent.isPureChatMode());
+        if (!agent?.isStoryScope && !suppressStartupModelNotice) {
+          agent.replyFromAgent(hello);
+        }
       } else {
-        const today = typeof getTodayDateString === 'function' ? getTodayDateString() : new Date().toISOString().slice(0, 10);
-        const modelLines = models.map(modelId => `${today}  [[/a model ${modelId}|${modelId}]]`);
-        agent.replyFromAgent(`${hello}\nEndpoint: ${baseUrl}\nSelect model:\n${modelLines.join('\n')}`);
+        const modelLines = models.map(modelId => `[[/a model ${modelId}|${modelId}]]`);
+        agent.replyFromAgent(`${hello}\nEndpoint: ${baseUrl}\nSelect model:\n${modelLines.join('\n\n')}`);
       }
 
       return { models, selectedModel, baseUrl, apiKey };
@@ -399,14 +427,25 @@ export function attachAgentChatLLM(agent, deps) {
 
   agent.getRecentChatMessagesForLLM =
     agent.getRecentChatMessagesForLLM ||
-    (() => {
-      const msgs = (agent.state.allMessages || []).filter(
-        message =>
-          message &&
-          (message.sender === 'user' || message.sender === 'agent') &&
-          message.text &&
-          !message.pending,
-      );
+    ((options = {}) => {
+      const { memoryMode = 'new' } = options || {};
+      const sourceMessages =
+        memoryMode === 'continue' && Array.isArray(agent.state.currentStoryMessages) && agent.state.currentStoryMessages.length
+          ? agent.state.currentStoryMessages
+          : agent.state.allMessages || [];
+      const msgs = sourceMessages.filter(message => {
+        if (!message || (message.sender !== 'user' && message.sender !== 'agent')) {
+          return false;
+        }
+        const text = getLLMMessageText(message);
+        if (message.sender === 'user' && typeof agent.shouldSuppressUserInputRecord === 'function' && agent.shouldSuppressUserInputRecord(text)) {
+          return false;
+        }
+        if (typeof agent.shouldPersistRoleMessage === 'function' && agent.chatScope === 'role') {
+          return !!agent.shouldPersistRoleMessage(message);
+        }
+        return !!(text && !message.pending && !message._localOnly && message._renderMode !== 'commands');
+      });
       return msgs.slice(-LLM_HISTORY_LIMIT);
     });
 
@@ -428,7 +467,12 @@ export function attachAgentChatLLM(agent, deps) {
         ...(authHeader ? authHeader(apiKey) : apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       };
 
-      const body = { model, messages, temperature: 0.7, stream: false };
+      const normalizedModel = String(model || '').trim().toLowerCase();
+      const supportsCustomTemperature = !/^gpt-5/.test(normalizedModel);
+      const body = { model, messages, stream: false };
+      if (supportsCustomTemperature) {
+        body.temperature = 0.7;
+      }
 
       const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
       const json = await resp.json().catch(() => ({}));
@@ -437,6 +481,40 @@ export function attachAgentChatLLM(agent, deps) {
         throw new Error(`openai_compat http ${resp.status}: ${JSON.stringify(json).slice(0, 200)}`);
       }
       return json?.choices?.[0]?.message?.content ?? '';
+    });
+
+  agent.callAnthropic =
+    agent.callAnthropic ||
+    (async ({ baseUrl, apiKey, model, systemPrompt, recent, authHeader }) => {
+      const root = String(baseUrl || '').replace(/\/$/, '');
+      const url = `${root}/messages`;
+
+      const messages = recent.map(message => ({
+        role: message.sender === 'user' ? 'user' : 'assistant',
+        content: getLLMMessageText(message),
+      })).filter(message => String(message.content || '').trim());
+
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(authHeader ? authHeader(apiKey) : apiKey ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' } : { 'anthropic-version': '2023-06-01' }),
+      };
+
+      const body = {
+        model,
+        system: systemPrompt,
+        messages,
+        max_tokens: 4096,
+      };
+
+      const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      const json = await resp.json().catch(() => ({}));
+
+      if (!resp.ok) {
+        throw new Error(`anthropic http ${resp.status}: ${JSON.stringify(json).slice(0, 200)}`);
+      }
+
+      const parts = Array.isArray(json?.content) ? json.content : [];
+      return parts.map(part => part?.type === 'text' ? part.text || '' : '').join('');
     });
 
   agent.callGemini =
@@ -495,24 +573,37 @@ export function attachAgentChatLLM(agent, deps) {
 
       try {
         const replyText = await agent._llmComplete({ userText, userMessage, options });
-        agent.updateAgentMessage(requestId, replyText);
-
-        const roleSlug = agent.state?.activeRoleSlug || agent.activeRoleSlug;
-        if (roleSlug && typeof agent.runRoleMemoryUpdate === 'function') {
-          agent.runRoleMemoryUpdate(roleSlug, replyText).catch(error => {
-            console.warn('Role memory update failed', error);
-          });
+        if (typeof agent.prepareStoryLLMReplyForDisplay === 'function') {
+          await agent.prepareStoryLLMReplyForDisplay({ requestId, replyText, placeholder });
         }
+        await agent.updateAgentMessage(requestId, replyText);
+        if (typeof agent.persistStoryLLMReply === 'function') {
+          await agent.persistStoryLLMReply({ requestId, replyText, placeholder });
+        }
+        if (typeof agent.scheduleConversationSummaryUpdate === 'function') {
+          const activeRoleSlug =
+            String(agent.state?.activeRoleSlug || agent.activeRoleSlug || agent.state?.currentSummonedRole?.roleSlug || '').trim() || '';
+          if (activeRoleSlug) {
+            agent.scheduleConversationSummaryUpdate(activeRoleSlug);
+          }
+        }
+
+        // Auto role-memory updates during normal chat are intentionally disabled.
+        // Memory should change only through explicit memory-edit/update flows.
       } catch (error) {
         console.warn('LLM call failed', error);
-        agent.updateAgentMessage(requestId, error?.message || 'LLM call failed.');
+        const errorText = error?.message || 'LLM call failed.';
+        await agent.updateAgentMessage(requestId, errorText);
+        if (typeof agent.persistStoryLLMReply === 'function') {
+          await agent.persistStoryLLMReply({ requestId, replyText: errorText, placeholder });
+        }
       }
     });
 
   agent._llmComplete =
     agent._llmComplete ||
     (async ({ userText, userMessage = null, options = {} }) => {
-      const { silentUser = false, useRecentHistory = true, memoryMode = 'new', condensedMemory = '' } = options || {};
+      const { silentUser = false, useRecentHistory = true, memoryMode = 'new', condensedMemory = '', skipRoleContext = false } = options || {};
 
       const cfg = agent.state.llmConfig;
       if (!cfg || !cfg.provider) {
@@ -540,16 +631,22 @@ export function attachAgentChatLLM(agent, deps) {
         memoryMode === 'continue' && String(condensedMemory || '').trim()
           ? `MEMORY (condensed story so far):\n${String(condensedMemory || '').trim()}`
           : '';
-      const systemPrompt = [storyLanguageInstruction, baseSystemPrompt, memoryInstruction].filter(Boolean).join('\n\n');
-      let recent = useRecentHistory ? agent.getRecentChatMessagesForLLM() : [];
+      const roleContextInstruction =
+        !skipRoleContext && typeof agent.buildRoleContextSystemPrompt === 'function'
+          ? await agent.buildRoleContextSystemPrompt({ userText, userMessage, options })
+          : '';
+      const systemPrompt = [storyLanguageInstruction, baseSystemPrompt, roleContextInstruction, memoryInstruction].filter(Boolean).join('\n\n');
+      let recent = useRecentHistory ? agent.getRecentChatMessagesForLLM({ memoryMode }) : [];
 
       if (silentUser) {
-        recent.push({
-          id: `ephemeral-${requestId}`,
-          sender: 'user',
-          text: userText,
-          timestamp: Date.now(),
-        });
+        if (memoryMode !== 'continue') {
+          recent.push({
+            id: `ephemeral-${requestId}`,
+            sender: 'user',
+            text: userText,
+            timestamp: Date.now(),
+          });
+        }
       } else if (userMessage && userMessage.id) {
         recent = recent.filter(message => message.id !== userMessage.id);
         recent.push(userMessage);
@@ -583,6 +680,15 @@ export function attachAgentChatLLM(agent, deps) {
           recent,
           authHeader: providerDef.authHeader,
         });
+      } else if (providerDef.kind === 'anthropic') {
+        replyText = await agent.callAnthropic({
+          baseUrl,
+          apiKey: cfg.apiKey,
+          model: cfg.model || providerDef.defaultModel,
+          systemPrompt,
+          recent,
+          authHeader: providerDef.authHeader,
+        });
       } else {
         throw new Error('Unsupported provider kind.');
       }
@@ -603,6 +709,7 @@ export function attachAgentChatLLM(agent, deps) {
         options: {
           silentUser: true,
           useRecentHistory: false,
+          skipRoleContext: true,
           ...(options || {}),
         },
       });
@@ -702,30 +809,39 @@ export function attachAgentChatLLM(agent, deps) {
       const builtinReg = await agent.readBuiltinRegistry();
       const customReg = await agent.readCustomRegistry();
 
-      const USE_COL_WIDTH = 18;
-      const pad = (s, n) => String(s).padEnd(n, ' ');
       const statusDot = hasKey => (hasKey ? '🟩' : '🟥');
 
       const builtinLines = Object.keys(LLM_PROVIDERS).map(name => {
         const hasCurrentKey = cur?.provider === name && !!String(cur?.apiKey || '').trim();
         const hasKey = !!String(builtinReg?.[name]?.apiKey || '').trim() || hasCurrentKey;
-        return `${statusDot(hasKey)} ${pad(`[[/a ${name}|use]]`, USE_COL_WIDTH)} ${name}`;
+        return `${statusDot(hasKey)} [[/a ${name}|use]] ${name}`;
       });
 
       const customNames = Object.keys(customReg || {}).filter(name => customReg?.[name]?.baseUrl);
-      const customLines = customNames.length
-        ? customNames.map(name => `${statusDot(!!String(customReg?.[name]?.apiKey || '').trim())} ${pad(`[[/a ${name}|use]]`, USE_COL_WIDTH)} ${customReg?.[name]?.label || name}`)
-        : ['(none)'];
+      const customLines = customNames.map(name => `${statusDot(!!String(customReg?.[name]?.apiKey || '').trim())} [[/a ${name}|use]] ${customReg?.[name]?.label || name}`);
+
+      const spacedBuiltinLines = builtinLines.flatMap(line => [line, '']);
+      const spacedCustomLines = customLines.flatMap(line => [line, '']);
+
+      const roleLang = typeof agent.getRoleLangCode === 'function' ? agent.getRoleLangCode() : null;
+      const isZh = roleLang === 'zh-cn';
+      const addModelLabel = isZh ? '新建模型' : 'Add model';
+      const removeKeyLabel = isZh ? '删除模型' : 'Remove key';
+      const backLabel = isZh ? '返回' : 'Back';
+      const apiUsageButton = typeof agent.buildModelApiUsageButtonLine === 'function'
+        ? agent.buildModelApiUsageButtonLine('/a apiusage')
+        : `[[/a apiusage|${isZh ? '使用说明' : 'Instructions'}]]`;
 
       agent.replyFromAgent([
-        'Builtin providers:',
-        ...builtinLines,
+        ...spacedBuiltinLines,
+        ...spacedCustomLines,
+        `[[/a addcustom|${addModelLabel}]]`,
         '',
-        'Custom providers:',
-        ...customLines,
+        apiUsageButton,
         '',
-        '[[/a addcustom|Add custom model]]',
-        '[[/a remove|Remove key]]',
+        `[[/a remove|${removeKeyLabel}]]`,
+        '',
+        `[[/reopen|${backLabel}]]`,
       ].join('\n'));
     });
 
@@ -740,7 +856,8 @@ export function attachAgentChatLLM(agent, deps) {
       const customLines = Object.keys(customReg || {}).map(name => `[[/a remove custom ${name}|${customReg?.[name]?.label || name}]]`);
       const lines = ['Remove key / custom model:', '', ...builtinLines, ...customLines];
       if (lines.length <= 2) lines.push('(none)');
-      agent.replyFromAgent(lines.join('\n'));
+      const spacedLines = lines.flatMap((line, index) => (index === lines.length - 1 ? [line] : [line, '']));
+      agent.replyFromAgent(spacedLines.join('\n'));
     });
 
   agent.handlePendingAISetupInput =
@@ -756,49 +873,63 @@ export function attachAgentChatLLM(agent, deps) {
         agent.replyFromAgent('(empty input)');
         return true;
       }
-      const step = agent.state.pendingAISetupStep;
-      const draft = agent.state.pendingAISetupDraft || {};
 
-      if (step === 'builtin_key') {
-        const provider = String(draft.provider || '').toLowerCase();
-        const builtin = (await agent.readBuiltinRegistry()) || {};
-        builtin[provider] = { ...(builtin[provider] || {}), baseUrl: LLM_PROVIDERS[provider]?.baseUrl || '', apiKey: value, updatedAt: Date.now() };
-        await agent.writeBuiltinRegistry(builtin);
+      try {
+        const step = agent.state.pendingAISetupStep;
+        const draft = agent.state.pendingAISetupDraft || {};
+
+        if (step === 'builtin_key') {
+          const provider = String(draft.provider || '').toLowerCase();
+          if (!provider || !LLM_PROVIDERS[provider]) {
+            throw new Error('Unknown provider');
+          }
+          const builtin = (await agent.readBuiltinRegistry()) || {};
+          builtin[provider] = { ...(builtin[provider] || {}), baseUrl: LLM_PROVIDERS[provider]?.baseUrl || '', apiKey: value, updatedAt: Date.now() };
+          await agent.writeBuiltinRegistry(builtin);
+          await agent.resetAISetupState();
+          await agent.useProviderFromList(provider);
+          return true;
+        }
+
+        if (step === 'custom_name') {
+          await new Promise(resolve =>
+            agent.setState({ pendingAISetupStep: 'custom_url', pendingAISetupDraft: { ...draft, customName: value } }, resolve),
+          );
+          agent.replyFromAgent('Enter base URL:');
+          return true;
+        }
+
+        if (step === 'custom_url') {
+          await new Promise(resolve =>
+            agent.setState({ pendingAISetupStep: 'custom_key', pendingAISetupDraft: { ...draft, customUrl: value } }, resolve),
+          );
+          agent.replyFromAgent('Enter API key:');
+          return true;
+        }
+
+        if (step === 'remove_menu') {
+          agent.replyFromAgent('Select an item from the remove menu.');
+          return true;
+        }
+
+        if (step === 'custom_key') {
+          const nameRaw = String(draft.customName || '').trim();
+          const provider = String(draft.provider || nameRaw).toLowerCase();
+          const baseUrl = String(draft.customUrl || '').trim().replace(/\/$/, '');
+          if (!provider || !baseUrl) {
+            throw new Error('Missing custom model name or base URL');
+          }
+          const custom = (await agent.readCustomRegistry()) || {};
+          custom[provider] = { ...(custom[provider] || {}), label: nameRaw || provider, baseUrl, apiKey: value, updatedAt: Date.now() };
+          await agent.writeCustomRegistry(custom);
+          await agent.resetAISetupState();
+          await agent.useProviderFromList(provider);
+          return true;
+        }
+      } catch (error) {
+        console.warn('AI setup input failed', error);
         await agent.resetAISetupState();
-        await agent.useProviderFromList(provider);
-        return true;
-      }
-
-      if (step === 'custom_name') {
-        await new Promise(resolve =>
-          agent.setState({ pendingAISetupStep: 'custom_url', pendingAISetupDraft: { ...draft, customName: value } }, resolve),
-        );
-        agent.replyFromAgent('Enter base URL:');
-        return true;
-      }
-
-      if (step === 'custom_url') {
-        await new Promise(resolve =>
-          agent.setState({ pendingAISetupStep: 'custom_key', pendingAISetupDraft: { ...draft, customUrl: value } }, resolve),
-        );
-        agent.replyFromAgent('Enter API key:');
-        return true;
-      }
-
-      if (step === 'remove_menu') {
-        agent.replyFromAgent('Select an item from the remove menu.');
-        return true;
-      }
-
-      if (step === 'custom_key') {
-        const nameRaw = String(draft.customName || '').trim();
-        const provider = String(draft.provider || nameRaw).toLowerCase();
-        const baseUrl = String(draft.customUrl || '').trim().replace(/\/$/, '');
-        const custom = (await agent.readCustomRegistry()) || {};
-        custom[provider] = { ...(custom[provider] || {}), label: nameRaw || provider, baseUrl, apiKey: value, updatedAt: Date.now() };
-        await agent.writeCustomRegistry(custom);
-        await agent.resetAISetupState();
-        await agent.useProviderFromList(provider);
+        agent.replyFromAgent('Failed to save API key. Please check the key/provider and try again.');
         return true;
       }
 
@@ -811,10 +942,19 @@ export function attachAgentChatLLM(agent, deps) {
       const parts = trimmed.trim().split(/\s+/);
       if (parts.length === 1) {
         const cur = agent.state.llmConfig;
-        const curLine = cur ? `Current: ${cur.provider} / ${cur.model || ''}` : 'Current: (none)';
+        const roleModelLabel = typeof agent.getRoleUiText === 'function'
+          ? (agent.getRoleUiText('model') || 'Model')
+          : 'Model';
+        const currentLabel = typeof agent.getRoleUiText === 'function'
+          ? (agent.getRoleUiText('current') || 'Current')
+          : 'Current';
+        const curLine = cur ? `${currentLabel}: ${roleModelLabel} ${cur.model || cur.provider || ''}` : `${currentLabel}: (none)`;
+        const listEntry = typeof agent.getRoleUiText === 'function'
+          ? (agent.getRoleUiText('roleModelCheckEntry') || '/rolemodel')
+          : '/rolemodel';
         agent.replyFromAgent(`${curLine}
 Usage:
-[[/a list|/a list]]
+[[/rolemodel|${listEntry}]]
 /a <provider> [key] [model]
 /a add <provider> <url> [key]
 /a del <provider>
@@ -825,6 +965,20 @@ Usage:
 
       const sub = String(parts[1] || '').toLowerCase();
       if (sub === 'list') return agent.renderAIProviderList();
+      if (sub === 'apiusage') {
+        if (typeof agent.buildModelApiUsageMessage === 'function') {
+          agent.replyFromAgent(
+            agent.buildModelApiUsageMessage()
+              .replace(/\[\[\/rolemodel\|([^\]]+)\]\]/g, '[[/a list|$1]]')
+              .replace(/\[\[\/rolemodel\s+apiurl\s+([^|\]]+)\|([^\]]+)\]\]/g, '[[/a apiurl $1|$2]]'),
+          );
+        } else agent.replyFromAgent('API help:\n\nIf you do not know how to get an API key, ask any large model directly, or check the official provider website.');
+        return;
+      }
+      if (sub === 'apiurl') {
+        if (typeof agent.openModelApiUsageUrl === 'function') await agent.openModelApiUsageUrl(parts[2]);
+        return;
+      }
       if (sub === 'addcustom') {
         await new Promise(resolve =>
           agent.setState({ pendingAISetup: true, pendingAISetupStep: 'custom_name', pendingAISetupDraft: {} }, resolve),
@@ -902,7 +1056,20 @@ Usage:
         agent.setState({ llmConfig: next });
         await agent.saveLLMConfig(next);
         await agent.writeActiveProvider({ name: cur.provider, updatedAt: Date.now() });
-        agent.replyFromAgent(`Model selected: ${model}`);
+        if (typeof agent.writeJsonFile === 'function' && agent.llmLastUsedPath) {
+          await agent.writeJsonFile(agent.llmLastUsedPath, {
+            provider: next.provider,
+            baseUrl: next.baseUrl,
+            apiKey: next.apiKey,
+            model: next.model,
+            updatedAt: Date.now(),
+          });
+        }
+        if (agent?.isStoryScope) {
+          agent.replyFromAgent(`Model selected: ${model}`);
+        } else {
+          agent.replyFromAgent(`Model selected: ${model}`);
+        }
         if (agent?.state?.pendingRoleModelReturnToRole) {
           agent.appendRoleCommandMessage('/role');
           agent.setState({ pendingReturnToRoleMenu: false, pendingModelFinalConfirm: false, pendingRoleModelReturnToRole: false }, () => agent.handleTriggers('/role', null));
@@ -911,6 +1078,13 @@ Usage:
         await agent.finishAISetupFlow();
         return;
       }
+      if (sub === 'back') {
+        await agent.resetAISetupState();
+        await agent.finishAISetupFlow();
+        return;
+      }
+
+
       if (sub === 'off' || sub === 'clear') {
         await agent.clearLLMConfig();
         await agent.clearActiveProvider();

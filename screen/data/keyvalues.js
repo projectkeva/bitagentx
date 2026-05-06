@@ -44,13 +44,92 @@ import { timeConverter, getInitials, stringToColor } from "../../util";
 import Biometric from '../../class/biometrics';
 import { extractMedia, getImageGatewayURL, removeMedia } from './mediaManager';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+import RNFS from 'react-native-fs';
+import { readStoryJsonFile, getAlphaStatePath } from './story_alpha';
 import LinearGradient from 'react-native-linear-gradient';
 const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
 const createHash = require('create-hash');
 import { removeConversationMetadataForPeer } from './followChatStorage';
+import { getCachedNamespaceUiLang, getNamespaceFilterText, resolveNamespaceUiLanguage } from './namespace_i18n';
 
 const sha256Bytes = message => Buffer.from(createHash('sha256').update(message).digest());
-const FILTER_MODES = ['TEXT', 'ALL', 'COMMENT', 'SHARE'];
+const FILTER_MODES = ['TEXT', 'ROLE', 'STORY', 'ALL', 'COMMENT', 'SHARE'];
+
+const parseKeyValueJson = value => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch (_error) {
+    return null;
+  }
+};
+
+const isRoleKeyValueEntry = entry => {
+  const keyText = typeof entry?.key === 'string' ? entry.key.trim() : '';
+  const { keyType } = parseSpecialKey(entry?.key) || {};
+  if (keyType === 'rolecard' || keyType === 'rolecard_index') {
+    return true;
+  }
+  if (/^role\.memory\.[^.]+\.(?:name|verified|likely|fog)$/i.test(keyText)) {
+    return true;
+  }
+
+  const parsedValue = parseKeyValueJson(entry?.value);
+  const schema = String(parsedValue?.schema || '').trim().toLowerCase();
+  if (schema === 'role_snapshot') {
+    return true;
+  }
+  if (
+    parsedValue?.role &&
+    typeof parsedValue.role === 'object' &&
+    (parsedValue.role.roleSlug || parsedValue.role.roleName)
+  ) {
+    return true;
+  }
+  if (
+    parsedValue?.roleData &&
+    typeof parsedValue.roleData === 'object' &&
+    (parsedValue.roleData.roleSlug || parsedValue.roleData.roleName)
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+const isStoryKeyValueEntry = entry => {
+  const keyText = typeof entry?.key === 'string' ? entry.key.trim() : '';
+  if (
+    /^(?:agentstory|story)[._:-]/i.test(keyText) ||
+    /^current_(?:story|choices|summary)(?:\.json)?$/i.test(keyText)
+  ) {
+    return true;
+  }
+
+  const parsedValue = parseKeyValueJson(entry?.value);
+  const schema = String(parsedValue?.schema || '').trim().toLowerCase();
+  if (
+    schema === 'story_summary_tags.v1' ||
+    /^story(?:[_./-]|$)/i.test(schema) ||
+    String(parsedValue?.source || '').trim().toLowerCase() === 'current_story'
+  ) {
+    return true;
+  }
+  if (
+    (parsedValue?.storySessionId || parsedValue?.storyId) &&
+    (Array.isArray(parsedValue?.messages) || Array.isArray(parsedValue?.choices) || parsedValue?.roleSlug)
+  ) {
+    return true;
+  }
+
+  return false;
+};
 
 const attrSeedBytes = (id, attrName) => {
   const seed0 = sha256Bytes(`${id}projectkeva`);
@@ -128,6 +207,7 @@ const buildAlphaColorComponents = clampedValue => {
 };
 
 const toRgbString = ({ r, g, b }) => `rgb(${r}, ${g}, ${b})`;
+const toRgbaString = ({ r, g, b }, alpha = 1) => `rgba(${r}, ${g}, ${b}, ${alpha})`;
 
 const getRelativeLuminance = ({ r, g, b }) => {
   const normalize = v => {
@@ -145,6 +225,8 @@ const getAlphaColorDetails = alphaValue => {
   if (clamped === null) {
     return {
       backgroundColor: null,
+      glowColor: null,
+      glowSoftColor: null,
       luminance: null,
       textPalette: alphaTextPalettes.darkBackground,
     };
@@ -153,19 +235,84 @@ const getAlphaColorDetails = alphaValue => {
   const components = buildAlphaColorComponents(clamped);
   const backgroundColor = toRgbString(components);
   const luminance = getRelativeLuminance(components);
-  const isLightBackground = luminance >= 0.68;
   return {
     backgroundColor,
+    glowColor: toRgbaString(components, 0.95),
+    glowSoftColor: toRgbaString(components, 0.22),
     luminance,
-    textPalette: isLightBackground ? alphaTextPalettes.lightBackground : alphaTextPalettes.darkBackground,
+    textPalette: alphaTextPalettes.darkBackground,
   };
 };
 
 
+const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
+const alphaFileValueCache = new Map();
+
+const normalizeShortCode = shortCode => {
+  if (shortCode === null || typeof shortCode === 'undefined') {
+    return '';
+  }
+  return String(shortCode).replace(/\s+/g, '').trim();
+};
+
+const normalizeStoredAlphaValue = value => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  if (n > 99) return 99;
+  if (n < -99) return -99;
+  return Math.round(n);
+};
+
+const getCachedAlphaValue = shortCode => {
+  if (!shortCode) return null;
+  return alphaFileValueCache.has(shortCode) ? alphaFileValueCache.get(shortCode) : null;
+};
+
+const primeNamespaceAlphaValue = async shortCode => {
+  const normalizedShortCode = normalizeShortCode(shortCode);
+  if (!normalizedShortCode) return null;
+  if (alphaFileValueCache.has(normalizedShortCode)) {
+    return alphaFileValueCache.get(normalizedShortCode);
+  }
+  try {
+    const alphaState = await readStoryJsonFile(getAlphaStatePath(`${CHAT_DIR}/${encodeURIComponent(normalizedShortCode)}/story`));
+    const normalized = normalizeStoredAlphaValue(alphaState?.currentAlpha);
+    alphaFileValueCache.set(normalizedShortCode, normalized);
+    return normalized;
+  } catch (error) {
+    const fallbackAlpha = computeAlphaValue(normalizedShortCode);
+    alphaFileValueCache.set(normalizedShortCode, fallbackAlpha);
+    return fallbackAlpha;
+  }
+};
+
+const resolveNamespaceAlphaValue = shortCode => {
+  const normalizedShortCode = normalizeShortCode(shortCode);
+  if (!normalizedShortCode) return null;
+  const cached = getCachedAlphaValue(normalizedShortCode);
+  if (cached !== null) {
+    return cached;
+  }
+  return computeAlphaValue(normalizedShortCode);
+};
+
 const PLAY_ICON  = <MIcon name="play-arrow" size={50} color="#fff"/>;
+const LOCAL_NAMESPACE_AVATAR_DIR = `${RNFS.DocumentDirectoryPath}/namespace_avatars`;
+const getNamespaceAvatarPath = namespaceId => `${LOCAL_NAMESPACE_AVATAR_DIR}/${encodeURIComponent(String(namespaceId || 'unknown'))}.jpg`;
+const getLocalNamespaceAvatarUri = async namespaceId => {
+  if (!namespaceId) return null;
+  try {
+    const path = getNamespaceAvatarPath(namespaceId);
+    const exists = await RNFS.exists(path);
+    return exists ? `file://${path}?t=${Date.now()}` : null;
+  } catch (error) {
+    console.warn('Failed to resolve local namespace avatar uri', error);
+    return null;
+  }
+};
 
 const selectAvatarCandidateUri = (candidateUris = [], failedUris = [], generatedUri = null) => {
-  if (generatedUri) return null; 
+  if (generatedUri) return null;
   for (const candidate of candidateUris) {
     if (!candidate) continue;
     if (failedUris && failedUris.includes(candidate)) continue;
@@ -188,6 +335,7 @@ class Item extends React.Component {
       avatarCandidateRequestId: 0,
       avatarFailedUris: [],
       generatedAvatarUri: null,
+      localAvatarUri: null,
     };
     this._avatarRequestId = 0;
     this._avatarHandle = null;
@@ -196,7 +344,12 @@ class Item extends React.Component {
 
   componentDidMount() {
     this._isMounted = true;
+    this.loadLocalAvatar(this.getShortCode());
     this.prepareGeneratedAvatar(this.getShortCode());
+    this._focusSub = this.props.navigation?.addListener?.('didFocus', () => {
+      this.loadLocalAvatar(this.getShortCode());
+      this.prepareGeneratedAvatar(this.getShortCode());
+    });
 
     InteractionManager.runAfterInteractions(() => {
       this._componentDidMount();
@@ -207,12 +360,16 @@ class Item extends React.Component {
     const prevShortCode = this.getShortCode(prevProps);
     const currentShortCode = this.getShortCode();
     if (prevShortCode !== currentShortCode) {
+      this.loadLocalAvatar(currentShortCode);
       this.prepareGeneratedAvatar(currentShortCode);
     }
   }
 
   componentWillUnmount() {
     this._isMounted = false;
+    if (this._focusSub && typeof this._focusSub.remove === 'function') {
+      this._focusSub.remove();
+    }
     if (this._avatarHandle && typeof this._avatarHandle.cancel === 'function') {
       this._avatarHandle.cancel();
     }
@@ -233,6 +390,21 @@ class Item extends React.Component {
       return navigation.state.params.shortCode;
     }
     return null;
+  }
+
+  loadLocalAvatar = async shortCode => {
+    try {
+      if (!shortCode) {
+        if (this._isMounted) this.setState({ localAvatarUri: null });
+        return;
+      }
+      const uri = await getLocalNamespaceAvatarUri(shortCode);
+      if (this._isMounted) {
+        this.setState({ localAvatarUri: uri });
+      }
+    } catch (error) {
+      console.warn('Failed to load keyvalues local avatar', error);
+    }
   }
 
   prepareGeneratedAvatar = shortCode => {
@@ -340,7 +512,15 @@ class Item extends React.Component {
   }
 
   stripHtml = str => {
-    return str.replace(/(<([^>]+)>)/gi, "").replace(/(\r\n|\n|\r)/gm, "");
+    return String(str || '')
+      .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+      .replace(/<\s*\/\s*(p|div|li|h[1-6]|blockquote|tr)\s*>/gi, '\n')
+      .replace(/(<([^>]+)>)/gi, '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }
 
   async _componentDidMount() {
@@ -400,13 +580,14 @@ class Item extends React.Component {
       avatarCandidateRequestId,
       avatarFailedUris,
       generatedAvatarUri,
+      localAvatarUri,
     } = this.state;
 
     const avatarCandidateUri = selectAvatarCandidateUri(avatarCandidateUris, avatarFailedUris, generatedAvatarUri);
-    const shouldProbeAvatar = !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
+    const shouldProbeAvatar = !localAvatarUri && !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
     const fallbackInitials = getInitials(displayName);
     const fallbackColor = stringToColor(displayName);
-    const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
+    const avatarSource = localAvatarUri ? { uri: localAvatarUri } : (generatedAvatarUri ? { uri: generatedAvatarUri } : undefined);
 const avatarContent = avatarSource ? (
   <View style={styles.feedGeneratedAvatarContainer}>
     <Image source={avatarSource} style={styles.feedGeneratedAvatarImage} />
@@ -427,17 +608,6 @@ const avatarContent = avatarSource ? (
         <TouchableOpacity onPress={() => onShow(namespaceId, displayName, item.key, item.value, item.tx_hash, item.shares, item.likes, item.height, item.favorite)}>
           <View style={styles.cardInner}>
             <View style={styles.headerRow}>
-              <View style={styles.feedAvatarWrapper}>
-                {shouldProbeAvatar && (
-                  <Image
-                    source={{ uri: avatarCandidateUri }}
-                    style={styles.avatarProbe}
-                    onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
-                    onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
-                  />
-                )}
-                {avatarContent}
-              </View>
               <Text style={styles.keyDesc} numberOfLines={1} ellipsizeMode="tail">{displayKey}</Text>
               <View style={styles.actionRow}>
                 {
@@ -458,11 +628,11 @@ const avatarContent = avatarSource ? (
               </View>
             </View>
             {(item.height > 0) ?
-              <Text style={styles.timestamp}>{timeConverter(item.time) + '     ' + loc.namespaces.height + ' ' + item.height}</Text>
+              <Text style={styles.timestamp}>{timeConverter(item.time) + '     BLOCK ' + item.height}</Text>
               :
               <Text style={styles.timestamp}>{loc.general.unconfirmed}</Text>
             }
-            <Text style={styles.valueDesc} numberOfLines={3} ellipsizeMode="tail">{this.stripHtml(removeMedia(displayValue))}</Text>
+            <Text style={styles.valueDesc} numberOfLines={4} ellipsizeMode="tail">{this.stripHtml(removeMedia(displayValue))}</Text>
             {
               mediaCID && (
                 mimeType.startsWith('video') ?
@@ -512,8 +682,9 @@ const avatarContent = avatarSource ? (
 
 class KeyValues extends React.Component {
 
-  constructor() {
-    super();
+  constructor(props) {
+    super(props);
+    const initialNamespaceContext = ((props || {}).navigation || {}).state?.params || {};
     this.state = {
       loaded: false,
       isModalVisible: false,
@@ -526,8 +697,12 @@ class KeyValues extends React.Component {
       avatarCandidateRequestId: 0,
       avatarFailedUris: [],
       generatedAvatarUri: null,
+      localAvatarUri: null,
       latestBlockHeight: undefined,
       filterMode: 'TEXT',
+      namespaceUiLanguage: getCachedNamespaceUiLang(initialNamespaceContext),
+      resolvedAlphaValue: null,
+      resolvedAlphaLoaded: false,
     };
     this.onEndReachedCalledDuringMomentum = true;
     this.min_tx_num = -1;
@@ -543,6 +718,32 @@ class KeyValues extends React.Component {
       const next = FILTER_MODES[(idx + 1) % FILTER_MODES.length];
       return { filterMode: next };
     });
+  }
+
+  getNamespaceLanguageContext = () => {
+    const params = this.props?.navigation?.state?.params || {};
+    return {
+      namespaceId: params.namespaceId,
+      shortCode: params.shortCode,
+      displayName: params.displayName,
+      agentId: params.agentId,
+      id: params.id,
+    };
+  }
+
+  refreshNamespaceUiLanguage = async (force = false) => {
+    const lang = await resolveNamespaceUiLanguage(this.getNamespaceLanguageContext(), force);
+    if (!this._isMounted) {
+      return lang;
+    }
+    if (lang && lang !== this.state.namespaceUiLanguage) {
+      this.setState({ namespaceUiLanguage: lang });
+    }
+    return lang;
+  }
+
+  getFilterModeLabel = mode => {
+    return getNamespaceFilterText(mode, this.state.namespaceUiLanguage);
   }
 
   static navigationOptions = ({ navigation }) => ({
@@ -836,6 +1037,7 @@ class KeyValues extends React.Component {
 
   async componentDidMount() {
     this._isMounted = true;
+    await this.refreshNamespaceUiLanguage(true);
     // NFT sale info.
     let {price, desc, addr, txid} = this.props.navigation.state.params;
     this.setState({price, desc, addr, saleTx: txid});
@@ -859,15 +1061,61 @@ class KeyValues extends React.Component {
       onBarCodeRead: this.onBarCodeRead,
     });
 
+    const focusKey = String((this.props.navigation.state.params || {}).focusKey || '').trim();
+    if (focusKey) {
+      InteractionManager.runAfterInteractions(() => {
+        const namespaceId = this.props.navigation?.state?.params?.namespaceId;
+        const displayName = this.props.navigation?.state?.params?.displayName;
+        const list = this.props?.keyValueList?.keyValues?.[namespaceId] || [];
+        const target = list.find(item => String(item?.key || '').trim() === focusKey);
+        if (target) {
+          this.onShow(namespaceId, displayName, target.key, target.value, target.tx_hash, target.shares, target.likes, target.height, target.favorite);
+        }
+      });
+    }
+
     const params = this.props.navigation.state.params || {};
     this.prepareGeneratedAvatar(params.shortCode);
+    this.loadLocalAvatar(params.shortCode);
+    this.loadResolvedAlphaValue(params.shortCode);
+    this._focusSub = this.props.navigation?.addListener?.('didFocus', () => {
+      const shortCode = this.getShortCode();
+      this.refreshNamespaceUiLanguage(true);
+      this.loadLocalAvatar(shortCode);
+      this.prepareGeneratedAvatar(shortCode);
+      this.loadResolvedAlphaValue(shortCode);
+    });
   }
 
   componentDidUpdate(prevProps) {
     const prevParams = (prevProps.navigation && prevProps.navigation.state && prevProps.navigation.state.params) || {};
     const currentParams = this.props.navigation.state.params || {};
     if (prevParams.shortCode !== currentParams.shortCode) {
+      this.setState({ resolvedAlphaValue: null, resolvedAlphaLoaded: false });
       this.prepareGeneratedAvatar(currentParams.shortCode);
+      this.loadLocalAvatar(currentParams.shortCode);
+      this.loadResolvedAlphaValue(currentParams.shortCode);
+    }
+    if (
+      prevParams.shortCode !== currentParams.shortCode ||
+      prevParams.namespaceId !== currentParams.namespaceId ||
+      prevParams.agentId !== currentParams.agentId
+    ) {
+      this.refreshNamespaceUiLanguage(true);
+    }
+  }
+
+  loadResolvedAlphaValue = async shortCode => {
+    const normalizedShortCode = normalizeShortCode(shortCode || this.getShortCode());
+    if (!normalizedShortCode) {
+      if (this._isMounted) {
+        this.setState({ resolvedAlphaValue: null, resolvedAlphaLoaded: true });
+      }
+      return;
+    }
+    const alphaValue = await primeNamespaceAlphaValue(normalizedShortCode);
+    if (this._isMounted && normalizeShortCode(this.getShortCode()) === normalizedShortCode) {
+      this.setState({ resolvedAlphaValue: alphaValue, resolvedAlphaLoaded: true });
     }
   }
 
@@ -897,6 +1145,9 @@ class KeyValues extends React.Component {
 
   componentWillUnmount() {
     this._isMounted = false;
+    if (this._focusSub && typeof this._focusSub.remove === 'function') {
+      this._focusSub.remove();
+    }
     if (this._avatarHandle && typeof this._avatarHandle.cancel === 'function') {
       this._avatarHandle.cancel();
     }
@@ -1160,6 +1411,22 @@ class KeyValues extends React.Component {
     });
   }
 
+  onOpenNamespaceProfile = (namespaceId, namespaceInfo) => {
+    const {navigation} = this.props;
+    if (!navigation || !namespaceId) {
+      return;
+    }
+    const isOther = navigation.getParam('isOther');
+    navigation.navigate('Namespaces', {
+      initialTab: isOther ? 'following' : 'me',
+      openNamespaceInfo: {
+        ...namespaceInfo,
+        id: namespaceId,
+        namespaceId,
+      },
+    });
+  }
+
   onUnfollow = (namespaceId) => {
     const {dispatch} = this.props;
     dispatch(deleteOtherNamespace(namespaceId));
@@ -1266,7 +1533,7 @@ class KeyValues extends React.Component {
 
   render() {
     let {navigation, dispatch, keyValueList, mediaInfoList, namespaceList, otherNamespaceList} = this.props;
-    let {isOther, namespaceId, displayName, shortCode, profile} = navigation.state.params;
+    let {isOther, namespaceId, displayName, shortCode, profile, walletId, txid, rootAddress, price, desc, addr} = navigation.state.params;
     if (!namespaceId) {
       namespaceId = this.namespaceId;
     }
@@ -1299,12 +1566,20 @@ class KeyValues extends React.Component {
     const filteredList = (mergeList || []).filter(m => {
       if (mode === 'ALL') return true;
 
-      const { keyType } = parseSpecialKey(m.key);
+      const { keyType } = parseSpecialKey(m.key) || {};
       const isTransfer = (typeof m.key === 'string') && m.key.startsWith('__WALLET_TRANSFER__');
       const isReg = m.type === 'REG';
 
       if (mode === 'TEXT') {
-        return !keyType && !isTransfer && !isReg;
+        return !keyType && !isTransfer && !isReg && !isRoleKeyValueEntry(m) && !isStoryKeyValueEntry(m);
+      }
+
+      if (mode === 'ROLE') {
+        return !isReg && !isTransfer && isRoleKeyValueEntry(m);
+      }
+
+      if (mode === 'STORY') {
+        return !isReg && !isTransfer && isStoryKeyValueEntry(m);
       }
 
       if (mode === 'COMMENT') {
@@ -1338,7 +1613,7 @@ class KeyValues extends React.Component {
       <Button
         type='solid'
         buttonStyle={{borderRadius: 30, height: 28, width: 110, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
-        title={`${this.state.filterMode || 'TEXT'}`}
+        title={this.getFilterModeLabel(this.state.filterMode || 'TEXT')}
         titleStyle={{fontSize: 13, color: '#fff'}}
         onPress={this.cycleFilterMode}
       />
@@ -1349,11 +1624,12 @@ class KeyValues extends React.Component {
       avatarCandidateRequestId,
       avatarFailedUris,
       generatedAvatarUri,
+      localAvatarUri,
     } = this.state;
 
     const fallbackInitials = getInitials(displayName);
     const fallbackColor = stringToColor(displayName);
-    const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
+    const avatarSource = localAvatarUri ? { uri: localAvatarUri } : (generatedAvatarUri ? { uri: generatedAvatarUri } : undefined);
     let avatarContent;
     if (avatarSource) {
       avatarContent = (
@@ -1372,7 +1648,7 @@ class KeyValues extends React.Component {
       );
     }
     const avatarCandidateUri = selectAvatarCandidateUri(avatarCandidateUris, avatarFailedUris, generatedAvatarUri);
-    const shouldProbeAvatar = !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
+    const shouldProbeAvatar = !localAvatarUri && !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
     const canEditProfile = !isOther && !this.state.price;
 
     let listHeader = null;
@@ -1380,51 +1656,95 @@ class KeyValues extends React.Component {
       const isFollowing = !!otherNamespaceList.namespaces[namespaceId];
       const namespaceInfo = {}
       namespaceInfo[namespaceId] = {
+        ...(namespace || {}),
         id: namespaceId,
+        namespaceId,
         displayName,
         shortCode,
+        walletId: (namespace && namespace.walletId) || walletId,
+        txId: (namespace && namespace.txId) || txid,
+        rootAddress: (namespace && namespace.rootAddress) || rootAddress,
+        price: (namespace && namespace.price) || price,
+        desc: (namespace && namespace.desc) || desc,
+        addr: (namespace && namespace.addr) || addr,
+        profile: (namespace && namespace.profile) || profile,
       }
       const shortCodeLevel = calculateLevelFromShortcode(shortCode, {
         currentBlockHeight: this.props.latestBlockHeight,
       });
-      const alphaValue = shortCode ? computeAlphaValue(shortCode) : null;
-      const { backgroundColor: alphaBackgroundColor, textPalette: alphaTextPalette } = getAlphaColorDetails(alphaValue);
-      const alphaLabelText = Number.isFinite(alphaValue)
-        ? `[ α${alphaValue > 0 ? `+${alphaValue}` : alphaValue} ]`
+      const alphaValue = shortCode
+        ? (this.state.resolvedAlphaLoaded ? this.state.resolvedAlphaValue : resolveNamespaceAlphaValue(shortCode))
         : null;
-      const levelLabelText = Number.isFinite(shortCodeLevel)
-        ? `[ Lv.${shortCodeLevel} ]${alphaLabelText ? ` ${alphaLabelText}` : ''}`
-        : null;
+      const { glowColor: alphaGlowColor, glowSoftColor: alphaGlowSoftColor, textPalette: alphaTextPalette } = getAlphaColorDetails(alphaValue);
+      const alphaGlowStyle = alphaGlowColor ? {
+        shadowColor: alphaGlowColor,
+        shadowOpacity: 0.95,
+        shadowRadius: 15,
+        shadowOffset: { width: 0, height: 0 },
+        elevation: 10,
+      } : null;
+      const alphaNeonHaloStyle = alphaGlowColor ? {
+        borderColor: alphaGlowColor,
+        backgroundColor: alphaGlowSoftColor,
+        shadowColor: alphaGlowColor,
+        shadowOpacity: 0.75,
+        shadowRadius: 18,
+        shadowOffset: { width: 0, height: 0 },
+        elevation: 8,
+      } : null;
+      const levelLabelText = null;
       listHeader = (
         <View style={styles.container}>
-          <View style={[styles.keyContainer, alphaBackgroundColor ? { backgroundColor: alphaBackgroundColor, borderColor: alphaBackgroundColor } : null]}>
-            <View style={styles.avatarWrapper}>
+          <LinearGradient
+            colors={['#0b1224', '#0f162b', '#0b1224']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.keyContainer}
+          >
+            <View style={[styles.avatarWrapper, alphaGlowStyle]}>
+              {alphaNeonHaloStyle ? <View pointerEvents="none" style={[styles.avatarNeonHalo, alphaNeonHaloStyle]} /> : null}
               {canEditProfile ? (
                 <TouchableOpacity
-                  onPress={() => this.onEditProfile(namespaceId, namespaceInfo[namespaceId])}
+                  onPress={() => this.onOpenNamespaceProfile(namespaceId, namespaceInfo[namespaceId])}
                   activeOpacity={0.7}
                 >
-                  {shouldProbeAvatar && (
-                    <Image
-                      source={{ uri: avatarCandidateUri }}
-                      style={styles.avatarProbe}
-                      onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
-                      onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
-                    />
+                  {localAvatarUri ? (
+                    <View style={styles.generatedAvatarContainer}>
+                      <Image source={{ uri: localAvatarUri }} style={styles.generatedAvatarImage} />
+                    </View>
+                  ) : (
+                    <>
+                      {shouldProbeAvatar && (
+                        <Image
+                          source={{ uri: avatarCandidateUri }}
+                          style={styles.avatarProbe}
+                          onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
+                          onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
+                        />
+                      )}
+                      {avatarContent}
+                    </>
                   )}
-                  {avatarContent}
                 </TouchableOpacity>
               ) : (
                 <>
-                  {shouldProbeAvatar && (
-                    <Image
-                      source={{ uri: avatarCandidateUri }}
-                      style={styles.avatarProbe}
-                      onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
-                      onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
-                    />
+                  {localAvatarUri ? (
+                    <View style={styles.generatedAvatarContainer}>
+                      <Image source={{ uri: localAvatarUri }} style={styles.generatedAvatarImage} />
+                    </View>
+                  ) : (
+                    <>
+                      {shouldProbeAvatar && (
+                        <Image
+                          source={{ uri: avatarCandidateUri }}
+                          style={styles.avatarProbe}
+                          onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
+                          onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
+                        />
+                      )}
+                      {avatarContent}
+                    </>
                   )}
-                  {avatarContent}
                 </>
               )}
             </View>
@@ -1479,27 +1799,16 @@ class KeyValues extends React.Component {
                   <Button
                     type='solid'
                     buttonStyle={{borderRadius: 30, height: 28, width: 130, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
-                    title={`${this.state.filterMode || 'TEXT'}`}
+                    title={this.getFilterModeLabel(this.state.filterMode || 'TEXT')}
                     titleStyle={{fontSize: 13, color: '#fff'}}
                     onPress={this.cycleFilterMode}
                   />
-                  {
-                    this.state.price ?
-                    buyNFTBtn
-                    :
-                    <Button
-                      type='solid'
-                      buttonStyle={{marginLeft: 10, borderRadius: 30, height: 28, width: 100, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
-                      title={loc.namespaces.sell_nft}
-                      titleStyle={{fontSize: 14, color: '#fff'}}
-                      onPress={()=>{this.onSellNFT(namespaceId, namespaceInfo[namespaceId])}}
-                    />
-                  }
+                  {this.state.price ? buyNFTBtn : null}
                 </View>
                 )
             }
             </View>
-          </View>
+          </LinearGradient>
         </View>
       );
     }
@@ -1532,7 +1841,7 @@ class KeyValues extends React.Component {
             mergeList &&
             <FlatList
               style={styles.listStyle}
-              contentContainerStyle={{paddingBottom: 400}}
+              contentContainerStyle={styles.listContent}
               ListHeaderComponent={listHeader}
               data={filteredList}
               extraData={`${this.state.latestBlockHeight || ''}-${this.state.filterMode || ''}`}
@@ -1587,9 +1896,20 @@ var styles = StyleSheet.create({
   avatarWrapper: {
     marginRight: 20,
     alignSelf: 'center',
-    padding: 5,
+    width: 66,
+    height: 66,
+    borderRadius: 33,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'visible',
+  },
+  avatarNeonHalo: {
+    position: 'absolute',
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    borderWidth: 1,
+    opacity: 0.85,
   },
   feedAvatarWrapper: {
     paddingRight: 10,
@@ -1667,11 +1987,16 @@ var styles = StyleSheet.create({
     borderColor: 'rgba(125, 211, 252, 0.2)',
     backgroundColor: '#050915',
   },
+  listContent: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 400,
+  },
   card: {
-    marginVertical: 12,
-    borderRadius: 16,
+    marginVertical: 8,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: 'rgba(94, 234, 212, 0.4)',
+    borderColor: 'rgba(94, 234, 212, 0.32)',
     backgroundColor: 'transparent',
     shadowColor: '#7dd3fc',
     shadowOpacity: 0.25,
@@ -1695,7 +2020,9 @@ var styles = StyleSheet.create({
   },
   valueDesc: {
     flex: 1,
-    fontSize:15,
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 8,
     marginBottom: 12,
     color: '#CBD5E1'
   },
@@ -1848,12 +2175,20 @@ var styles = StyleSheet.create({
     borderRadius: 20,
   },
   keyContainer: {
-    marginBottom: 10,
-    borderWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
-    padding: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.32)',
+    backgroundColor: 'transparent',
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     flexDirection: 'row',
+    shadowColor: '#7dd3fc',
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
+    overflow: 'hidden',
   },
   key: {
     fontSize: 16,

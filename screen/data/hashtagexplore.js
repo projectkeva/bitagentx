@@ -11,6 +11,7 @@ import {
   Keyboard,
   Image as RNImage,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
@@ -37,6 +38,8 @@ import Toast from 'react-native-root-toast';
 import { stringToColor, getInitials, SCREEN_WIDTH, } from "../../util";
 import Biometric from '../../class/biometrics';
 import { extractMedia, getImageGatewayURL } from './mediaManager';
+import ExploreFollow from './explore_follow';
+import cardStyles from './hashtagkeyvalues_template';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
 import LinearGradient from 'react-native-linear-gradient';
 const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
@@ -45,6 +48,9 @@ const createHash = require('create-hash');
 const PLAY_ICON  = <MIcon name="play-arrow" size={50} color="#fff"/>;
 const IMAGE_ICON = <Icon name="ios-image" size={50} color="#fff"/>;
 const SELL_HASHTAG = '#NFTs';
+const DEFAULT_EXPLORE_HASHTAG = '#newagent';
+const NEW_AGENT_HASHTAG_LOWER = DEFAULT_EXPLORE_HASHTAG.toLowerCase();
+const QUICK_HASHTAGS = ['#NFTs', '#newagent', '#kva', '#bitagentx', '#agentstory'];
 const SELL_HASHTAG_BLOCK_WINDOW = 20000;
 const SELL_HASHTAG_LOWER = SELL_HASHTAG.toLowerCase();
 const DEFAULT_SHORTCODE_COLOR = '#000000';
@@ -127,6 +133,22 @@ const buildAlphaColorComponents = clampedValue => {
 };
 
 const toRgbString = ({ r, g, b }) => `rgb(${r}, ${g}, ${b})`;
+const toRgbaString = ({ r, g, b }, alpha = 1) => `rgba(${r}, ${g}, ${b}, ${alpha})`;
+
+const getAlphaGlowDetails = alphaValue => {
+  const clamped = clampAlpha(alphaValue);
+  if (clamped === null) {
+    return {
+      glowColor: null,
+      glowSoftColor: null,
+    };
+  }
+  const components = buildAlphaColorComponents(clamped);
+  return {
+    glowColor: toRgbaString(components, 0.95),
+    glowSoftColor: toRgbaString(components, 0.22),
+  };
+};
 
 const getRelativeLuminance = ({ r, g, b }) => {
   const normalize = v => {
@@ -409,8 +431,8 @@ class Item extends React.Component {
   }
 
   render() {
-    let {item, onShow, currentHashtag} = this.props;
-    let {avatarCandidateUris, avatarCandidateRequestId, avatarFailedUris, generatedAvatarUri} = this.state;
+    let {item, index = 0, onShow, onOpenNamespace, onReward, currentHashtag} = this.props;
+    let {thumbnail, avatarCandidateUris, avatarCandidateRequestId, avatarFailedUris, generatedAvatarUri} = this.state;
     let displayKey = item.key;
     const {keyType} = parseSpecialKey(item.key);
     if (keyType) {
@@ -424,6 +446,8 @@ class Item extends React.Component {
     const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
     const hashtagLower = (currentHashtag || '').trim().toLowerCase();
     const isSellHashtag = hashtagLower === SELL_HASHTAG_LOWER;
+    const isNewAgentHashtag = hashtagLower === NEW_AGENT_HASHTAG_LOWER;
+    const useMasonryLayout = !isSellHashtag && !isNewAgentHashtag;
     const shortCodeText = (item.shortCode || '').toString().trim();
     const formattedShortCode = formatShortCodeForDisplay(shortCodeText);
     let titleText = displayKey;
@@ -432,6 +456,23 @@ class Item extends React.Component {
     let levelLabelText = null;
     const alphaValue = shortCodeText.length > 0 ? computeAlphaValue(shortCodeText) : null;
     const { backgroundColor: alphaBackgroundColor, textPalette: alphaTextPalette } = getAlphaColorDetails(alphaValue);
+    const { glowColor: alphaGlowColor, glowSoftColor: alphaGlowSoftColor } = getAlphaGlowDetails(alphaValue);
+    const alphaGlowStyle = alphaGlowColor ? {
+      shadowColor: alphaGlowColor,
+      shadowOpacity: 0.95,
+      shadowRadius: 15,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 10,
+    } : null;
+    const alphaNeonHaloStyle = alphaGlowColor ? {
+      borderColor: alphaGlowColor,
+      backgroundColor: alphaGlowSoftColor,
+      shadowColor: alphaGlowColor,
+      shadowOpacity: 0.75,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 8,
+    } : null;
     const underlineStyle = isSellHashtag ? {
       textDecorationLine: 'underline',
       textDecorationColor: alphaTextPalette.underlineColor,
@@ -469,7 +510,7 @@ class Item extends React.Component {
     const avatarSizeStyle = isSellHashtag ? styles.nftAvatarSize : null;
     const avatarContent = avatarSource ? (
       <View style={[styles.generatedAvatarContainer, avatarSizeStyle]}>
-        <Image source={avatarSource} style={[styles.generatedAvatarImage, avatarSizeStyle]} />
+        <RNImage source={avatarSource} style={isSellHashtag ? styles.nftGeneratedAvatarImage : styles.generatedAvatarImage} />
       </View>
     ) : (
       <View style={[styles.fallbackAvatar, avatarSizeStyle, { backgroundColor: fallbackColor }]}>
@@ -477,35 +518,114 @@ class Item extends React.Component {
       </View>
     );
 
-    const titleContent = isSellHashtag ? (
-      <View style={styles.titleRow}>
-        <Text
-          style={[...titleStyles, styles.nftShortCodeTitle, { color: alphaTextPalette.primaryColor }, underlineStyle]}
-          numberOfLines={1}
-          ellipsizeMode="tail"
-        >
-          {titleText}
-        </Text>
-        {levelLabelText && (
-          <Text
-            style={[
-              styles.levelLabel,
-              styles.nftLevelLabel,
-              { color: alphaTextPalette.secondaryColor },
-              underlineStyle,
-            ]}
-          >
-            {levelLabelText}
-          </Text>
-        )}
+    const cardAvatarContent = avatarSource ? (
+      <View style={cardStyles.generatedAvatarContainer}>
+        <RNImage source={avatarSource} style={cardStyles.generatedAvatarImage} />
       </View>
     ) : (
-      <Text style={titleStyles} numberOfLines={1} ellipsizeMode="tail">
-        {titleText}
-      </Text>
+      <View style={[cardStyles.fallbackAvatar, { backgroundColor: fallbackColor }]}>
+        <Text style={cardStyles.fallbackAvatarLabel}>{fallbackInitials}</Text>
+      </View>
     );
 
-    const WrapperComponent = isSellHashtag ? LinearGradient : View;
+    if (useMasonryLayout) {
+      const { mediaCID, mimeType } = extractMedia(item.value);
+      const cleanValue = this.stripHtml(String(item.value || ''));
+      return (
+        <View style={[cardStyles.card, cardStyles.masonryCard, index % 2 === 0 ? cardStyles.masonryCardLeft : cardStyles.masonryCardRight]}>
+          <TouchableOpacity onPress={() => onShow(item)}>
+            <View style={cardStyles.cardValueArea}>
+              {mediaCID && (
+                mimeType.startsWith('video') ?
+                <View style={cardStyles.previewVideoContainer}>
+                  <Image source={{uri: thumbnail}} style={cardStyles.previewVideo} />
+                  <View style={cardStyles.playIcon}>{PLAY_ICON}</View>
+                </View>
+                :
+                <Image
+                  style={cardStyles.previewImage}
+                  source={{uri: getImageGatewayURL(mediaCID)}}
+                  PlaceholderContent={IMAGE_ICON}
+                  placeholderStyle={{backgroundColor: '#0b1224'}}
+                />
+              )}
+              <Text style={cardStyles.valueDesc} numberOfLines={mediaCID ? 4 : 9} ellipsizeMode="tail">{cleanValue}</Text>
+            </View>
+          </TouchableOpacity>
+          <View style={cardStyles.cardMetaArea}>
+            <TouchableOpacity onPress={() => onShow(item)}>
+              <Text style={cardStyles.keyDesc} numberOfLines={2} ellipsizeMode="tail">{displayKey}</Text>
+            </TouchableOpacity>
+            <View style={cardStyles.cardFooterRow}>
+              <TouchableOpacity style={cardStyles.cardAuthorRow} onPress={() => onOpenNamespace(item)}>
+                <View style={cardStyles.avatarWrapper}>
+                  {shouldProbeAvatar && (
+                    <Image
+                      source={{ uri: avatarCandidateUri }}
+                      style={cardStyles.avatarProbe}
+                      onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
+                      onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
+                    />
+                  )}
+                  {cardAvatarContent}
+                </View>
+                <Text style={cardStyles.authorName} numberOfLines={1}>{item.displayName || item.shortCode}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => onReward(item.tx, item.key, item.value, item.height)} style={cardStyles.likeButton}>
+                <MIcon name={item.favorite ? 'favorite' : 'favorite-border'} size={20} style={[cardStyles.likeIcon, item.favorite ? {color: KevaColors.favorite} : null]} />
+                {(item.likes > 0) && <Text style={cardStyles.count}>{item.likes}</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      );
+    }
+
+    const subtitleText = !isSellHashtag
+      ? [item.displayName, shortCodeText ? `@${formattedShortCode || shortCodeText}` : null].filter(Boolean).join('  ')
+      : null;
+    const titleContent = isSellHashtag ? (
+      <TouchableOpacity onPress={() => onShow(item)} activeOpacity={0.7}>
+        <View style={styles.titleRow}>
+          <Text
+            style={[...titleStyles, styles.nftShortCodeTitle, { color: alphaTextPalette.primaryColor }, underlineStyle]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {titleText}
+          </Text>
+          {levelLabelText && (
+            <Text
+              style={[
+                styles.levelLabel,
+                styles.nftLevelLabel,
+                { color: alphaTextPalette.secondaryColor },
+                underlineStyle,
+              ]}
+            >
+              {levelLabelText}
+            </Text>
+          )}
+        </View>
+      </TouchableOpacity>
+    ) : (
+      <View style={styles.titleBlock}>
+        <TouchableOpacity onPress={() => onShow(item)} activeOpacity={0.7}>
+          <Text style={titleStyles} numberOfLines={1} ellipsizeMode="tail">
+            {titleText}
+          </Text>
+        </TouchableOpacity>
+        {subtitleText ? (
+          <TouchableOpacity onPress={() => onOpenNamespace(item)} activeOpacity={0.7}>
+            <Text style={styles.metaText} numberOfLines={1} ellipsizeMode="tail">
+              {subtitleText}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+
+    const WrapperComponent = LinearGradient;
     const wrapperProps = isSellHashtag ? {
       colors: alphaBackgroundColor
         ? [alphaBackgroundColor, alphaBackgroundColor, alphaBackgroundColor]
@@ -514,51 +634,57 @@ class Item extends React.Component {
       end: { x: 1, y: 1 },
       style: [styles.card, styles.nftCard],
     } : {
+      colors: ['#0b1224', '#0f162b', '#0b1224'],
+      start: { x: 0, y: 0 },
+      end: { x: 1, y: 1 },
       style: styles.card,
     };
 
     return (
       <WrapperComponent {...wrapperProps}>
-        <TouchableOpacity onPress={() => onShow(item)}>
-          <View style={[styles.cardInner, isSellHashtag && styles.nftCardInner]}>
-            <View style={[styles.headerRow, isSellHashtag && styles.nftHeaderRow]}>
-              <View style={[styles.avatarWrapper, isSellHashtag && styles.nftAvatarWrapper]}>
-                {shouldProbeAvatar && (
-                  <Image
-                    source={{ uri: avatarCandidateUri }}
-                    style={styles.avatarProbe}
-                    onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
-                    onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
-                  />
-                )}
-                {avatarContent}
-              </View>
-              <View style={[styles.headerTextContainer, isSellHashtag && styles.nftHeaderTextContainer]}>
-                {titleContent}
-                {priceLabel && (
-                  <View style={styles.nftPriceWrapper}>
-                    {React.cloneElement(priceLabel, {
-                      style: [
-                        styles.priceLabel,
-                        styles.nftPriceLabel,
-                        { color: alphaTextPalettes.lightBackground.primaryColor },
-                        underlineStyle,
-                      ],
-                    })}
-                  </View>
-                )}
-              </View>
+        <View style={[styles.cardInner, isSellHashtag && styles.nftCardInner]}>
+          <View style={[styles.headerRow, isSellHashtag && styles.nftHeaderRow]}>
+            <TouchableOpacity
+              onPress={() => onOpenNamespace(item)}
+              activeOpacity={0.7}
+              style={[styles.avatarWrapper, isSellHashtag && styles.nftAvatarWrapper, alphaGlowStyle]}
+            >
+              {alphaNeonHaloStyle ? <View pointerEvents="none" style={[styles.avatarNeonHalo, isSellHashtag && styles.nftAvatarNeonHalo, alphaNeonHaloStyle]} /> : null}
+              {shouldProbeAvatar && (
+                <Image
+                  source={{ uri: avatarCandidateUri }}
+                  style={styles.avatarProbe}
+                  onLoad={() => this.onAvatarLoadSuccess(avatarCandidateUri, avatarCandidateRequestId)}
+                  onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
+                />
+              )}
+              {avatarContent}
+            </TouchableOpacity>
+            <View style={[styles.headerTextContainer, isSellHashtag && styles.nftHeaderTextContainer]}>
+              {titleContent}
+              {priceLabel && (
+                <View style={styles.nftPriceWrapper}>
+                  {React.cloneElement(priceLabel, {
+                    style: [
+                      styles.priceLabel,
+                      styles.nftPriceLabel,
+                      { color: alphaTextPalettes.lightBackground.primaryColor },
+                      underlineStyle,
+                    ],
+                  })}
+                </View>
+              )}
             </View>
-            {isSellHashtag && (
-              <LinearGradient
-                colors={['transparent', 'rgba(125, 211, 252, 0.65)', 'transparent']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.nftAccentLine}
-              />
-            )}
           </View>
-        </TouchableOpacity>
+          {isSellHashtag && (
+            <LinearGradient
+              colors={['transparent', 'rgba(125, 211, 252, 0.65)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.nftAccentLine}
+            />
+          )}
+        </View>
       </WrapperComponent>
     )
   }
@@ -580,12 +706,13 @@ class HashtagExplore extends React.Component {
       totalToFetch: 0,
       fetched: 0,
       inputMode: false,
-      hashtag: SELL_HASHTAG,
+      hashtag: DEFAULT_EXPLORE_HASHTAG,
       searched: false,
       hashtags: [],
       saleStatusCache: {},
       latestBlockHeight: undefined,
       hasMoreWithinWindow: true,
+      exploreTab: 'follow',
     };
     this.onEndReachedCalledDuringMomentum = true;
   }
@@ -604,6 +731,33 @@ class HashtagExplore extends React.Component {
     this.setState({min_tx_num: -1, loading: true, hashtags: [], latestBlockHeight: undefined, hasMoreWithinWindow: true});
     await this.fetchHashtag(-1);
     this.setState({loading: false});
+  }
+
+  onQuickHashtag = hashtag => {
+    Keyboard.dismiss();
+    this.setState(
+      {
+        hashtag,
+        inputMode: false,
+        searched: false,
+        min_tx_num: -1,
+        loading: true,
+        hashtags: [],
+        saleStatusCache: {},
+        latestBlockHeight: undefined,
+        hasMoreWithinWindow: true,
+      },
+      async () => {
+        try {
+          await this.fetchHashtag(-1);
+        } catch (err) {
+          console.warn(err);
+          Toast.show('Failed to fetch key values');
+        } finally {
+          this.setState({loading: false});
+        }
+      },
+    );
   }
 
   fetchHashtag = async (min_tx_num) => {
@@ -913,6 +1067,26 @@ class HashtagExplore extends React.Component {
     };
   }
 
+  onOpenNamespace = keyValue => {
+    const {navigation} = this.props;
+    if (!keyValue) {
+      return;
+    }
+
+    const namespaceId = keyValue.namespaceId || null;
+    const shortCode = keyValue.shortCode || null;
+    if (!namespaceId && !shortCode) {
+      return;
+    }
+
+    navigation.push('KeyValues', {
+      namespaceId,
+      shortCode,
+      displayName: keyValue.displayName || null,
+      isOther: true,
+    });
+  }
+
   onShow = async (keyValue) => {
     const {navigation, namespaceList} = this.props;
     const {hashtags, saleStatusCache} = this.state;
@@ -1131,9 +1305,12 @@ class HashtagExplore extends React.Component {
 
   render() {
     let {navigation, dispatch, mediaInfoList} = this.props;
-    const {inputMode, hashtag, loading, searched, hashtags} = this.state;
+    const {inputMode, hashtag, loading, searched, hashtags, exploreTab} = this.state;
     const mergeList = hashtags;
     const canSearch = hashtag && hashtag.length > 0;
+    const isFollowTab = exploreTab === 'follow';
+    const normalizedHashtag = String(hashtag || '').trim().toLowerCase();
+    const useAllMasonryLayout = !isFollowTab && normalizedHashtag !== SELL_HASHTAG_LOWER && normalizedHashtag !== NEW_AGENT_HASHTAG_LOWER;
 
     if (this.state.isRefreshing && (!mergeList || mergeList.length == 0)) {
       return <BlueLoading />
@@ -1148,43 +1325,87 @@ class HashtagExplore extends React.Component {
         style={styles.screenBackground}
       >
         <SafeAreaView style={styles.topContainer}>
-          <View style={styles.inputContainer}>
-            <TouchableOpacity onPress={this.closeItemAni}>
-              <Text style={[{color: KevaColors.actionText, fontSize: 16, textAlign: 'left'}, inputMode && {paddingRight: 5}]}>
-                {inputMode ? loc.general.cancel : ''}
-              </Text>
+          <View style={styles.exploreTabBar}>
+            <TouchableOpacity
+              onPress={() => this.setState({ exploreTab: 'follow' })}
+              style={[styles.exploreTabButton, isFollowTab && styles.exploreTabButtonActive]}
+            >
+              <Text style={[styles.exploreTabText, isFollowTab && styles.exploreTabTextActive]}>Follow</Text>
             </TouchableOpacity>
-            <TextInput
-              onFocus={this.openItemAni}
-              ref={ref => this._inputRef = ref}
-              onChangeText={hashtag => this.setState({ hashtag: hashtag, searched: false })}
-              value={hashtag}
-              placeholder={loc.namespaces.search_hashtag}
-              placeholderTextColor={'#94A3B8'}
-              multiline={false}
-              underlineColorAndroid='rgba(0,0,0,0)'
-              returnKeyType='search'
-              clearButtonMode='while-editing'
-              onSubmitEditing={this.onSearchHashtag}
-              style={styles.textInput}
-              returnKeyType={ 'done' }
-              clearButtonMode='while-editing'
-            />
-            {loading ?
-              <ActivityIndicator size="small" color={KevaColors.actionText} style={{ width: 42, height: 42 }} />
-              :
-              <TouchableOpacity onPress={this.onSearchHashtag} disabled={!canSearch}>
-                <Icon name={'md-search'}
-                      style={[styles.searchIcon, !canSearch && {color: KevaColors.inactiveText}]}
-                      size={25} />
+            <TouchableOpacity
+              onPress={() => this.setState({ exploreTab: 'all' })}
+              style={[styles.exploreTabButton, !isFollowTab && styles.exploreTabButtonActive]}
+            >
+              <Text style={[styles.exploreTabText, !isFollowTab && styles.exploreTabTextActive]}>ALL</Text>
+            </TouchableOpacity>
+          </View>
+          {isFollowTab ? (
+            <ExploreFollow navigation={navigation} />
+          ) : (
+            <React.Fragment>
+          <View style={styles.exploreControls}>
+            <View style={styles.inputContainer}>
+              <TouchableOpacity onPress={this.closeItemAni}>
+                <Text style={[{color: KevaColors.actionText, fontSize: 16, textAlign: 'left'}, inputMode && {paddingRight: 5}]}>
+                  {inputMode ? loc.general.cancel : ''}
+                </Text>
               </TouchableOpacity>
-            }
+              <TextInput
+                onFocus={this.openItemAni}
+                ref={ref => this._inputRef = ref}
+                onChangeText={hashtag => this.setState({ hashtag: hashtag, searched: false })}
+                value={hashtag}
+                placeholder={loc.namespaces.search_hashtag}
+                placeholderTextColor={'#94A3B8'}
+                multiline={false}
+                underlineColorAndroid='rgba(0,0,0,0)'
+                returnKeyType='search'
+                clearButtonMode='while-editing'
+                onSubmitEditing={this.onSearchHashtag}
+                style={styles.textInput}
+                returnKeyType={ 'done' }
+                clearButtonMode='while-editing'
+              />
+              {loading ?
+                <ActivityIndicator size="small" color={KevaColors.actionText} style={{ width: 42, height: 42 }} />
+                :
+                <TouchableOpacity onPress={this.onSearchHashtag} disabled={!canSearch}>
+                  <Icon name={'md-search'}
+                        style={[styles.searchIcon, !canSearch && {color: KevaColors.inactiveText}]}
+                        size={25} />
+                </TouchableOpacity>
+              }
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.quickTagRow}
+            >
+              {QUICK_HASHTAGS.map(item => {
+                const active = String(hashtag || '').trim().toLowerCase() === item.toLowerCase();
+                const label = item.replace(/^#/, '');
+                return (
+                  <TouchableOpacity
+                    key={item}
+                    onPress={() => this.onQuickHashtag(item)}
+                    disabled={loading && active}
+                    style={[styles.quickTagButton, active && styles.quickTagButtonActive]}
+                  >
+                    <Text style={[styles.quickTagText, active && styles.quickTagTextActive]}>{label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
           </View>
           {
             (mergeList && mergeList.length > 0 ) ?
             <FlatList
+              key={useAllMasonryLayout ? 'all-masonry' : 'all-list'}
               style={styles.listStyle}
-              contentContainerStyle={styles.listContent}
+              contentContainerStyle={useAllMasonryLayout ? cardStyles.listContent : styles.listContent}
+              columnWrapperStyle={useAllMasonryLayout ? cardStyles.masonryRow : null}
+              numColumns={useAllMasonryLayout ? 2 : 1}
               data={mergeList}
               extraData={this.state.latestBlockHeight}
               onRefresh={() => this.refreshKeyValues()}
@@ -1195,8 +1416,9 @@ class HashtagExplore extends React.Component {
               keyExtractor={(item, index) => item.key + index}
               ListFooterComponent={footerLoader}
               renderItem={({item, index}) =>
-                <Item item={item} key={index} dispatch={dispatch} onDelete={this.onDelete}
+                <Item item={item} index={index} key={index} dispatch={dispatch} onDelete={this.onDelete}
                   onShow={this.onShow}
+                  onOpenNamespace={this.onOpenNamespace}
                   onReply={this.onReply}
                   onShare={this.onShare}
                   onReward={this.onReward}
@@ -1215,6 +1437,8 @@ class HashtagExplore extends React.Component {
               </Text>
             </View>
           }
+            </React.Fragment>
+          )}
         </SafeAreaView>
       </LinearGradient>
     );
@@ -1243,70 +1467,116 @@ var styles = StyleSheet.create({
   container: {
     flex:1,
   },
+  exploreTabBar: {
+    flexDirection: 'row',
+    marginHorizontal: 14,
+    marginTop: 10,
+    marginBottom: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(125, 211, 252, 0.35)',
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    overflow: 'hidden',
+  },
+  exploreTabButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  exploreTabButtonActive: {
+    backgroundColor: 'rgba(125, 211, 252, 0.18)',
+  },
+  exploreTabText: {
+    color: '#94A3B8',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+  },
+  exploreTabTextActive: {
+    color: '#E8F5FF',
+  },
   listStyle: {
     flex: 1,
     borderBottomWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(125, 211, 252, 0.2)',
+    backgroundColor: '#050915',
   },
   listContent: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
     paddingBottom: 400,
   },
   card: {
-    backgroundColor:'#fff',
-    marginVertical:0,
-    borderBottomWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-  },
-  nftCard: {
-    marginVertical: 10,
-    borderRadius: 14,
+    marginVertical: 8,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: 'rgba(94, 234, 212, 0.4)',
+    borderColor: 'rgba(94, 234, 212, 0.32)',
     backgroundColor: 'transparent',
     shadowColor: '#7dd3fc',
-    shadowOpacity: 0.22,
+    shadowOpacity: 0.25,
     shadowRadius: 10,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
+    overflow: 'hidden',
+  },
+  nftCard: {
+    marginVertical: 8,
+    borderColor: 'rgba(94, 234, 212, 0.4)',
+    shadowOpacity: 0.22,
     shadowOffset: { width: 0, height: 6 },
     elevation: 5,
-    overflow: 'hidden',
-    borderBottomWidth: 0,
   },
   cardInner: {
     flex: 1,
-    paddingHorizontal: 10,
-    paddingTop: 2,
-    paddingBottom: 6,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 12,
   },
   nftCardInner: {
-    paddingHorizontal: 14,
-    paddingTop: 14,
     paddingBottom: 16,
   },
   avatarWrapper: {
-    paddingRight: 10,
-    paddingTop: 5,
-    paddingBottom: 8,
+    width: 56,
+    height: 56,
+    marginRight: 14,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'visible',
+  },
+  avatarNeonHalo: {
+    position: 'absolute',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    borderWidth: 1,
+    opacity: 0.85,
   },
   nftAvatarWrapper: {
+    width: 68,
+    height: 68,
+    marginRight: 14,
     paddingTop: 8,
     paddingBottom: 10,
-    paddingRight: 14,
+  },
+  nftAvatarNeonHalo: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
   },
   generatedAvatarContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
   },
   generatedAvatarImage: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     resizeMode: 'cover',
   },
   nftAvatarSize: {
@@ -1314,17 +1584,23 @@ var styles = StyleSheet.create({
     height: 50,
     borderRadius: 25,
   },
+  nftGeneratedAvatarImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    resizeMode: 'cover',
+  },
   fallbackAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
   },
   fallbackAvatarLabel: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    color: '#E0F2FE',
+    fontSize: 17,
+    fontWeight: '700',
   },
   nftAvatarLabel: {
     fontSize: 18,
@@ -1339,9 +1615,10 @@ var styles = StyleSheet.create({
   },
   keyDesc: {
     flex: 1,
-    fontSize:16,
-    color: KevaColors.darkText,
-    marginRight: 10,
+    fontSize: 17,
+    color: '#E5E7EB',
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   shortCodeTitle: {
     fontSize: 16,
@@ -1365,6 +1642,10 @@ var styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  titleBlock: {
+    flex: 1,
+    justifyContent: 'center',
+  },
   nftHeaderTextContainer: {
     alignItems: 'flex-start',
   },
@@ -1380,6 +1661,12 @@ var styles = StyleSheet.create({
     marginLeft: 6,
     fontSize: 12,
     color: '#9CA3AF',
+  },
+  metaText: {
+    marginTop: 6,
+    fontSize: 13,
+    color: '#93C5FD',
+    fontWeight: '500',
   },
   nftLevelLabel: {
     color: 'rgba(125, 211, 252, 0.9)',
@@ -1526,15 +1813,46 @@ var styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center'
   },
+  exploreControls: {
+    backgroundColor: 'rgba(11, 18, 36, 0.92)',
+    borderBottomWidth: THIN_BORDER,
+    borderColor: 'rgba(125, 211, 252, 0.35)',
+    paddingTop: 4,
+    paddingBottom: 8,
+  },
   inputContainer: {
     paddingVertical: 5,
     paddingLeft: 8,
-    backgroundColor: 'rgba(11, 18, 36, 0.85)',
-    borderBottomWidth: THIN_BORDER,
-    borderColor: 'rgba(125, 211, 252, 0.35)',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  quickTagRow: {
+    paddingHorizontal: 8,
+    paddingTop: 3,
+    paddingBottom: 2,
+    alignItems: 'center',
+  },
+  quickTagButton: {
+    borderWidth: 1,
+    borderColor: 'rgba(125, 211, 252, 0.45)',
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginRight: 8,
+  },
+  quickTagButtonActive: {
+    borderColor: '#F472B6',
+    backgroundColor: 'rgba(244, 114, 182, 0.18)',
+  },
+  quickTagText: {
+    color: '#BAE6FD',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  quickTagTextActive: {
+    color: '#F9A8D4',
   },
   textInput:
   {

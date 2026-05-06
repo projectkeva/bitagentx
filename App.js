@@ -13,6 +13,7 @@ import DeeplinkSchemaMatch from './class/deeplink-schema-match';
 import BitcoinBIP70TransactionDecode from './bip70/bip70';
 import { Provider } from 'react-redux';
 import { configureStore } from './reducers';
+import { enableStatus } from './util';
 
 const bitcoinModalString = 'Kevacoin address';
 const lightningModalString = 'Lightning Invoice';
@@ -41,6 +42,11 @@ export default class App extends React.Component {
 
     try {
       await BlueApp.startAndDecrypt();
+      try {
+        enableStatus(await BlueApp.isStatusEnabled());
+      } catch (statusError) {
+        console.warn('Failed to initialize refreshing status setting', statusError);
+      }
     } catch (error) {
       console.warn('Failed to load wallets from disk', error);
     }
@@ -112,40 +118,11 @@ export default class App extends React.Component {
   }
 
   _handleAppStateChange = async nextAppState => {
-    if (BlueApp.getWallets().length > 0) {
-      if ((this.state.appState.match(/background/) && nextAppState) === 'active' || nextAppState === undefined) {
-        const clipboard = await Clipboard.getString();
-        const isAddressFromStoredWallet = BlueApp.getWallets().some(wallet => {
-          if (wallet.chain === Chain.ONCHAIN) {
-            return wallet.weOwnAddress(clipboard);
-          } else {
-            return wallet.isInvoiceGeneratedByWallet(clipboard) || wallet.weOwnAddress(clipboard);
-          }
-        });
-        const isBitcoinAddress =
-          DeeplinkSchemaMatch.isBitcoinAddress(clipboard) || BitcoinBIP70TransactionDecode.matchesPaymentURL(clipboard);
-        const isLightningInvoice = DeeplinkSchemaMatch.isLightningInvoice(clipboard);
-        const isLNURL = DeeplinkSchemaMatch.isLnUrl(clipboard);
-        const isBothBitcoinAndLightning = DeeplinkSchemaMatch.isBothBitcoinAndLightning(clipboard);
-        if (
-          !isAddressFromStoredWallet &&
-          this.state.clipboardContent !== clipboard &&
-          (isBitcoinAddress || isLightningInvoice || isLNURL || isBothBitcoinAndLightning)
-        ) {
-          if (isBitcoinAddress) {
-            this.setState({ clipboardContentModalAddressType: bitcoinModalString });
-          } else if (isLightningInvoice || isLNURL) {
-            this.setState({ clipboardContentModalAddressType: lightningModalString });
-          } else if (isBothBitcoinAndLightning) {
-            this.setState({ clipboardContentModalAddressType: bitcoinModalString });
-          }
-          this.setState({ isClipboardContentModalVisible: true });
-        }
-        this.setState({ clipboardContent: clipboard });
-      }
-      if (nextAppState) {
-        this.setState({ appState: nextAppState });
-      }
+    // Disabled automatic clipboard address detection/prompt.
+    // It used to read Clipboard on app foreground and show a transaction modal
+    // when the clipboard contained a Kevacoin address / invoice / LNURL.
+    if (nextAppState) {
+      this.setState({ appState: nextAppState });
     }
   };
 
@@ -181,6 +158,7 @@ export default class App extends React.Component {
   };
 
   renderClipboardContentModal = () => {
+    return null;
     return (
       <Modal
         onModalShow={() => ReactNativeHapticFeedback.trigger('impactLight', { ignoreAndroidSystemSettings: false })}

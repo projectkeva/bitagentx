@@ -4,6 +4,11 @@ import React from 'react';
 import {
   Text,
 } from 'react-native';
+import {
+  getBottomTabText,
+  getCachedBottomTabLang,
+  resolveBottomTabLanguage,
+} from './bottomtab_i18n';
 import { createAppContainer } from 'react-navigation';
 import { createStackNavigator, TransitionPresets } from 'react-navigation-stack';
 import { createBottomTabNavigator } from 'react-navigation-tabs';
@@ -18,6 +23,7 @@ import EncryptStorage from './screen/settings/encryptStorage';
 import PlausibleDeniability from './screen/plausibledeniability';
 import ElectrumSettings from './screen/settings/electrumSettings';
 import IPFSSettings from './screen/settings/IPFSSettings';
+import UserAvatarSettings from './screen/settings/userAvatar';
 import GeneralSettings from './screen/settings/GeneralSettings';
 import NetworkSettings from './screen/settings/NetworkSettings';
 import DefaultView from './screen/settings/defaultView';
@@ -100,6 +106,46 @@ const CreateWalletStackNavigator = createStackNavigator({
   },
 });
 
+class BottomTabLabel extends React.PureComponent {
+  constructor(props) {
+    super(props);
+    this.state = { lang: getCachedBottomTabLang() };
+  }
+
+  componentDidMount() {
+    this.mounted = true;
+    this.refreshLanguage(true);
+    this.unsubscribeFocus = this.props.navigation?.addListener?.('didFocus', () => this.refreshLanguage(true));
+    this.refreshTimer = setInterval(() => this.refreshLanguage(false), 5000);
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.routeName !== this.props.routeName) {
+      this.refreshLanguage(true);
+    }
+  }
+
+  componentWillUnmount() {
+    this.mounted = false;
+    if (typeof this.unsubscribeFocus === 'function') this.unsubscribeFocus();
+    else if (this.unsubscribeFocus && typeof this.unsubscribeFocus.remove === 'function') this.unsubscribeFocus.remove();
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+  }
+
+  refreshLanguage = async force => {
+    const lang = await resolveBottomTabLanguage(force);
+    if (this.mounted && lang !== this.state.lang) {
+      this.setState({ lang });
+    }
+  };
+
+  render() {
+    const { routeName, tintColor } = this.props;
+    const label = getBottomTabText(routeName, this.state.lang);
+    return <Text style={{fontSize: 12, alignSelf: 'center', color: tintColor, position: 'relative', top: -2}}>{label}</Text>;
+  }
+}
+
 let styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -133,9 +179,9 @@ const KevaTabNavigator = createBottomTabNavigator({
         headerShown: false,
       },
     },
-    GetAgents: {
-      screen: GetAgents,
-      path: 'geta',
+    Satoshi: {
+      screen: HomeScreen,
+      path: 'satoshi',
       navigationOptions: {
         headerShown: false,
       },
@@ -178,7 +224,7 @@ const KevaTabNavigator = createBottomTabNavigator({
     },
   },
   {
-    initialRouteName: 'Home',
+    initialRouteName: 'Satoshi',
     tabBarPosition: 'bottom',
     lazy: true,
     tabBarOptions: {
@@ -197,9 +243,9 @@ const KevaTabNavigator = createBottomTabNavigator({
 if (routeName === 'Home') {
   iconName = 'md-home';
 } else
-        if (routeName === 'GetAgents') {
+        if (routeName === 'Satoshi') {
 
-          iconName = 'md-wallet';
+          iconName = 'md-person';
         } else if (routeName === 'Settings') {
           iconName = 'md-settings';
         } else if (routeName === 'Namespaces') {
@@ -211,21 +257,7 @@ if (routeName === 'Home') {
       },
       tabBarLabel: ({tintColor}) => {
         const { routeName } = navigation.state;
-        let label;
-if (routeName === 'Home') {
-  label = 'Home';
-} else
-
-        if (routeName === 'GetAgents') {
-          label = 'Get ID';
-        } else if (routeName === 'Settings') {
-          label = loc.general.label_settings;
-        } else if (routeName === 'Namespaces') {
-          label = loc.general.label_data;
-        } else if (routeName === 'Explore') {
-          label = loc.general.label_explore;
-        }
-        return <Text style={{fontSize: 12, alignSelf: 'center', color: tintColor, position: 'relative', top: -2}}>{label}</Text>;
+        return <BottomTabLabel routeName={routeName} tintColor={tintColor} navigation={navigation} />;
       },
     }),
     navigationOptions: ({ navigation }) => {
@@ -468,6 +500,10 @@ const HomeStackNavigator = createStackNavigator({
   EncryptStorage: {
     screen: EncryptStorage,
     path: 'EncryptStorage',
+  },
+  UserAvatarSettings: {
+    screen: UserAvatarSettings,
+    path: 'UserAvatarSettings',
   },
   GeneralSettings: {
     screen: GeneralSettings,

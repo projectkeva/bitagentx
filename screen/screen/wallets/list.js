@@ -1,6 +1,7 @@
 import React, { Component } from 'react';
 import { View, StatusBar, TouchableOpacity, Text, StyleSheet, InteractionManager, RefreshControl, SectionList, Alert } from 'react-native';
 import { SafeBlueArea, WalletsCarousel, BlueHeaderDefaultMain, BlueTransactionListItem, BlueRoundIcon } from '../../BlueComponents';
+import Icon from 'react-native-vector-icons/Ionicons';
 import { NavigationEvents } from 'react-navigation';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import PropTypes from 'prop-types';
@@ -18,6 +19,17 @@ import { showStatus, hideStatus, enableStatus } from '../../util';
 const WalletsListSections = { CAROUSEL: 'CAROUSEL', LOCALTRADER: 'LOCALTRADER', TRANSACTIONS: 'TRANSACTIONS' };
 
 export default class WalletsList extends Component {
+  static navigationOptions = ({ navigation }) => ({
+    headerLeft: () => (
+      <TouchableOpacity
+        style={{ marginHorizontal: 16, minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'flex-start' }}
+        onPress={() => navigation.goBack()}
+      >
+        <Text style={{ color: '#FFFFFF', fontSize: 22 }}>‹</Text>
+      </TouchableOpacity>
+    ),
+  });
+
   walletsCarousel = React.createRef();
   viewPagerRef = React.createRef();
 
@@ -306,11 +318,42 @@ export default class WalletsList extends Component {
   };
 
   renderNavigationHeader = () => {
+    const canGoBack = this.props.navigation && typeof this.props.navigation.goBack === 'function';
+
     return (
-      <View style={{ height: 44, alignItems: 'flex-end', justifyContent: 'center' }}>
+      <View
+        style={{
+          height: 52,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 12,
+        }}
+      >
+        <TouchableOpacity
+          testID="WalletsBackButton"
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          style={{
+            width: 40,
+            height: 40,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          onPress={() => {
+            if (canGoBack) {
+              this.props.navigation.goBack(null);
+            } else {
+              this.props.navigation.navigate('Tabs');
+            }
+          }}
+        >
+          <Icon name="ios-arrow-back" size={28} color={BlueApp.settings.foregroundColor} />
+        </TouchableOpacity>
+
         <TouchableOpacity
           testID="AddWalletButton"
-          style={{ paddingHorizontal: 16, position: 'relative', right: -6, top: -3 }}
+          style={{ paddingHorizontal: 4 }}
           onPress={() => {
             !BlueApp.getWallets().some(wallet => wallet.type === PlaceholderWallet.type)
               ? this.props.navigation.navigate('AddWallet')
@@ -353,6 +396,7 @@ export default class WalletsList extends Component {
         return (
           <BlueHeaderDefaultMain
             leftText={loc.wallets.list.title}
+            onBackPress={() => this.props.navigation.goBack()}
             onNewWalletPress={
               !BlueApp.getWallets().some(wallet => wallet.type === PlaceholderWallet.type)
                 ? () => this.props.navigation.navigate('AddWallet')

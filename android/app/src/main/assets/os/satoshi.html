@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>PROJECT KEVA SATOSHI</title>
+<style>
+@font-face{font-family:'Share Tech Mono';src:url('fonts/share-tech-mono.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap;}
+html,body{
+  height:100%;
+  margin:0;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  background:#000;
+  color:#00eaff;
+  font-family:'Share Tech Mono',monospace;
+  overflow:hidden;
+  --satoshi-alpha-glow: rgba(0,234,255,0.92);
+  --satoshi-alpha-soft: rgba(0,234,255,0.18);
+  --satoshi-alpha-core: rgba(0,234,255,0.34);
+}
+.boot-card{
+  position:relative;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:90vw;
+  max-width:640px;
+  min-height:340px;
+  border:1px solid rgba(0,255,255,0.4);
+  border-radius:14px;
+  background:radial-gradient(circle at 50% 30%, #0b0b0b, #000);
+  box-shadow:0 0 25px rgba(0,255,255,0.2);
+  padding:22px;
+  overflow:hidden;
+  box-sizing:border-box;
+}
+.boot-card::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  background:linear-gradient(135deg,rgba(0,255,255,0.06),transparent 40%,rgba(0,255,255,0.04));
+  pointer-events:none;
+}
+.boot-left{
+  position:relative;
+  width:176px;
+  height:176px;
+  margin-right:28px;
+  flex:0 0 auto;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border:1px solid var(--satoshi-alpha-core);
+  border-radius:16px;
+  background:radial-gradient(circle at 50% 42%, var(--satoshi-alpha-soft), #020606 58%);
+  box-shadow:inset 0 0 22px rgba(0,255,255,0.08),0 0 18px var(--satoshi-alpha-soft),0 0 34px rgba(0,234,255,0.12);
+  overflow:visible;
+  transition:border-color .24s ease, box-shadow .24s ease, background .24s ease;
+}
+.boot-left::before{
+  content:"";
+  position:absolute;
+  inset:12px;
+  border-radius:999px;
+  background:var(--satoshi-alpha-soft);
+  box-shadow:0 0 18px var(--satoshi-alpha-glow),0 0 42px var(--satoshi-alpha-soft);
+  opacity:.86;
+  pointer-events:none;
+}
+.boot-left::after{
+  content:"";
+  position:absolute;
+  inset:-3px;
+  border-radius:18px;
+  border:1px solid var(--satoshi-alpha-glow);
+  box-shadow:0 0 16px var(--satoshi-alpha-glow),0 0 36px var(--satoshi-alpha-soft);
+  opacity:.78;
+  pointer-events:none;
+}
+.boot-left img{
+  position:relative;
+  z-index:1;
+  width:132px;
+  height:132px;
+  object-fit:contain;
+  image-rendering:pixelated;
+  filter:drop-shadow(0 0 12px var(--satoshi-alpha-glow));
+  transition:filter .2s ease, opacity .2s ease;
+}
+.boot-left img.satoshi-disabled{
+  filter:grayscale(1) opacity(.52) drop-shadow(0 0 5px rgba(160,160,160,0.28));
+  opacity:.62;
+}
+.boot-right{
+  position:relative;
+  z-index:1;
+  text-align:left;
+  flex:1;
+  min-width:0;
+}
+.title{
+  font-size:13px;
+  color:#88ffff;
+  margin-bottom:8px;
+  letter-spacing:1px;
+}
+.name{
+  font-size:38px;
+  line-height:1;
+  color:#fff;
+  letter-spacing:3px;
+  text-shadow:0 0 22px rgba(0,255,255,0.55);
+  margin-bottom:12px;
+}
+.field{
+  font-size:13px;
+  color:#aef;
+  margin:5px 0;
+}
+.label{color:#777;font-size:12px;}
+.menu{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:14px;
+  margin-top:20px;
+}
+.menu button{
+  background:#00eaff;
+  color:#000;
+  border:none;
+  border-radius:6px;
+  padding:10px 16px;
+  min-width:160px;
+  min-height:42px;
+  line-height:1.15;
+  touch-action:manipulation;
+  -webkit-tap-highlight-color:rgba(255,216,74,0.22);
+  position:relative;
+  z-index:3;
+  font-family:'Share Tech Mono',monospace;
+  font-weight:700;
+  cursor:pointer;
+  box-shadow:0 0 8px #00eaff;
+}
+.menu button:hover{opacity:.84;}
+.menu button:disabled{
+  background:#777;
+  color:#222;
+  opacity:.72;
+  cursor:default;
+  box-shadow:0 0 6px rgba(120,120,120,.35);
+}
+.menu button[data-action="get"]{
+  background:#ffd84a;
+  color:#1a1200;
+  box-shadow:0 0 10px #ffd84a,0 0 18px rgba(255,216,74,0.35);
+}
+.menu button[data-action="get"]:disabled{
+  background:#777;
+  color:#222;
+  box-shadow:0 0 6px rgba(120,120,120,.35);
+}
+.hint{
+  color:#888;
+  font-size:11px;
+  margin-top:12px;
+  line-height:1.35;
+}
+.status-line{
+  color:#ffd84a;
+  font-size:12px;
+  margin-top:22px;
+  min-height:18px;
+  line-height:1.35;
+  white-space:pre-line;
+  text-shadow:0 0 8px rgba(255,216,74,0.35);
+}
+.status-line.ready{color:#53DD6C;text-shadow:0 0 8px rgba(83,221,108,0.35);}
+.status-line.unavailable{color:#ff6b6b;text-shadow:0 0 8px rgba(255,107,107,0.35);}
+@media (max-width:560px){
+  .boot-card{flex-direction:column;text-align:center;min-height:420px;padding:22px 18px;}
+  .boot-left{margin-right:0;margin-bottom:22px;width:150px;height:150px;}
+  .boot-left img{width:116px;height:116px;}
+  .boot-right{text-align:center;}
+  .menu{align-items:center;}
+  .name{font-size:32px;}
+}
+</style>
+</head>
+<body>
+  <div class="boot-card">
+    <div class="boot-left">
+      <img id="satoshiAvatar" class="satoshi-disabled" src="theme/retro/icons/satoshi-avatar.png" alt="Satoshi"/>
+    </div>
+    <div class="boot-right">
+      <div class="title" id="satoshiTitle">PROJECT KEVA AGENT CARD</div>
+      <div class="name">SATOSHI</div>
+      <div class="field" style="display:none"><span class="label" id="satoshiClassLabel">ID:</span> <span id="satoshiClassValue"></span></div>
+      <div class="menu">
+        <button type="button" data-action="get">Get Satoshi Card</button>
+        <button type="button" data-action="role">Role</button>
+        <button type="button" data-action="chat">Chat</button>
+        <button type="button" data-action="story">Story</button>
+      </div>
+      <div id="satoshiStatus" class="status-line">Waiting for Get Satoshi Card command</div>
+      <div id="satoshiHint" class="hint">Click Get Satoshi Card to get agent card.</div>
+    </div>
+  </div>
+<script>
+(function(){
+  const TEXT={
+    en:{
+      title:'PROJECT KEVA AGENT CARD',idLabel:'ID:',
+      waiting:'Waiting for connect Satoshi…',requesting:'Contacting Satoshi…',checking_network:'Confirming environment…',
+      network_ready:'Network ready. Click Get Satoshi Card.',checking_wallet:'Checking wallet…',creating_wallet:'Creating SATOSHI wallet…',getting_address:'Getting wallet address…',
+      receiving:'Waiting Satoshi…',restoring_memory:'Restoring Satoshi memory on-chain…',
+      network_unstable:'Environment is not ready. Waiting to refresh and retry…',network_unstableMain:'Environment is not ready.',network_unstableWait:'Waiting to refresh and retry…',
+      unavailable:'Waiting for connection…',ready:'Satoshi agent is ready',
+      hint:'Click Get Satoshi Card to get agent card.',waitHint:'Please wait for Satoshi information.',restoreHint:'Restoring Satoshi memory in the background.',readyHint:'Click Satoshi is here to view the Satoshi card.',
+      get:'Get Satoshi Card',readyButton:'Satoshi is here',role:'Role',chat:'Chat',story:'Story'
+    },
+    'zh-cn':{
+      title:'PROJECT KEVA AGENT CARD',idLabel:'ID：',
+      waiting:'等待连接 Satoshi…',requesting:'正在联系 Satoshi…',checking_network:'正在确认环境…',
+      network_ready:'网络准备就绪，可以点击 Get Satoshi Card。',checking_wallet:'正在检测钱包…',creating_wallet:'正在创建 SATOSHI 钱包…',getting_address:'正在获取钱包地址…',
+      receiving:'正在等待 Satoshi…',restoring_memory:'正在链上恢复 Satoshi 记忆…',
+      network_unstable:'环境未准备好，等待刷新重试…',network_unstableMain:'环境未准备好。',network_unstableWait:'等待刷新重试…',
+      unavailable:'等待连接…',ready:'Satoshi agent 已就绪',
+      hint:'点击 Get Satoshi Card 获取聪卡。',waitHint:'请等待 Satoshi 信息。',restoreHint:'正在后台恢复 Satoshi 记忆。',readyHint:'点击 Satoshi is here 查看聪卡。',
+      get:'Get Satoshi Card',readyButton:'Satoshi is here',role:'角色',chat:'聊天',story:'故事'
+    },
+    'zh-tw':{
+      title:'PROJECT KEVA AGENT CARD',idLabel:'ID：',
+      waiting:'等待連接 Satoshi…',requesting:'正在聯絡 Satoshi…',checking_network:'正在確認環境…',
+      network_ready:'網路準備就緒，可以點擊 Get Satoshi Card。',checking_wallet:'正在檢測錢包…',creating_wallet:'正在建立 SATOSHI 錢包…',getting_address:'正在取得錢包地址…',
+      receiving:'正在等待 Satoshi…',restoring_memory:'正在鏈上恢復 Satoshi 記憶…',
+      network_unstable:'環境未準備好，等待刷新重試…',network_unstableMain:'環境未準備好。',network_unstableWait:'等待刷新重試…',
+      unavailable:'等待連接…',ready:'Satoshi agent 已就緒',
+      hint:'點擊 Get Satoshi Card 取得聰卡。',waitHint:'請等待 Satoshi 資訊。',restoreHint:'正在背景恢復 Satoshi 記憶。',readyHint:'點擊 Satoshi is here 查看聰卡。',
+      get:'Get Satoshi Card',readyButton:'Satoshi is here',role:'角色',chat:'聊天',story:'故事'
+    },
+    ja:{
+      title:'PROJECT KEVA AGENT CARD',idLabel:'ID：',
+      waiting:'Satoshi への接続を待っています…',requesting:'Satoshi に連絡中…',checking_network:'環境を確認しています…',
+      network_ready:'ネットワーク準備完了。Get Satoshi Card をクリックできます。',checking_wallet:'ウォレットを確認しています…',creating_wallet:'SATOSHI ウォレットを作成しています…',getting_address:'ウォレットアドレスを取得しています…',
+      receiving:'Satoshi を待っています…',restoring_memory:'Satoshi のオンチェーン記憶を復元しています…',
+      network_unstable:'環境の準備ができていません。更新して再試行します…',network_unstableMain:'環境の準備ができていません。',network_unstableWait:'更新して再試行します…',
+      unavailable:'接続を待っています…',ready:'Satoshi agent の準備ができました',
+      hint:'Get Satoshi Card をクリックしてカードを取得。',waitHint:'Satoshi 情報をお待ちください。',restoreHint:'バックグラウンドで Satoshi の記憶を復元しています。',readyHint:'Satoshi is here をクリックしてカードを見る。',
+      get:'Get Satoshi Card',readyButton:'Satoshi is here',role:'ロール',chat:'チャット',story:'ストーリー'
+    },
+    ko:{
+      title:'PROJECT KEVA AGENT CARD',idLabel:'ID:',
+      waiting:'Satoshi 연결 대기 중…',requesting:'Satoshi에 연결 중…',checking_network:'환경 확인 중…',
+      network_ready:'네트워크 준비 완료. Get Satoshi Card를 누를 수 있습니다.',checking_wallet:'지갑 확인 중…',creating_wallet:'SATOSHI 지갑 생성 중…',getting_address:'지갑 주소 가져오는 중…',
+      receiving:'Satoshi 대기 중…',restoring_memory:'Satoshi 온체인 메모리 복원 중…',
+      network_unstable:'환경이 준비되지 않았습니다. 새로고침 후 다시 시도합니다…',network_unstableMain:'환경이 준비되지 않았습니다.',network_unstableWait:'새로고침 후 다시 시도합니다…',
+      unavailable:'연결 대기 중…',ready:'Satoshi agent 준비 완료',
+      hint:'Get Satoshi Card를 눌러 카드를 받으세요.',waitHint:'Satoshi 정보를 기다려 주세요.',restoreHint:'백그라운드에서 Satoshi 메모리를 복원 중입니다.',readyHint:'Satoshi is here를 눌러 카드를 확인하세요.',
+      get:'Get Satoshi Card',readyButton:'Satoshi is here',role:'역할',chat:'채팅',story:'스토리'
+    },
+    es:{
+      title:'TARJETA DE AGENTE PROJECT KEVA',idLabel:'ID:',
+      waiting:'Esperando conexión con Satoshi…',requesting:'Contactando con Satoshi…',checking_network:'Confirmando entorno…',
+      network_ready:'La red está lista. Pulsa Get Satoshi Card.',checking_wallet:'Comprobando billetera…',creating_wallet:'Creando billetera SATOSHI…',getting_address:'Obteniendo dirección de billetera…',
+      receiving:'Esperando a Satoshi…',restoring_memory:'Restaurando la memoria de Satoshi en cadena…',
+      network_unstable:'El entorno no está listo. Esperando para actualizar y reintentar…',network_unstableMain:'El entorno no está listo.',network_unstableWait:'Esperando para actualizar y reintentar…',
+      unavailable:'Esperando conexión…',ready:'El agente Satoshi está listo',
+      hint:'Pulsa Get Satoshi Card para obtener la tarjeta.',waitHint:'Espera la información de Satoshi.',restoreHint:'Restaurando la memoria de Satoshi en segundo plano.',readyHint:'Pulsa Satoshi is here para ver la tarjeta.',
+      get:'Get Satoshi Card',readyButton:'Satoshi is here',role:'Rol',chat:'Chat',story:'Historia'
+    },
+    fr:{
+      title:'CARTE AGENT PROJECT KEVA',idLabel:'ID :',
+      waiting:'En attente de connexion à Satoshi…',requesting:'Contact de Satoshi…',checking_network:'Vérification de l’environnement…',
+      network_ready:'Réseau prêt. Cliquez sur Get Satoshi Card.',checking_wallet:'Vérification du portefeuille…',creating_wallet:'Création du portefeuille SATOSHI…',getting_address:'Obtention de l’adresse du portefeuille…',
+      receiving:'En attente de Satoshi…',restoring_memory:'Restauration de la mémoire Satoshi sur chaîne…',
+      network_unstable:'L’environnement n’est pas prêt. Attente d’actualisation et de nouvelle tentative…',network_unstableMain:'L’environnement n’est pas prêt.',network_unstableWait:'Attente d’actualisation et de nouvelle tentative…',
+      unavailable:'En attente de connexion…',ready:'L’agent Satoshi est prêt',
+      hint:'Cliquez sur Get Satoshi Card pour obtenir la carte.',waitHint:'Veuillez attendre les informations de Satoshi.',restoreHint:'Restauration de la mémoire Satoshi en arrière-plan.',readyHint:'Cliquez sur Satoshi is here pour voir la carte.',
+      get:'Get Satoshi Card',readyButton:'Satoshi is here',role:'Rôle',chat:'Chat',story:'Histoire'
+    },
+  };
+  const SATOSHI_WAIT_SECONDS=10;
+  let lang='en';
+  let currentStatus='checking_network';
+  let hasSatoshi=false;
+  let satoshiAlphaValue=null;
+  let electrumHeight=null;
+  let satoshiApiHeight=null;
+  let apiMessage='';
+  let canOpenChatStory=false;
+  let satoshiId='';
+  let satoshiWaitTimer=null;
+  let satoshiWaitLeft=0;
+
+  function normalizeLang(value){
+    const raw=String(value || '').trim().toLowerCase();
+    if(raw==='zh' || raw==='zh-hans')return 'zh-cn';
+    if(raw==='zh-hant')return 'zh-tw';
+    return TEXT[raw] ? raw : 'en';
+  }
+
+  function isSatoshiWaitStatus(status){
+    return ['requesting','checking_network','network_unstable','checking_wallet','creating_wallet','getting_address','receiving','restoring_memory'].includes(status);
+  }
+
+  function postNativeMessage(message){
+    try{
+      if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function'){
+        window.ReactNativeWebView.postMessage(message);
+      }
+    }catch(_){}
+  }
+
+  function stopSatoshiWaitTicker(){
+    if(satoshiWaitTimer){
+      clearInterval(satoshiWaitTimer);
+      satoshiWaitTimer=null;
+    }
+    satoshiWaitLeft=0;
+    window.__satoshiCountdown=undefined;
+  }
+
+  function startSatoshiWaitTicker(){
+    stopSatoshiWaitTicker();
+    if(!isSatoshiWaitStatus(currentStatus)){
+      renderStatus();
+      return;
+    }
+    satoshiWaitLeft=SATOSHI_WAIT_SECONDS;
+    window.__satoshiCountdown=satoshiWaitLeft;
+    renderStatus();
+    satoshiWaitTimer=setInterval(()=>{
+      satoshiWaitLeft-=1;
+      window.__satoshiCountdown=satoshiWaitLeft;
+      renderStatus();
+      if(satoshiWaitLeft<=0){
+        postNativeMessage('refresh_satoshi_status');
+        satoshiWaitLeft=SATOSHI_WAIT_SECONDS;
+        window.__satoshiCountdown=satoshiWaitLeft;
+        renderStatus();
+      }
+    },1000);
+  }
+
+  function statusText(status){
+    const table=TEXT[normalizeLang(lang)] || TEXT.en;
+    const text=table[status] || TEXT.en[status] || table.waiting;
+    if(status==='checking_network' || status==='network_ready'){
+      const e=Number(electrumHeight);
+      const a=Number(satoshiApiHeight);
+      if(status==='network_ready'){
+        if(Number.isFinite(e) && Number.isFinite(a))return `${text}\n\nE:${e} / S:${a}`;
+        if(Number.isFinite(e))return `${text}\n\nE:${e}`;
+      }
+      if(Number.isFinite(e) && Number.isFinite(a))return `${text} E:${e} / S:${a}`;
+      if(Number.isFinite(e))return `${text} E:${e}`;
+    }
+    if(status==='network_unstable'){
+      const e=Number(electrumHeight);
+      const a=Number(satoshiApiHeight);
+      const detail=Number.isFinite(e) && Number.isFinite(a) ? `E:${e} / S:${a}` : '';
+      const first=table.network_unstableMain || text;
+      const second=table.network_unstableWait || '';
+      return `${first}${detail ? ` ${detail}` : ''}${second ? `
+
+${second}` : ''}`;
+    }
+    if(status==='api_error'){
+      return apiMessage || 'Satoshi API error. Please try again later.';
+    }
+    if(['requesting','checking_network','network_unstable','checking_wallet','creating_wallet','getting_address','receiving','restoring_memory'].includes(status)){
+      const left=Number(window.__satoshiCountdown);
+      return Number.isFinite(left) ? `${text} (${Math.max(0,left)}s)` : text;
+    }
+    return text;
+  }
+
+  function clampAlpha(value){
+    const n=Number(value);
+    if(!Number.isFinite(n))return null;
+    return Math.max(-99,Math.min(99,Math.round(n)));
+  }
+
+  function blendChannel(from,to,ratio){
+    const t=Math.max(0,Math.min(1,ratio));
+    return Math.round(from+(to-from)*t);
+  }
+
+  function alphaColorComponents(value){
+    const alpha=clampAlpha(value);
+    if(alpha===null || alpha===0)return {r:255,g:255,b:255};
+    const intensity=Math.abs(alpha)/99;
+    const target=alpha<0 ? {r:12,g:176,b:96} : {r:24,g:128,b:255};
+    return {
+      r:blendChannel(255,target.r,intensity),
+      g:blendChannel(255,target.g,intensity),
+      b:blendChannel(255,target.b,intensity),
+    };
+  }
+
+  function rgba(c,a){return `rgba(${c.r},${c.g},${c.b},${a})`;}
+
+  function setSatoshiAlphaFrame(){
+    const root=document.documentElement;
+    let glow='rgba(0,234,255,0.92)';
+    let soft='rgba(0,234,255,0.18)';
+    let core='rgba(0,234,255,0.34)';
+    if(hasSatoshi){
+      const c=alphaColorComponents(satoshiAlphaValue);
+      glow=rgba(c,0.96);
+      soft=rgba(c,0.24);
+      core=rgba(c,0.48);
+    }else if(['requesting','checking_network','network_ready','checking_wallet','creating_wallet','getting_address','receiving','restoring_memory'].includes(currentStatus)){
+      glow='rgba(255,216,74,0.92)';
+      soft='rgba(255,216,74,0.18)';
+      core='rgba(255,216,74,0.36)';
+    }else{
+      glow='rgba(148,163,184,0.70)';
+      soft='rgba(148,163,184,0.12)';
+      core='rgba(148,163,184,0.24)';
+    }
+    root.style.setProperty('--satoshi-alpha-glow',glow);
+    root.style.setProperty('--satoshi-alpha-soft',soft);
+    root.style.setProperty('--satoshi-alpha-core',core);
+  }
+
+  function renderStatus(){
+    const avatar=document.getElementById('satoshiAvatar');
+    const line=document.getElementById('satoshiStatus');
+    const hint=document.getElementById('satoshiHint');
+    setSatoshiAlphaFrame();
+    if(avatar)avatar.classList.toggle('satoshi-disabled',!hasSatoshi);
+    if(line){
+      line.textContent=statusText(currentStatus);
+      line.className='status-line '+(currentStatus==='ready'?'ready':currentStatus==='unavailable'?'unavailable':'');
+    }
+    const table=TEXT[normalizeLang(lang)] || TEXT.en;
+    const title=document.getElementById('satoshiTitle');
+    const classLabel=document.getElementById('satoshiClassLabel');
+    const classValue=document.getElementById('satoshiClassValue');
+    if(title)title.textContent=table.title || TEXT.en.title;
+    const idText=String(satoshiId || '').trim();
+    const showId=hasSatoshi && currentStatus==='ready' && !!idText;
+    const classField=classLabel ? classLabel.closest('.field') : null;
+    if(classField)classField.style.display=showId ? '' : 'none';
+    if(classLabel)classLabel.textContent=table.idLabel || TEXT.en.idLabel || 'ID:';
+    if(classValue)classValue.textContent=idText;
+    document.querySelectorAll('button[data-action]').forEach(btn=>{
+      const action=btn.dataset.action;
+      if(action==='get')return;
+      btn.textContent=table[action] || TEXT.en[action] || action;
+      if(action==='role') btn.disabled=!(hasSatoshi && currentStatus==='ready');
+      else btn.disabled=!(hasSatoshi && currentStatus==='ready' && canOpenChatStory);
+    });
+    const getBtn=document.querySelector('button[data-action="get"]');
+    if(getBtn){
+      getBtn.style.display='';
+      getBtn.disabled=false;
+      if(currentStatus==='restoring_memory'){
+        getBtn.disabled=true;
+        getBtn.textContent=table.get || TEXT.en.get;
+      }else if(hasSatoshi){
+        getBtn.textContent=table.readyButton || TEXT.en.readyButton;
+      }else if(['requesting','checking_network','network_unstable','checking_wallet','creating_wallet','getting_address','receiving'].includes(currentStatus)){
+        getBtn.disabled=true;
+        getBtn.textContent=table.get || TEXT.en.get;
+      }else{
+        getBtn.textContent=table.get || TEXT.en.get;
+      }
+    }
+    if(hint){
+      if(hasSatoshi && currentStatus==='ready'){
+        hint.textContent=table.readyHint || TEXT.en.readyHint;
+      }else if(currentStatus==='waiting'){
+        hint.textContent=table.hint || TEXT.en.hint;
+      }else{
+        hint.textContent='';
+      }
+    }
+  }
+
+  function applyPayload(payload){
+    if(typeof payload === 'string'){
+      try{payload=JSON.parse(payload);}catch(_){return;}
+    }
+    if(!payload || !payload.type)return;
+    if(payload.type==='home_set_language'){
+      lang=normalizeLang(payload.lang);
+      renderStatus();
+      return;
+    }
+    if(payload.type==='satoshi_status'){
+      hasSatoshi=!!payload.hasSatoshi;
+      satoshiAlphaValue=payload.alphaValue;
+      electrumHeight=payload.electrumHeight;
+      satoshiApiHeight=payload.satoshiApiHeight;
+      apiMessage=payload.apiMessage || '';
+      canOpenChatStory=!!payload.canOpenChatStory;
+      satoshiId=payload.satoshiId || payload.shortCode || payload.namespaceId || satoshiId || '';
+      currentStatus=payload.status || (hasSatoshi ? 'ready' : 'waiting');
+      if(typeof payload.countdown !== 'undefined') window.__satoshiCountdown=payload.countdown;
+      if(isSatoshiWaitStatus(currentStatus)) startSatoshiWaitTicker();
+      else { stopSatoshiWaitTicker(); renderStatus(); }
+    }
+  }
+
+  function emit(action){
+    let delivered=false;
+    try{
+      if(window.parent && window.parent !== window && typeof window.parent.postMessage === 'function'){
+        window.parent.postMessage({type:'satoshi_menu_action',action}, '*');
+        delivered=true;
+      }
+    }catch(_){}
+    try{
+      if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function'){
+        var getAction=(hasSatoshi && currentStatus==='ready') ? 'open_satoshi_namespace_list' : 'open_satoshi_get_namespace';
+        var nativeActions={get:getAction,role:'open_satoshi_role',chat:'open_satoshi_chat',story:'open_satoshi_story'};
+        if(nativeActions[action]){
+          window.ReactNativeWebView.postMessage(nativeActions[action]);
+          delivered=true;
+        }
+      }
+    }catch(_){}
+    try{
+      if(action==='get' && !(hasSatoshi && currentStatus==='ready')) window.location.href='appd://open_satoshi_get_namespace';
+    }catch(_){}
+    if(delivered)return;
+    if(action === 'get'){
+      window.open('https://satoshi.nakamotoinstitute.org/','_blank');
+    }else{
+      const labels={role:'Role',chat:'Chat',story:'Story'};
+      alert((labels[action] || 'This action') + ' is only available inside the Kevacoin app.');
+    }
+  }
+  let lastActionAt=0;
+  function handleActionButton(btn,event){
+    if(event && typeof event.preventDefault==='function')event.preventDefault();
+    if(!btn || btn.disabled)return;
+    const now=Date.now();
+    if(now-lastActionAt<700)return;
+    const action=btn.dataset.action;
+    lastActionAt=now;
+    if(action === 'get' && !(hasSatoshi && currentStatus==='ready')){
+      hasSatoshi=false;
+      currentStatus='requesting';
+      startSatoshiWaitTicker();
+    }
+    emit(action);
+  }
+  document.querySelectorAll('button[data-action]').forEach(btn=>{
+    btn.addEventListener('touchend',event=>handleActionButton(btn,event),{passive:false});
+    btn.addEventListener('click',event=>handleActionButton(btn,event));
+  });
+  window.addEventListener('message',event=>applyPayload(event.data));
+  document.addEventListener('message',event=>applyPayload(event.data));
+  if(isSatoshiWaitStatus(currentStatus)) startSatoshiWaitTicker();
+  else renderStatus();
+})();
+</script>
+</body>
+</html>

@@ -14,7 +14,7 @@ import {
   Platform,
   Linking,
 } from 'react-native';
-import { BlueButton, SafeBlueArea, BlueCard, BlueSpacing20, BlueNavigationStyle, BlueText } from '../../BlueComponents';
+import { BlueButton, SafeBlueArea, BlueSpacing20, BlueNavigationStyle, BlueText } from '../../BlueComponents';
 import PropTypes from 'prop-types';
 import { LightningCustodianWallet } from '../../class/lightning-custodian-wallet';
 import { HDLegacyBreadwalletWallet } from '../../class/hd-legacy-breadwallet-wallet';
@@ -35,6 +35,18 @@ export default class WalletDetails extends Component {
   static navigationOptions = ({ navigation }) => ({
     ...BlueNavigationStyle(),
     title: loc.wallets.details.title,
+    headerStyle: {
+      backgroundColor: '#06131b',
+      borderBottomWidth: 1,
+      borderBottomColor: 'rgba(0, 229, 255, 0.28)',
+      elevation: 0,
+      shadowColor: 'transparent',
+    },
+    headerTitleStyle: {
+      fontWeight: '600',
+      color: '#eaffff',
+    },
+    headerTintColor: '#9ffcff',
     headerRight: () => (
       <TouchableOpacity
         disabled={navigation.getParam('isLoading') === true}
@@ -45,7 +57,7 @@ export default class WalletDetails extends Component {
           }
         }}
       >
-        <Text style={{ color: '#0c2550' }}>{loc.wallets.details.save}</Text>
+        <Text style={{ color: '#9ffcff' }}>{loc.wallets.details.save}</Text>
       </TouchableOpacity>
     ),
   });
@@ -159,17 +171,17 @@ export default class WalletDetails extends Component {
   render() {
     if (this.state.isLoading) {
       return (
-        <View style={{ flex: 1 }}>
-          <ActivityIndicator />
+        <View style={{ flex: 1, backgroundColor: '#03080d', justifyContent: 'center' }}>
+          <ActivityIndicator color="#00e5ff" />
         </View>
       );
     }
     return (
-      <SafeBlueArea style={{ flex: 1 }}>
+      <SafeBlueArea style={{ flex: 1, backgroundColor: '#03080d' }}>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
           <KeyboardAvoidingView behavior="position">
-            <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
-              <BlueCard style={{ alignItems: 'center', flex: 1 }}>
+            <ScrollView style={{ backgroundColor: '#03080d' }} contentContainerStyle={{ flexGrow: 1, padding: 20 }}>
+              <View style={{ alignItems: 'center', flex: 1, backgroundColor: '#06131b', borderWidth: 1, borderColor: 'rgba(0, 229, 255, 0.24)', borderRadius: 18, padding: 20 }}>
                 {(() => {
                   if (
                     [LegacyWallet.type, SegwitBech32Wallet.type, SegwitP2SHWallet.type].includes(this.state.wallet.type) ||
@@ -177,26 +189,26 @@ export default class WalletDetails extends Component {
                   ) {
                     return (
                       <React.Fragment>
-                        <Text style={{ color: '#0c2550', fontWeight: '500', fontSize: 14, marginVertical: 12 }}>
+                        <Text style={{ color: '#9ffcff', fontWeight: '500', fontSize: 14, marginVertical: 12 }}>
                           {loc.wallets.details.address.toLowerCase()}
                         </Text>
-                        <Text style={{ color: '#81868e', fontWeight: '500', fontSize: 14 }}>{this.state.wallet.getAddress()}</Text>
+                        <Text style={{ color: '#d7fbff', fontWeight: '500', fontSize: 14 }}>{this.state.wallet.getAddress()}</Text>
                       </React.Fragment>
                     );
                   }
                 })()}
-                <Text style={{ color: '#0c2550', fontWeight: '500', fontSize: 14, marginVertical: 16 }}>
+                <Text style={{ color: '#9ffcff', fontWeight: '500', fontSize: 14, marginVertical: 16 }}>
                   {loc.wallets.add.wallet_name.toLowerCase()}
                 </Text>
 
                 <View
                   style={{
                     flexDirection: 'row',
-                    borderColor: '#d2d2d2',
-                    borderBottomColor: '#d2d2d2',
+                    borderColor: 'rgba(0, 229, 255, 0.34)',
+                    borderBottomColor: 'rgba(0, 229, 255, 0.34)',
                     borderWidth: 1.0,
                     borderBottomWidth: 0.5,
-                    backgroundColor: '#f5f5f5',
+                    backgroundColor: '#03080d',
                     minHeight: 44,
                     height: 44,
                     alignItems: 'center',
@@ -216,43 +228,44 @@ export default class WalletDetails extends Component {
                       }
                     }}
                     numberOfLines={1}
-                    style={{ flex: 1, marginHorizontal: 8, minHeight: 33 }}
+                    placeholderTextColor="#5aaeb7"
+                    style={{ flex: 1, marginHorizontal: 8, minHeight: 33, color: '#eaffff' }}
                     editable={!this.state.isLoading}
                     underlineColorAndroid="transparent"
                   />
                 </View>
                 <BlueSpacing20 />
-                <Text style={{ color: '#0c2550', fontWeight: '500', fontSize: 14, marginVertical: 12 }}>
+                <Text style={{ color: '#9ffcff', fontWeight: '500', fontSize: 14, marginVertical: 12 }}>
                   {loc.wallets.details.type.toLowerCase()}
                 </Text>
-                <Text style={{ color: '#81868e', fontWeight: '500', fontSize: 14 }}>{this.state.wallet.typeReadable}</Text>
+                <Text style={{ color: '#d7fbff', fontWeight: '500', fontSize: 14 }}>{this.state.wallet.typeReadable}</Text>
                 {this.state.wallet.type === LightningCustodianWallet.type && (
                   <React.Fragment>
-                    <Text style={{ color: '#0c2550', fontWeight: '500', fontSize: 14, marginVertical: 12 }}>
+                    <Text style={{ color: '#9ffcff', fontWeight: '500', fontSize: 14, marginVertical: 12 }}>
                       {loc.wallets.details.connected_to.toLowerCase()}
                     </Text>
-                    <BlueText>{this.state.wallet.getBaseURI()}</BlueText>
+                    <BlueText style={{ color: '#d7fbff' }}>{this.state.wallet.getBaseURI()}</BlueText>
                   </React.Fragment>
                 )}
                 <View>
                   <BlueSpacing20 />
                   {this.state.wallet.type === WatchOnlyWallet.type && this.state.wallet.getSecret().startsWith('zpub') && (
                     <>
-                      <Text style={{ color: '#0c2550', fontWeight: '500', fontSize: 14, marginVertical: 16 }}>
+                      <Text style={{ color: '#9ffcff', fontWeight: '500', fontSize: 14, marginVertical: 16 }}>
                         {loc.wallets.details.advanced.toLowerCase()}
                       </Text>
                       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <BlueText>{loc.wallets.details.use_with_hardware_wallet}</BlueText>
+                        <BlueText style={{ color: '#d7fbff' }}>{loc.wallets.details.use_with_hardware_wallet}</BlueText>
                         <Switch
                           value={this.state.useWithHardwareWallet}
                           onValueChange={value => this.onUseWithHardwareWalletSwitch(value)}
                         />
                       </View>
                       <React.Fragment>
-                        <Text style={{ color: '#0c2550', fontWeight: '500', fontSize: 14, marginVertical: 12 }}>
+                        <Text style={{ color: '#9ffcff', fontWeight: '500', fontSize: 14, marginVertical: 12 }}>
                           {loc.wallets.details.master_fingerprint.toLowerCase()}
                         </Text>
-                        <Text style={{ color: '#81868e', fontWeight: '500', fontSize: 14 }}>
+                        <Text style={{ color: '#d7fbff', fontWeight: '500', fontSize: 14 }}>
                           {this.state.wallet.getMasterFingerprintHex()}
                         </Text>
                       </React.Fragment>
@@ -267,6 +280,9 @@ export default class WalletDetails extends Component {
                       })
                     }
                     title={loc.wallets.details.export_backup}
+                    backgroundColor="#00bcd4"
+                    fontColor="#031017"
+                    borderColor="#00e5ff"
                   />
 
                   {(this.state.wallet.type === HDLegacyBreadwalletWallet.type ||
@@ -282,6 +298,9 @@ export default class WalletDetails extends Component {
                           })
                         }
                         title={loc.wallets.details.show_xpub}
+                        backgroundColor="#00bcd4"
+                        fontColor="#031017"
+                        borderColor="#00e5ff"
                       />
 
                       { /* <BlueSpacing20 /> */}
@@ -291,12 +310,12 @@ export default class WalletDetails extends Component {
                   {this.state.wallet.type !== LightningCustodianWallet.type && (
                     <React.Fragment>
                       <BlueSpacing20 />
-                      <BlueButton onPress={() => this.props.navigation.navigate('Broadcast')} title="Broadcast transaction" />
+                      <BlueButton onPress={() => this.props.navigation.navigate('Broadcast')} title="Broadcast transaction" backgroundColor="#00bcd4" fontColor="#031017" borderColor="#00e5ff" />
                     </React.Fragment>
                   )}
                   <React.Fragment>
                     <BlueSpacing20 />
-                    <BlueButton onPress={() => this.resetTransaction()} title="Reset Transaction History" backgroundColor="#fff" fontColor={BlueApp.settings.secondaryButtonTextColor} borderColor={BlueApp.settings.secondaryButtonTextColor}/>
+                    <BlueButton onPress={() => this.resetTransaction()} title="Reset Transaction History" backgroundColor="#06131b" fontColor="#9ffcff" borderColor="rgba(0, 229, 255, 0.48)"/>
                   </React.Fragment>
                   <BlueSpacing20 />
                   <TouchableOpacity
@@ -338,10 +357,10 @@ export default class WalletDetails extends Component {
                       );
                     }}
                   >
-                    <Text style={{ color: '#d0021b', fontSize: 15, fontWeight: '500' }}>{loc.wallets.details.delete}</Text>
+                    <Text style={{ color: '#ff7f91', fontSize: 15, fontWeight: '500' }}>{loc.wallets.details.delete}</Text>
                   </TouchableOpacity>
                 </View>
-              </BlueCard>
+              </View>
             </ScrollView>
           </KeyboardAvoidingView>
         </TouchableWithoutFeedback>

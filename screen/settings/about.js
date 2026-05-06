@@ -72,14 +72,31 @@ const About = () => {
       <ScrollView testID="AboutScrollView">
         <BlueCard>
           <View style={{ justifyContent: 'center', alignItems: 'center', marginTop: 54 }}>
-            <Image
-              source={require('../../img/bluebeast.png')}
-              style={{
-                width: 102,
-                height: 124,
-              }}
-            />
-            <Text style={{ maxWidth: 260, marginVertical: 24, color: '#9AA0AA', fontSize: 15, textAlign: 'center', fontWeight: '500' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+              <Image
+                source={require('../../android/app/src/main/assets/os/theme/retro/icons/satoshi-avatar.png')}
+                style={{
+                  width: 82,
+                  height: 82,
+                  marginRight: 18,
+                  borderRadius: 41,
+                }}
+              />
+              <Image
+                source={require('../../img/bluebeast.png')}
+                style={{
+                  width: 102,
+                  height: 124,
+                }}
+              />
+            </View>
+            <Text style={{ maxWidth: 260, marginTop: 24, marginBottom: 8, color: '#0C2550', fontSize: 18, textAlign: 'center', fontWeight: '700' }}>
+              bitAgent X 1.6
+            </Text>
+            <Text style={{ maxWidth: 300, marginBottom: 14, color: '#4B5563', fontSize: 13, lineHeight: 18, textAlign: 'center', fontWeight: '500' }}>
+              Thanks to Satoshi Nakamoto, Kevacoin, Grok, and GPT for making the decentralized ID concept for trillions of agents come alive on bitAgent X, preparing infrastructure for the next civilization.
+            </Text>
+            <Text style={{ maxWidth: 260, marginBottom: 24, color: '#9AA0AA', fontSize: 15, textAlign: 'center', fontWeight: '500' }}>
               KevaWallet is a free and open source project. Crafted by Kevacoin users.
             </Text>
             <Text style={{ maxWidth: 260, marginBottom: 40, color: '#0C2550', fontSize: 15, textAlign: 'center', fontWeight: '500' }}>

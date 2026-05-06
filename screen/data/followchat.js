@@ -21,6 +21,7 @@ const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
+import { getUserAvatarUri } from '../../common/userAvatar';
 import { getInitials, showStatus, stringToColor, timeConverter, toastError } from '../../util';
 import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
 import { decodeBase64, getHashtagScriptHash, getNamespaceScriptHash, replyKeyValue, toScriptHash } from '../../class/keva-ops';
@@ -37,6 +38,34 @@ import {
 let BlueApp = require('../../BlueApp');
 let BlueElectrum = require('../../BlueElectrum');
 const PAGE_SIZE = 10;
+const LAST_CHAT_SPACE_PATH = `${RNFS.DocumentDirectoryPath}/agent_chats/_last_chat_space.json`;
+const persistLastChatShortcut = async params => {
+  try {
+    const peerNamespaceId = String(params?.peerNamespaceId || '').trim();
+    if (!peerNamespaceId) return;
+    await RNFS.mkdir(`${RNFS.DocumentDirectoryPath}/agent_chats`).catch(() => {});
+    await RNFS.writeFile(
+      LAST_CHAT_SPACE_PATH,
+      JSON.stringify(
+        {
+          type: 'chat',
+          routeName: 'FollowChat',
+          peerNamespaceId,
+          peerShortCode: params.peerShortCode || '',
+          peerDisplayName: params.peerDisplayName || params.displayName || '',
+          replyFromNamespaceId: params.replyFromNamespaceId || null,
+          mode: params.mode || 'mutual',
+          updatedAt: Date.now(),
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+  } catch (error) {
+    console.warn('FollowChat: failed to persist last chat shortcut', error);
+  }
+};
 const TAG_DM_PREFIX = '#DM';
 const TAG_CHAT_PREFIX = '#CHAT';
 const TAG_GLOBAL_CHAT = '#chatxkeva';
@@ -64,6 +93,7 @@ class FollowChat extends React.Component {
       mode: 'mutual',
       isNamespaceModalVisible: false,
       hasMoreOlder: true,
+      userAvatarUri: null,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -110,12 +140,20 @@ class FollowChat extends React.Component {
   componentDidMount() {
     this._isMounted = true;
     this.props.navigation?.setParams?.({ onTitlePress: this.handleTitlePress });
+    persistLastChatShortcut(this.props.navigation?.state?.params || {});
     this.initializeChat();
+    this.loadUserAvatar();
+    this.avatarUnsubscribe = this.props.navigation?.addListener?.('didFocus', () => {
+      this.loadUserAvatar();
+    });
     this.syncTimer = setInterval(() => this.syncFromChain(), 8000);
   }
 
   componentWillUnmount() {
     this._isMounted = false;
+    if (this.avatarUnsubscribe && typeof this.avatarUnsubscribe.remove === 'function') {
+      this.avatarUnsubscribe.remove();
+    }
     if (this.syncTimer) {
       clearInterval(this.syncTimer);
     }
@@ -689,7 +727,21 @@ class FollowChat extends React.Component {
     return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${time}`;
   };
 
+  loadUserAvatar = async () => {
+    try {
+      const userAvatarUri = await getUserAvatarUri();
+      if (this._isMounted) {
+        this.setState({ userAvatarUri });
+      }
+    } catch (error) {
+      console.warn('Failed to load user avatar for followchat', error);
+    }
+  };
+
   getUserAvatar = () => {
+    if (this.state?.userAvatarUri) {
+      return { type: 'image', uri: this.state.userAvatarUri };
+    }
     const { namespaceList } = this.props;
     const firstId = this.getActiveNamespaceId();
     const namespace = firstId ? namespaceList?.namespaces?.[firstId] : null;

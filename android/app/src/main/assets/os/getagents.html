@@ -5,17 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Get Agents</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+  @font-face{font-family:'Share Tech Mono';src:url('fonts/share-tech-mono.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap;}
   :root {
     --bg: #0b0c0d;
     --fg: #ffffff;
     --muted: #9aa0a6;
-    --accent: #59fbea;
-    --accent-2: #28f428;
-    --card: #0f2224;
-    --line: #1f3a3d;
-    --btn: #1a5d57;
-    --btn-edge: #2aa197;
+    --accent: #d8d8d8;
+    --accent-2: #ffffff;
+    --card: #0b0b0b;
+    --line: #1f1f1f;
+    --btn: #121212;
+    --btn-edge: #2a2a2a;
     --error: #ff6b6b;
   }
 
@@ -76,7 +76,7 @@
   .namespace-modal {
     position: fixed;
     inset: 0;
-    background: rgba(2, 10, 12, 0.86);
+    background: rgba(0, 0, 0, 0.92);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -94,10 +94,10 @@
   .namespace-modal__panel {
     width: min(440px, 92vw);
     border-radius: 20px;
-    border: 1px solid rgba(89, 251, 234, 0.35);
+    border: 1px solid #242424;
     padding: 28px 26px;
-    background: linear-gradient(180deg, rgba(8, 20, 22, 0.96), rgba(5, 14, 16, 0.94));
-    box-shadow: 0 20px 45px rgba(0, 0, 0, 0.65);
+    background: #0b0b0b;
+    box-shadow: none;
     text-align: center;
     transform: translateY(12px) scale(0.97);
     opacity: 0;
@@ -135,7 +135,7 @@
     border: 1px solid var(--line);
     border-radius: 16px;
     padding: 16px 18px;
-    background: rgba(6, 19, 21, 0.9);
+    background: #101010;
     text-align: left;
     display: flex;
     flex-direction: column;
@@ -192,7 +192,7 @@
 
   .entry.wallet-history-entry .title::before {
     background: var(--accent-2);
-    box-shadow: 0 0 12px rgba(40,244,40,.45);
+    box-shadow: none;
   }
 
   .entry.wallet-history-entry .title,
@@ -211,12 +211,12 @@
     position: absolute;
     width: 10px; height: 10px;
     background: var(--accent);
-    border: 2px solid #0a2a2a;
+    border: 2px solid #1c1c1c;
     border-radius: 50%;
     top: 8px;
     right: -6px;
     z-index: 2;
-    box-shadow: 0 0 12px rgba(89,251,234,.45);
+    box-shadow: none;
   }
 
   /* right of the dot: timer + button in a row */
@@ -227,12 +227,12 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    background: rgba(13,32,34,.75);
+    background: rgba(18,18,18,.92);
     border: 1px solid var(--line);
     border-radius: 14px;
     padding: 2px 8px 2px 8px;
     white-space: nowrap;
-    backdrop-filter: blur(2px);
+    backdrop-filter: none;
   }
 
   .entry .title .timer {
@@ -247,7 +247,7 @@
 
   .btn {
     border: 1px solid var(--btn-edge);
-    background: linear-gradient(180deg, var(--btn), #134a45);
+    background: var(--btn);
     color: #e7fff9;
     font-size: 12px;
     padding: 4px 10px;

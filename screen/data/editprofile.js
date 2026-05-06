@@ -4,6 +4,7 @@ import {
   View,
   Image,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import Toast from 'react-native-root-toast';
 const StyleSheet = require('../../PlatformStyleSheet');
@@ -344,9 +345,19 @@ class EditProfile extends React.Component {
     this.setState({imagePreview: null});
   }
 
+  onClearRoleDatasPress = () => {
+    const { onClearRoleDatas } = this.props.navigation.state.params || {};
+    if (typeof onClearRoleDatas === 'function') {
+      onClearRoleDatas();
+      return;
+    }
+    Alert.alert('Unavailable', 'Clear role datas action is not available here.');
+  }
+
   render() {
     let {navigation, dispatch} = this.props;
     let {namespaceInfo} = this.state;
+    const { showClearRoleDatas } = navigation.state.params || {};
     return (
       <View style={styles.container}>
         {this.getKeyValueModal()}
@@ -392,6 +403,15 @@ class EditProfile extends React.Component {
           />
         </View>
         */}
+        {showClearRoleDatas ? (
+          <View style={styles.inputValue}>
+            <KevaButton
+              title={'Clear role datas'}
+              onPress={this.onClearRoleDatasPress}
+              style={{ marginTop: 12 }}
+            />
+          </View>
+        ) : null}
       </View>
     );
   }
@@ -425,11 +445,13 @@ var styles = StyleSheet.create({
     alignItems: 'center',
   },
   inputValue: {
-    height:215,
+    minHeight:56,
     borderWidth: utils.THIN_BORDER,
     borderColor: KevaColors.cellBorder,
     backgroundColor: '#fff',
     paddingHorizontal: 10,
+    paddingVertical: 10,
+    marginBottom: 10,
   },
   modalNS: {
     height: 300,

@@ -7,10 +7,11 @@
 <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' data: blob: file:;">
 <link rel="stylesheet" href="theme/retro/style.css"/>
 <script src="./i18n.js"></script>
+<script src="./home_i18n.js"></script>
 <style>
 html, body { margin:0; padding:0; height:100%; background:#000!important;}
-.main-window{width:100vw;height:100vh;margin:0;position:fixed;top:0;left:0;transform:scaleY(0);transform-origin:center;border-radius:0;box-shadow:0 0 30px rgba(255,255,255,0.15);overflow:hidden;opacity:1;animation:windowExpand 0.8s ease forwards;background:linear-gradient(180deg,#1b3de4 0%,#132cbe 45%,#0b1e99 100%);}
-@keyframes windowExpand{to{transform:scaleY(1);opacity:1;}}
+.main-window{width:100vw;height:100vh;margin:0;position:fixed;top:0;left:0;transform:none;transform-origin:center;border-radius:0;box-shadow:none;overflow:hidden;opacity:1;animation:none;background:#000;}
+
 .desktop-area{width:100%;height:100%;box-sizing:border-box;padding:24px;display:flex;flex-direction:column;justify-content:flex-start;align-items:flex-start;position:relative;}
 .desktop-area > *:not(.taskbar){background:transparent!important;}
 
@@ -24,7 +25,7 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
   align-items: flex-start;
   align-content: flex-start;
   padding-top: 32px;
-  padding-bottom: calc(var(--taskbar-height, 48px) + 32px);
+  padding-bottom: 32px;
   width: 100%;
   max-width: 960px;
   margin: 0 auto;
@@ -65,7 +66,7 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
   word-break: break-word;
   font-size: calc(0.85em * var(--scale));
 }
-.desktop-area .taskbar{position:absolute;left:0;right:0;bottom:0;height:var(--taskbar-height,48px);background:#808080;z-index:2;border-top:1px solid rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:space-between;padding:0 14px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.4);}
+.desktop-area .taskbar{display:none;}
 .desktop-area .taskbar, .desktop-area .taskbar *{font-size:calc(0.82em * var(--scale));}
 .desktop-area .taskbar .start{height:calc(100% - 8px);margin:4px 0;box-sizing:border-box;background:linear-gradient(180deg,rgba(255,255,255,0.22) 0%,rgba(0,0,0,0.24) 100%);color:#fff;border:1px solid rgba(255,255,255,0.22);padding:0 30px;display:inline-flex;align-items:center;justify-content:center;border-radius:12px;cursor:pointer;font-size:calc(1.3em * var(--scale));min-width:138px;min-height:36px;font-weight:700;letter-spacing:0.04em;line-height:1.1;box-shadow:inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -1px 0 rgba(0,0,0,0.35);transition:background 0.2s ease,transform 0.2s ease;}
 .desktop-area .taskbar .start:hover{background:linear-gradient(180deg,rgba(255,255,255,0.28) 0%,rgba(0,0,0,0.28) 100%);}
@@ -84,7 +85,7 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
 .start-menu input[type="checkbox"]{width:16px;height:16px;accent-color:#6ea0ff;}
 @media(max-width:768px){.main-window{width:100vw;height:100vh;}}
 /* ==== Agents ==== */
-#agentsWindow, #alphaWindow {
+#agentsWindow, #alphaWindow, #satoshiWindow {
   width: 80%;
   height: 80%;
   max-width: 1600px;
@@ -101,7 +102,7 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
   z-index: 100;
 }
 
-#agentsWindow .content, #alphaWindow .content {
+#agentsWindow .content, #alphaWindow .content, #satoshiWindow .content {
   position: absolute;
   top: 32px;
   left: 0;
@@ -113,7 +114,7 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
   overflow: hidden;
 }
 
-#agentsWindow iframe, #alphaWindow iframe {
+#agentsWindow iframe, #alphaWindow iframe, #satoshiWindow iframe {
   position: absolute;
   top: 0;
   left: 0;
@@ -126,7 +127,7 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
 
 :root{--scale:1;--taskbar-height:48px}
 /* === KEVA mobile layout unify (injected) === */
-#readmeWindow, #downloadWindow, #agentsWindow, #alphaWindow {
+#readmeWindow, #downloadWindow, #agentsWindow, #alphaWindow, #satoshiWindow {
   width: 80% !important;
   height: 80% !important;
   max-width: 1600px !important;
@@ -139,7 +140,7 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
   background: #000 !important;
   display: none;
 }
-#readmeWindow .content, #downloadWindow .content, #agentsWindow .content, #alphaWindow .content {
+#readmeWindow .content, #downloadWindow .content, #agentsWindow .content, #alphaWindow .content, #satoshiWindow .content {
   position: absolute !important;
   top: 32px !important;
   left: 0 !important; right: 0 !important;
@@ -149,10 +150,10 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
   background: #000;
   color: #cfffff;
 }
-#agentsWindow .content, #alphaWindow .content, #readmeWindow .content { padding: 0; overflow: hidden; } /* iframe 全铺 */
-#agentsWindow iframe, #alphaWindow iframe, #readmeWindow iframe { width: 100%; height: 100%; border: 0; display: block; background: #000; }
+#agentsWindow .content, #alphaWindow .content, #satoshiWindow .content, #readmeWindow .content { padding: 0; overflow: hidden; } /* iframe 全铺 */
+#agentsWindow iframe, #alphaWindow iframe, #satoshiWindow iframe, #readmeWindow iframe { width: 100%; height: 100%; border: 0; display: block; background: #000; }
 @media (max-width: 768px) {
-  #readmeWindow, #downloadWindow, #agentsWindow, #alphaWindow { width: 95% !important; height: 85% !important; }
+  #readmeWindow, #downloadWindow, #agentsWindow, #alphaWindow, #satoshiWindow { width: 95% !important; height: 85% !important; }
 }
 
 #settingsWindow {
@@ -173,11 +174,13 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
 
   #settingsWindow .start-menu form {
     display: grid;
-    row-gap: 6px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 10px;
   }
 
   #settingsWindow .start-menu label {
     padding: 4px 8px;
+    min-width: 0;
   }
 
   .custom-links-section {
@@ -282,17 +285,101 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
 }
 
 #nodeWindow .content {
-  padding: 12px;
+  padding: 14px;
   font-family: system-ui, sans-serif;
-  color: #111;
-  background: #f4f4f4;
+  color: #cfffff;
+  background: radial-gradient(circle at 30% 0%, rgba(0, 230, 255, 0.10), transparent 32%), #03080d;
   height: calc(100% - 44px);
   overflow: auto;
 }
 
+#nodeWindow, #downloadWindow, #settingsWindow {
+  background: #03080d !important;
+  border: 1px solid rgba(0, 229, 255, 0.42) !important;
+  box-shadow: 0 0 0 1px rgba(0, 229, 255, 0.08), 0 12px 40px rgba(0,0,0,0.65), 0 0 28px rgba(0,229,255,0.16) !important;
+}
+
+#nodeWindow .title-bar, #downloadWindow .title-bar, #settingsWindow .title-bar {
+  background: linear-gradient(90deg, #07131c, #0b2733) !important;
+  color: #eaffff;
+  border-bottom: 1px solid rgba(0, 229, 255, 0.34) !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#nodeWindow .close-btn, #downloadWindow .close-btn, #settingsWindow .close-btn {
+  background: #061219;
+  border: 1px solid rgba(0, 229, 255, 0.45);
+  color: #9ffcff;
+}
+
+#downloadWindow .content, #settingsWindow .content {
+  color: #cfffff;
+  background: radial-gradient(circle at 25% 0%, rgba(0, 230, 255, 0.10), transparent 32%), #03080d !important;
+}
+
+#downloadWindow .content {
+  padding: 18px !important;
+  font-family: system-ui, sans-serif;
+  white-space: normal;
+  line-height: 1.65;
+}
+
+#downloadWindow .download-section {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid rgba(0, 229, 255, 0.22);
+  border-radius: 12px;
+  background: rgba(2, 18, 28, 0.76);
+}
+#downloadWindow .download-section-title {
+  color: #9ffcff;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+#downloadWindow .download-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+}
+#downloadWindow .download-name {
+  color: #eaffff;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+#downloadWindow .download-btn {
+  flex: 0 0 auto;
+  padding: 7px 13px;
+  border: 1px solid rgba(0, 229, 255, 0.55);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(0, 229, 255, 0.24), rgba(0, 120, 160, 0.16));
+  box-shadow: 0 0 12px rgba(0, 229, 255, 0.14);
+}
+
+#downloadWindow .content a { color: #59f3ff; font-weight: 700; text-decoration: none; }
+#downloadWindow .content a:hover { text-decoration: underline; }
+
+#settingsWindow .content p { color: #bdefff; }
+#settingsWindow .start-menu { border: 1px solid rgba(0, 229, 255, 0.25); border-radius: 10px; }
+#settingsWindow .start-menu label, .custom-link-row { background: rgba(2, 18, 28, 0.84); border: 1px solid rgba(0, 229, 255, 0.16); color: #d8ffff; }
+#settingsWindow .start-menu label:hover { background: rgba(0, 229, 255, 0.10); }
+#settingsWindow input[type="checkbox"] { accent-color: #00e5ff; }
+#settingsWindow .language-form { margin: 0 0 12px; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }
+#settingsWindow .language-form label { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 8px; border: 1px solid rgba(0, 229, 255, 0.16); border-radius: 4px; background: rgba(2, 18, 28, 0.84); color: #d8ffff; }
+#settingsWindow .language-form label:hover { background: rgba(0, 229, 255, 0.10); }
+#settingsWindow .language-form input[type="radio"] { accent-color: #00e5ff; }
+#settingsWindow .language-form button { grid-column: 1 / -1; margin-top: 2px; padding: 7px 14px; border: 1px solid #00e5ff; border-radius: 4px; background: #06222c; color: #d8ffff; font-family: inherit; text-align: center; }
+
 #nodeCurrent {
   margin-bottom: 10px;
   font-size: 14px;
+  color: #eaffff;
 }
 
 .node-list {
@@ -305,9 +392,9 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
   grid-template-columns: auto 1fr auto;
   gap: 8px;
   align-items: center;
-  background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 6px;
+  background: rgba(2, 18, 28, 0.86);
+  border: 1px solid rgba(0, 229, 255, 0.22);
+  border-radius: 8px;
   padding: 8px;
 }
 
@@ -319,19 +406,20 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
 
 .node-host {
   font-size: 14px;
-  color: #111;
+  color: #eaffff;
 }
 
 .node-height {
   font-size: 12px;
-  color: #666;
+  color: #83cbd1;
 }
 
-.node-action {
-  border: 1px solid #999;
-  background: #efefef;
-  padding: 4px 8px;
-  border-radius: 4px;
+.node-action, #nodeRefresh, .custom-link-form button {
+  border: 1px solid rgba(0, 229, 255, 0.48);
+  background: linear-gradient(180deg, rgba(0, 229, 255, 0.18), rgba(0, 109, 133, 0.22));
+  color: #eaffff;
+  padding: 5px 10px;
+  border-radius: 6px;
   cursor: pointer;
 }
 
@@ -342,12 +430,39 @@ html, body { margin:0; padding:0; height:100%; background:#000!important;}
 
 #nodeRefresh {
   margin-top: 10px;
-  border: 1px solid #777;
-  background: #fff;
-  border-radius: 4px;
-  padding: 4px 10px;
-  cursor: pointer;
 }
+
+
+.satoshi-touch-proxy{
+  position:absolute;
+  left:30.2%;
+  width:39.6%;
+  height:4.7%;
+  border:0;
+  border-radius:6px;
+  padding:0;
+  margin:0;
+  z-index:20;
+  cursor:pointer;
+  font:0/0 a;
+  color:transparent;
+  background:transparent;
+  box-shadow:none;
+  appearance:none;
+  -webkit-appearance:none;
+}
+.satoshi-touch-proxy:disabled{
+  cursor:default;
+}
+.satoshi-touch-get.satoshi-here{
+  background:transparent;
+  color:transparent;
+  box-shadow:none;
+}
+.satoshi-touch-get{top:50.5%;}
+.satoshi-touch-role{top:59.2%;}
+.satoshi-touch-chat{top:67.8%;}
+.satoshi-touch-story{top:76.4%;}
 
 </style>
 <script>
@@ -375,14 +490,15 @@ window.addEventListener('load', updateDesktopScale);
   <div class="desktop-area">
       <div class="desktop-icons" id="icons">
         <div class="icon" data-app="keva"><img src="theme/retro/icons/keva.png"/><span>Node</span></div>
+        <div class="icon" data-app="download"><img src="theme/retro/icons/download.png"/><span>Download</span></div>
         <div class="icon" data-app="wallet"><img src="theme/retro/icons/wallet.png"/><span>Wallet</span></div>
+        <div class="icon" data-app="role"><img src="theme/retro/icons/role.png"/><span>Role</span></div>
         <div class="icon" data-app="chat"><img src="theme/retro/icons/chat.png"/><span>Chat</span></div>
         <div class="icon" data-app="message"><img src="theme/retro/icons/gm.png"/><span>Message</span></div>
-        <div class="icon" data-app="download"><img src="theme/retro/icons/download.png"/><span>Download</span></div>
-        <div class="icon" data-app="id"><img src="theme/retro/icons/id.png"/><span>Agents ID</span></div>
-      <div class="icon" data-app="getagents"><img src="theme/retro/icons/getagents.gif"/><span>Get Agents</span></div>
+        <div class="icon" data-app="story"><img src="theme/retro/icons/story.png"/><span>Story</span></div>
+      <div class="icon" data-app="getagents"><img src="theme/retro/icons/getagents.gif"/><span>Get ID</span></div>
+        <div class="icon" data-app="id"><img src="theme/retro/icons/id.png"/><span>Agent ID</span></div>
       <div class="icon" data-app="alpha"><img src="theme/retro/icons/alpha.png"/><span>Alpha</span></div>
-      <div class="icon" data-app="setting"><img src="theme/retro/icons/setting.png"/><span>Setting</span></div>
       <div class="icon" data-app="blog"><img src="theme/retro/icons/blog.png"/><span>Blog</span></div>
       <div class="icon" data-app="pool"><img src="theme/retro/icons/pool.png"/><span>Pool</span></div>
       <div class="icon" data-app="exchange"><img src="theme/retro/icons/exchange.png"/><span>Exchange</span></div>
@@ -393,7 +509,8 @@ window.addEventListener('load', updateDesktopScale);
       <div class="icon" data-app="monero"><img src="theme/retro/icons/monero.png"/><span>Monero</span></div>
       <div class="icon" data-app="kevacoin"><img src="theme/retro/icons/kevacoin.png"/><span>KevaCoin</span></div>
       <div class="icon" data-app="ravencoin"><img src="theme/retro/icons/ravencoin.png"/><span>Ravencoin</span></div>
-      <div class="icon" data-app="readme"><img src="theme/retro/icons/notebook.png"/><span>Read mee！</span></div>
+      <div class="icon" data-app="satoshi"><img src="theme/retro/icons/satoshi.png"/><span>Satoshi</span></div>
+      <div class="icon" data-app="setting"><img src="theme/retro/icons/setting.png"/><span>Setting</span></div>
     </div>
 
     <div class="taskbar">
@@ -404,17 +521,20 @@ window.addEventListener('load', updateDesktopScale);
       </div>
     </div>
 
-    <div class="notepad-window" id="readmeWindow">
-      <div class="title-bar"><span>README</span><button class="close-btn">×</button></div>
-      <div class="content" style="padding:0;">
-        <iframe src="https://xkeva.com/os/readme.html" style="width:100%;height:100%;border:0;"></iframe>
-      </div>
-    </div>
-
     <div class="notepad-window" id="downloadWindow">
       <div class="title-bar"><span>Downloads</span><button class="close-btn">×</button></div>
-      <div class="content" style="padding:0;">
-        <iframe src="https://xkeva.com/os/download.html" style="width:100%;height:100%;border:0;"></iframe>
+      <div class="content" lang="en">
+        <div class="download-section download-section-xkeva">
+          <div class="download-section-title">XKEVA</div>
+          <div class="download-row"><span class="download-name">bitAgent X</span><a class="download-btn" href="https://github.com/projectkeva/app/releases">Download</a></div>
+        </div>
+        <div class="download-section download-section-kevacoin">
+          <div class="download-section-title">Kevacoin</div>
+          <div class="download-row"><span class="download-name">kevacoin-linux</span><a class="download-btn" href="https://github.com/kevacoin-project/kevacoin/releases/download/v0.16.8.0/kevacoin-0.16.8.0.tar.gz" download>Download</a></div>
+          <div class="download-row"><span class="download-name">kevacoin-win</span><a class="download-btn" href="https://github.com/kevacoin-project/kevacoin/releases/download/v0.16.8.0/kevacoin-0.16.8-win64-setup.exe" download>Download</a></div>
+          <div class="download-row"><span class="download-name">kevacoin-mac</span><a class="download-btn" href="https://github.com/kevacoin-project/kevacoin/releases/download/v0.16.8.0/Kevacoin-Qt.dmg" download>Download</a></div>
+          <div class="download-row"><span class="download-name">kevacoin-android.apk</span><a class="download-btn" href="https://github.com/kevacoin-project/keva_wallet/releases/download/v9.0.3/kevacoin-wallet_9.0.3.apk" download>Download</a></div>
+        </div>
       </div>
     </div>
 
@@ -432,24 +552,55 @@ window.addEventListener('load', updateDesktopScale);
   </div>
 </div>
 
+<div class="notepad-window" id="satoshiWindow">
+  <div class="title-bar"><span>Satoshi</span><button class="close-btn">×</button></div>
+  <div class="content satoshi-content" style="padding:0;position:relative;">
+    <iframe src="satoshi.html" style="width:100%;height:100%;border:0;pointer-events:none;"></iframe>
+    <button type="button" class="satoshi-touch-proxy satoshi-touch-get" aria-label="Get Satoshi Card" onclick="handleSatoshiAction('get')">Get Satoshi Card</button>
+    <button type="button" class="satoshi-touch-proxy satoshi-touch-role" aria-label="Satoshi Role" onclick="handleSatoshiAction('role')">Role</button>
+    <button type="button" class="satoshi-touch-proxy satoshi-touch-chat" aria-label="Satoshi Chat" onclick="handleSatoshiAction('chat')">Chat</button>
+    <button type="button" class="satoshi-touch-proxy satoshi-touch-story" aria-label="Satoshi Story" onclick="handleSatoshiAction('story')">Story</button>
+  </div>
+</div>
+
 <div class="notepad-window" id="settingsWindow">
   <div class="title-bar"><span>Setting</span><button class="close-btn">×</button></div>
     <div class="content">
-      <p style="margin-top:0;">Choose which website icons appear on the desktop:</p>
+      <p style="margin-top:0;">选择语言</p>
+      <form id="homeLanguageForm" class="language-form">
+        <label><input type="radio" name="homeLanguage" value="en"> <span data-language-label="en">English</span></label>
+        <label><input type="radio" name="homeLanguage" value="zh-cn"> <span data-language-label="zh-cn">简体中文</span></label>
+        <label><input type="radio" name="homeLanguage" value="zh-tw"> <span data-language-label="zh-tw">繁體中文</span></label>
+        <label><input type="radio" name="homeLanguage" value="ja"> <span data-language-label="ja">日本語</span></label>
+        <label><input type="radio" name="homeLanguage" value="ko"> <span data-language-label="ko">한국어</span></label>
+        <label><input type="radio" name="homeLanguage" value="es"> <span data-language-label="es">Español</span></label>
+        <label><input type="radio" name="homeLanguage" value="fr"> <span data-language-label="fr">Français</span></label>
+        <button type="submit" id="homeLanguageApply">应用</button>
+      </form>
       <div class="start-menu" style="position:static;box-shadow:none;display:block;width:auto;background:#111;">
         <form id="settingsForm">
+          <label><input type="checkbox" data-app="keva" data-visibility-toggle checked> Node</label>
+          <label><input type="checkbox" data-app="download" data-visibility-toggle checked> Download</label>
+          <label><input type="checkbox" data-app="wallet" data-visibility-toggle checked> Wallet</label>
+          <label><input type="checkbox" data-app="role" data-visibility-toggle checked> Role</label>
+          <label><input type="checkbox" data-app="chat" data-visibility-toggle checked> Chat</label>
+          <label><input type="checkbox" data-app="message" data-visibility-toggle checked> Message</label>
+          <label><input type="checkbox" data-app="story" data-visibility-toggle checked> Story</label>
+          <label><input type="checkbox" data-app="getagents" data-visibility-toggle checked> Get ID</label>
+          <label><input type="checkbox" data-app="id" data-visibility-toggle checked> Agent ID</label>
+          <label><input type="checkbox" data-app="alpha" data-visibility-toggle> Alpha</label>
           <label><input type="checkbox" data-app="blog" data-visibility-toggle> Blog</label>
-        <label><input type="checkbox" data-app="pool" data-visibility-toggle> Pool</label>
-        <label><input type="checkbox" data-app="exchange" data-visibility-toggle> Exchange</label>
-        <label><input type="checkbox" data-app="bitcoin" data-visibility-toggle> Bitcoin</label>
-        <label><input type="checkbox" data-app="dogecoin" data-visibility-toggle> Dogecoin</label>
-        <label><input type="checkbox" data-app="ethereum" data-visibility-toggle> Ethereum</label>
-        <label><input type="checkbox" data-app="chia" data-visibility-toggle> Chia</label>
+          <label><input type="checkbox" data-app="pool" data-visibility-toggle> Pool</label>
+          <label><input type="checkbox" data-app="exchange" data-visibility-toggle> Exchange</label>
+          <label><input type="checkbox" data-app="satoshi" data-visibility-toggle checked> Satoshi</label>
+          <label><input type="checkbox" data-app="setting" data-visibility-toggle checked> Setting</label>
+          <label><input type="checkbox" data-app="bitcoin" data-visibility-toggle> Bitcoin</label>
+          <label><input type="checkbox" data-app="dogecoin" data-visibility-toggle> Dogecoin</label>
+          <label><input type="checkbox" data-app="ethereum" data-visibility-toggle> Ethereum</label>
+          <label><input type="checkbox" data-app="chia" data-visibility-toggle> Chia</label>
           <label><input type="checkbox" data-app="monero" data-visibility-toggle> Monero</label>
           <label><input type="checkbox" data-app="kevacoin" data-visibility-toggle> Kevacoin</label>
           <label><input type="checkbox" data-app="ravencoin" data-visibility-toggle> Ravencoin</label>
-          <label><input type="checkbox" data-app="chat" data-visibility-toggle checked> Chat</label>
-          <label><input type="checkbox" data-app="message" data-visibility-toggle checked> Message</label>
         </form>
         <div class="custom-links-section">
           <h4>Custom websites</h4>
@@ -476,14 +627,17 @@ window.addEventListener('load', updateDesktopScale);
     <div class="start-menu" id="startMenu" aria-hidden="true">
       <form>
         <label><input type="checkbox" data-app="keva" data-visibility-toggle checked> Node</label>
-        <label><input type="checkbox" data-app="id" data-visibility-toggle checked> Agents ID</label>
-        <label><input type="checkbox" data-app="getagents" data-visibility-toggle checked> Get Agents</label>
-        <label><input type="checkbox" data-app="alpha" data-visibility-toggle checked> Alpha</label>
-        <label><input type="checkbox" data-app="readme" data-visibility-toggle checked> Read mee！</label>
         <label><input type="checkbox" data-app="download" data-visibility-toggle checked> Download</label>
         <label><input type="checkbox" data-app="wallet" data-visibility-toggle checked> Wallet</label>
+        <label><input type="checkbox" data-app="role" data-visibility-toggle checked> Role</label>
         <label><input type="checkbox" data-app="chat" data-visibility-toggle checked> Chat</label>
         <label><input type="checkbox" data-app="message" data-visibility-toggle checked> Message</label>
+        <label><input type="checkbox" data-app="story" data-visibility-toggle checked> Story</label>
+        <label><input type="checkbox" data-app="getagents" data-visibility-toggle checked> Get ID</label>
+        <label><input type="checkbox" data-app="id" data-visibility-toggle checked> Agent ID</label>
+        <label><input type="checkbox" data-app="alpha" data-visibility-toggle> Alpha</label>
+        <label><input type="checkbox" data-app="satoshi" data-visibility-toggle checked> Satoshi</label>
+        <label><input type="checkbox" data-app="setting" data-visibility-toggle checked> Setting</label>
       </form>
     </div>
   </div>
@@ -527,6 +681,12 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
     }
   }
 
+  function postNativeMessage(message){
+    if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
+      window.ReactNativeWebView.postMessage(message);
+    }
+  }
+
   function nodeAddress(node){
     const port=node && (node.ssl || node.tcp || '');
     return `${node && node.host ? node.host : ''}${port ? ':'+port : ''}`;
@@ -535,7 +695,7 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
   function renderNodeWindow(){
     const current=nodeState.current || {};
     const currentText=nodeAddress(current) || '-';
-    document.getElementById('nodeCurrent').textContent=`Current: ${currentText}`;
+    document.getElementById('nodeCurrent').textContent=window.HomeI18n ? HomeI18n.t('ui.nodeCurrent',{address:currentText}) : `Current: ${currentText}`;
 
     const list=document.getElementById('nodeList');
     list.innerHTML='';
@@ -551,9 +711,9 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
         <div>${status}</div>
         <div class="node-meta">
           <div class="node-host">${nodeAddress(node)} (SSL)</div>
-          <div class="node-height">height: ${heightText}</div>
+          <div class="node-height">${window.HomeI18n ? HomeI18n.t('ui.nodeHeight',{height:heightText}) : `height: ${heightText}`}</div>
         </div>
-        <button class="node-action" data-node-id="${node.id}" ${isUsing ? 'disabled' : ''}>${isUsing ? 'Using' : 'Use'}</button>
+        <button class="node-action" data-node-id="${node.id}" ${isUsing ? 'disabled' : ''}>${window.HomeI18n ? HomeI18n.t(isUsing ? 'ui.nodeUsing' : 'ui.nodeUse') : (isUsing ? 'Using' : 'Use')}</button>
       `;
       row.querySelector('button').addEventListener('click',()=>{
         postToNative({type:'electrum_use',id:node.id});
@@ -577,10 +737,10 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
     const s=Number(leftSec || 0);
     if(s>0){
       btn.disabled=true;
-      btn.textContent=`Refresh (${s}s)`;
+      btn.textContent=window.HomeI18n ? HomeI18n.t('ui.nodeRefreshCooldown',{seconds:s}) : `Refresh (${s}s)`;
     }else{
       btn.disabled=false;
-      btn.textContent='Refresh';
+      btn.textContent=window.HomeI18n ? HomeI18n.t('ui.nodeRefresh') : 'Refresh';
     }
   }
 
@@ -603,6 +763,142 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
     },1000);
   }
 
+  let latestSatoshiStatus={type:'satoshi_status',hasSatoshi:false,status:'checking_network'};
+  const SATOSHI_WAIT_SECONDS=5;
+  let satoshiWaitTimer=null;
+  let satoshiWaitLeft=0;
+
+  function getSatoshiFrame(){
+    const win=document.getElementById('satoshiWindow');
+    return win ? win.querySelector('iframe') : null;
+  }
+
+  function postToSatoshiFrame(payload){
+    const frame=getSatoshiFrame();
+    if(!frame || !frame.contentWindow)return;
+    try{frame.contentWindow.postMessage(payload,'*');}catch(_){}
+  }
+
+
+  function syncSatoshiTouchProxies(){
+    // Intentionally no-op: parent proxy hitboxes use calibrated static CSS.
+    // Dynamic iframe rect reads were unreliable in Android WebView and shifted hitboxes.
+  }
+
+  function scheduleSatoshiTouchProxySync(){
+    syncSatoshiTouchProxies();
+  }
+
+  function syncSatoshiFrame(){
+    postToSatoshiFrame(latestSatoshiStatus);
+    if(window.HomeI18n && typeof window.HomeI18n.getLanguage==='function'){
+      postToSatoshiFrame({type:'home_set_language',lang:HomeI18n.getLanguage()});
+    }
+    scheduleSatoshiTouchProxySync();
+  }
+
+  function refreshSatoshiFrame(){
+    const frame=getSatoshiFrame();
+    if(!frame)return;
+    try{frame.contentWindow.location.reload();}catch(_){
+      try{frame.src=frame.src;}catch(__){}
+    }
+  }
+
+  function stopSatoshiWaitTicker(){
+    if(satoshiWaitTimer){
+      clearInterval(satoshiWaitTimer);
+      satoshiWaitTimer=null;
+    }
+    satoshiWaitLeft=0;
+  }
+
+  function isSatoshiWaitStatus(status){
+    return ['requesting','checking_network','network_unstable','checking_wallet','creating_wallet','getting_address','receiving','restoring_memory'].includes(status);
+  }
+
+  function isSatoshiBusyStatus(status){
+    return ['requesting','checking_network','network_unstable','checking_wallet','creating_wallet','getting_address','receiving','restoring_memory'].includes(status);
+  }
+
+  function postSatoshiStatusWithCountdown(){
+    const payload={...latestSatoshiStatus};
+    if(isSatoshiWaitStatus(payload.status))payload.countdown=satoshiWaitLeft;
+    postToSatoshiFrame(payload);
+  }
+
+  function updateSatoshiGetButton(){
+    const btn=document.querySelector('.satoshi-touch-get');
+    if(!btn)return;
+    scheduleSatoshiTouchProxySync();
+    btn.style.display='';
+    btn.classList.remove('satoshi-here');
+    if(latestSatoshiStatus && isSatoshiBusyStatus(latestSatoshiStatus.status)){
+      btn.disabled=true;
+      btn.textContent='Get Satoshi Card';
+      return;
+    }
+    if(latestSatoshiStatus && latestSatoshiStatus.hasSatoshi){
+      btn.disabled=false;
+      btn.classList.add('satoshi-here');
+      btn.textContent='Satoshi is here';
+      stopSatoshiWaitTicker();
+      return;
+    }
+    btn.disabled=false;
+    btn.textContent='Get Satoshi Card';
+  }
+
+  function startSatoshiWaitTicker(){
+    stopSatoshiWaitTicker();
+    if(!latestSatoshiStatus || !isSatoshiWaitStatus(latestSatoshiStatus.status)){
+      updateSatoshiGetButton();
+      return;
+    }
+    satoshiWaitLeft=SATOSHI_WAIT_SECONDS;
+    updateSatoshiGetButton();
+    postSatoshiStatusWithCountdown();
+    satoshiWaitTimer=setInterval(()=>{
+      satoshiWaitLeft-=1;
+      updateSatoshiGetButton();
+      postSatoshiStatusWithCountdown();
+      if(satoshiWaitLeft<=0){
+        stopSatoshiWaitTicker();
+        refreshSatoshiFrame();
+        postNativeMessage('refresh_satoshi_status');
+      }
+    },1000);
+  }
+
+  function handleSatoshiAction(action){
+    if(action==='get'){
+      if(latestSatoshiStatus && latestSatoshiStatus.hasSatoshi){
+        postNativeMessage('open_satoshi_namespace_list');
+        return;
+      }
+      if(latestSatoshiStatus && isSatoshiBusyStatus(latestSatoshiStatus.status)){
+        updateSatoshiGetButton();
+        return;
+      }
+      latestSatoshiStatus={type:'satoshi_status',hasSatoshi:false,status:'requesting'};
+      updateSatoshiGetButton();
+      postToSatoshiFrame(latestSatoshiStatus);
+      postNativeMessage('open_satoshi_get_namespace');
+      try { window.location.href = 'appd://open_satoshi_get_namespace'; } catch(_) {}
+    }else if(action==='role'){
+      if(!latestSatoshiStatus || !latestSatoshiStatus.hasSatoshi || latestSatoshiStatus.status!=='ready')return;
+      postNativeMessage('open_satoshi_role');
+    }else if(action==='chat'){
+      if(!latestSatoshiStatus || !latestSatoshiStatus.hasSatoshi || latestSatoshiStatus.status!=='ready' || !latestSatoshiStatus.canOpenChatStory)return;
+      postNativeMessage('open_satoshi_chat');
+    }else if(action==='story'){
+      if(!latestSatoshiStatus || !latestSatoshiStatus.hasSatoshi || latestSatoshiStatus.status!=='ready' || !latestSatoshiStatus.canOpenChatStory)return;
+      postNativeMessage('open_satoshi_story');
+    }
+  }
+
+  updateSatoshiGetButton();
+
   function handleNativeMessage(rawData){
     let payload;
     try{
@@ -610,6 +906,42 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
     }catch(_){return;}
 
     if(!payload || !payload.type)return;
+
+    if(payload.type==='satoshi_status'){
+      latestSatoshiStatus={
+        type:'satoshi_status',
+        hasSatoshi:!!payload.hasSatoshi,
+        namespaceExists:!!payload.namespaceExists,
+        status:payload.status || (payload.hasSatoshi ? 'ready' : 'waiting'),
+        alphaValue:payload.alphaValue,
+        electrumHeight:payload.electrumHeight,
+        satoshiApiHeight:payload.satoshiApiHeight,
+        canOpenChatStory:!!payload.canOpenChatStory,
+        satoshiId:payload.satoshiId || payload.shortCode || payload.namespaceId || '',
+      };
+      if(isSatoshiWaitStatus(latestSatoshiStatus.status)){
+        startSatoshiWaitTicker();
+      }else{
+        stopSatoshiWaitTicker();
+        updateSatoshiGetButton();
+        postToSatoshiFrame(latestSatoshiStatus);
+        scheduleSatoshiTouchProxySync();
+      }
+      return;
+    }
+
+    if(payload.type==='satoshi_menu_action'){
+      handleSatoshiAction(payload.action);
+      return;
+    }
+
+    if(payload.type==='home_set_language'){
+      if(window.HomeI18n && typeof window.HomeI18n.setLanguage==='function'){
+        window.HomeI18n.setLanguage(payload.lang || 'en');
+      }
+      postToSatoshiFrame({type:'home_set_language',lang:payload.lang || 'en'});
+      return;
+    }
 
     if(payload.type==='electrum_state'){
       nodeState.current=payload.current || {};
@@ -658,6 +990,9 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
 
   window.addEventListener('message',event=>handleNativeMessage(event.data));
   document.addEventListener('message',event=>handleNativeMessage(event.data));
+  const satoshiFrame=getSatoshiFrame();
+  if(satoshiFrame)satoshiFrame.addEventListener('load',()=>{syncSatoshiFrame();scheduleSatoshiTouchProxySync();});
+  window.addEventListener('resize',scheduleSatoshiTouchProxySync);
 
   // === 桌面图标点击逻辑（含自定义网址） ===
   desktopIcons.addEventListener('click',e=>{
@@ -681,12 +1016,24 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
       openNodeWindow();
       return;
     }
-    if(app==='readme'){
-      document.getElementById('readmeWindow').style.display='block';
-      return;
-    }
     if(app==='download'){
       document.getElementById('downloadWindow').style.display='block';
+      return;
+    }
+    if(app==='role'){
+      if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
+        window.ReactNativeWebView.postMessage('open_role_last');
+      } else {
+        alert(window.HomeI18n ? HomeI18n.t('alerts.roleShortcutNativeOnly') : 'Role shortcut is only available inside the Kevacoin app.');
+      }
+      return;
+    }
+    if(app==='story'){
+      if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
+        window.ReactNativeWebView.postMessage('open_story_last');
+      } else {
+        alert(window.HomeI18n ? HomeI18n.t('alerts.storyShortcutNativeOnly') : 'Story shortcut is only available inside the Kevacoin app.');
+      }
       return;
     }
     if(app==='id'){
@@ -697,6 +1044,14 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
       document.getElementById('alphaWindow').style.display='block';
       return;
     }
+    if(app==='satoshi'){
+      document.getElementById('satoshiWindow').style.display='block';
+      postNativeMessage('refresh_satoshi_status');
+      syncSatoshiFrame();
+      updateSatoshiGetButton();
+      scheduleSatoshiTouchProxySync();
+      return;
+    }
     if(app==='setting'){
       document.getElementById('settingsWindow').style.display='block';
       return;
@@ -705,7 +1060,7 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
       if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
         window.ReactNativeWebView.postMessage('open_getagents');
       }else{
-        alert('Get Agents is only available inside the Kevacoin app.');
+        alert(window.HomeI18n ? HomeI18n.t('alerts.getAgentsNativeOnly') : 'Get Agents is only available inside the Kevacoin app.');
       }
       return;
     }
@@ -713,15 +1068,15 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
       if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
         window.ReactNativeWebView.postMessage('open_guest_following');
       } else {
-        alert('Guest messages are only available inside the Kevacoin app.');
+        alert(window.HomeI18n ? HomeI18n.t('alerts.guestMessagesNativeOnly') : 'Guest messages are only available inside the Kevacoin app.');
       }
       return;
     }
     if(app==='chat'){
       if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
-        window.ReactNativeWebView.postMessage('open_following');
+        window.ReactNativeWebView.postMessage('open_chat_last');
       } else {
-        alert('Files are only available inside the Kevacoin app.');
+        alert(window.HomeI18n ? HomeI18n.t('alerts.chatShortcutNativeOnly') : 'Chat shortcut is only available inside the Kevacoin app.');
       }
       return;
     }
@@ -729,7 +1084,7 @@ document.querySelectorAll('.notepad-window .close-btn').forEach(btn=>{
       if(window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage==='function'){
         window.ReactNativeWebView.postMessage('open_wallet');
       } else {
-        alert('Wallets are only available inside the Kevacoin app.');
+        alert(window.HomeI18n ? HomeI18n.t('alerts.walletsNativeOnly') : 'Wallets are only available inside the Kevacoin app.');
       }
       return;
     }
@@ -796,6 +1151,10 @@ window.addEventListener('load', () => {
     }
 
     function refreshVisibilityBindings(){
+      if(localStorage.getItem('desktop-alpha-default-hidden-v1')!=='1'){
+        localStorage.setItem('desktop-visible-alpha','0');
+        localStorage.setItem('desktop-alpha-default-hidden-v1','1');
+      }
       document.querySelectorAll('[data-visibility-toggle]').forEach(cb=>{
         if(cb._bound)return;
         cb._bound=true;
@@ -825,7 +1184,7 @@ window.addEventListener('load', () => {
       if(!list.length){
         const empty=document.createElement('div');
         empty.className='custom-link-empty';
-        empty.textContent='No custom websites yet.';
+        empty.textContent=window.HomeI18n ? HomeI18n.t('ui.noCustomWebsites') : 'No custom websites yet.';
         container.appendChild(empty);
         return;
       }
@@ -836,7 +1195,7 @@ window.addEventListener('load', () => {
         row.innerHTML=`
           <label><input type="checkbox" data-app="${item.id}" data-visibility-toggle> ${item.name}</label>
           <div class="custom-link-url">${item.url}</div>
-          <button type="button" data-remove="${item.id}">Delete</button>
+          <button type="button" data-remove="${item.id}">${window.HomeI18n ? HomeI18n.t('ui.delete') : 'Delete'}</button>
         `;
 
         row.querySelector('button[data-remove]').addEventListener('click',()=>{
@@ -878,42 +1237,50 @@ window.addEventListener('load', () => {
     refreshVisibilityBindings();
   })();
 
-// === 语言切换 ===
+// === Home language: defaults to English; native HomeScreen pushes current Role language ===
 (function(){
   const langBtn=document.getElementById('langToggle');
-  function updateLanguageVisibility(lang){
-    document.querySelectorAll('[lang]').forEach(el=>{
-      el.style.display=(el.getAttribute('lang')===lang)?'':'none';
+  const langForm=document.getElementById('homeLanguageForm');
+  const langApply=document.getElementById('homeLanguageApply');
+  const languageOrder=['en','zh-cn','zh-tw','ja','ko','es','fr'];
+  const syncLanguageRadios=()=>{
+    if(!langForm || !window.HomeI18n)return;
+    const cur=HomeI18n.getLanguage();
+    const radio=langForm.querySelector(`input[name="homeLanguage"][value="${cur}"]`);
+    if(radio)radio.checked=true;
+  };
+  const applyHomeLanguage=lang=>{
+    const next=languageOrder.includes(lang) ? lang : 'en';
+    if(window.HomeI18n && typeof window.HomeI18n.setLanguage==='function'){
+      window.HomeI18n.setLanguage(next);
+    }
+    postToSatoshiFrame({type:'home_set_language',lang:next});
+    postToNative({type:'home_set_role_language',lang:next});
+    syncLanguageRadios();
+  };
+  if(window.HomeI18n && typeof window.HomeI18n.setLanguage==='function'){
+    window.HomeI18n.setLanguage('en');
+  }
+  syncLanguageRadios();
+  window.addEventListener('home-language-changed',syncLanguageRadios);
+  if(langForm){
+    langForm.addEventListener('submit',e=>{
+      e.preventDefault();
+      const selected=langForm.querySelector('input[name="homeLanguage"]:checked');
+      applyHomeLanguage(selected ? selected.value : (window.HomeI18n ? HomeI18n.getLanguage() : 'en'));
+      if(langApply)langApply.textContent=window.HomeI18n ? HomeI18n.t('ui.languageApplied') : '已应用';
+      setTimeout(()=>{ if(langApply)langApply.textContent=window.HomeI18n ? HomeI18n.t('ui.languageApply') : '应用'; },900);
     });
   }
-  function setLang(lang){
-    localStorage.setItem('ui-lang',lang);
-    document.documentElement.lang=lang;
-    langBtn.textContent=(lang==='en')?'中':'EN';
-    const map={
-      en:{keva:'Node',id:'Agents ID',getagents:'Get Agents',alpha:'Alpha',readme:'Read mee！',download:'Download',message:'Message',chat:'Chat',startBtn:'Start'},
-      zh:{keva:'网络节点',id:'代理人 ID',getagents:'获取代理',alpha:'Alpha',readme:'读我！',download:'下载文件夹',message:'消息',chat:'聊天',startBtn:'开始'}
-    };
-    for(const k in map[lang]){
-      if(k==='startBtn')continue;
-      const el=document.querySelector(`.icon[data-app="${k}"] span`);
-      if(el)el.textContent=map[lang][k];
-      const inp=document.querySelector(`#startMenu input[data-app="${k}"]`);
-      if(inp){const lab=inp.parentElement;lab.textContent='';lab.appendChild(inp);lab.append(' '+map[lang][k]);}
-    }
-    document.querySelector('.taskbar .start').textContent=map[lang].startBtn;
-    if(lang==='zh')document.documentElement.classList.add('lang-zh');
-    else document.documentElement.classList.remove('lang-zh');
-    updateLanguageVisibility(lang);
+  if(langBtn){
+    langBtn.addEventListener('click',e=>{
+      e.stopPropagation();
+      if(!window.HomeI18n)return;
+      const cur=HomeI18n.getLanguage();
+      const next=languageOrder[(Math.max(0,languageOrder.indexOf(cur))+1)%languageOrder.length];
+      applyHomeLanguage(next);
+    });
   }
-  const saved=localStorage.getItem('ui-lang');
-  const initLang=(saved==='zh')?'zh':'en';
-  setLang(initLang);
-  langBtn.addEventListener('click',e=>{
-    e.stopPropagation();
-    const cur=document.documentElement.lang==='zh'?'zh':'en';
-    setLang(cur==='zh'?'en':'zh');
-  });
 })();
 
 // === 自动加载 README / Download 文本 ===

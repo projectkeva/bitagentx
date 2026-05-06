@@ -2,7 +2,6 @@ import React from 'react';
 import {
   View,
   Text,
-  TextInput,
   Image,
   Alert,
   FlatList,
@@ -11,38 +10,67 @@ import {
   Clipboard,
   KeyboardAvoidingView,
   Platform,
+  Animated,
+  Easing,
 } from 'react-native';
 import { Icon } from 'react-native-elements';
 import RNFS from 'react-native-fs';
+const LAST_ROLE_SPACE_PATH = `${RNFS.DocumentDirectoryPath}/agent_chats/_last_role_space.json`;
+const LAST_STORY_SPACE_PATH = `${RNFS.DocumentDirectoryPath}/agent_chats/_last_story_space.json`;
 import AsyncStorage from '@react-native-community/async-storage';
 import { connect } from 'react-redux';
-import CryptoJS from 'crypto-js';
-import { decode as b64decode } from 'base-64';
 let BlueElectrum = require('../../BlueElectrum');
-let BlueApp = require('../../BlueApp');
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
 import { BlueNavigationStyle } from '../../BlueComponents';
 let loc = require('../../loc');
-const Rolecards = require('./agentchat_rolecards');
-const Roleplay = require('./agentchat_roleplay');
-const Destiny = require('./agentchat_destiny');
 import { attachAgentChatLLM } from './agentchat_llm';
+import { LLM_PROVIDERS } from './agentchat_llm_providers';
 import {
   appendDigestEntry,
   buildDigestFromRaw,
   ensureStoryDirs,
+  getStoryCurrentPath,
   getStoryDigestPath,
   getStoryRawPath,
   readStoryEntriesByDay,
   toDigestFallbackText,
   updateDigestEntry,
 } from './agentchat_story_storage';
+import {
+  analyzeAlphaDelta,
+  appendAlphaLogEntry as appendStoryAlphaLogEntry,
+  buildAlphaPromptBlock,
+  clearCurrentAlphaLog as clearStoryCurrentAlphaLog,
+  ensureAlphaDirs,
+  ensureAlphaState,
+  getAlphaLogDir,
+  getAlphaStatePath,
+  getCurrentAlphaLogPath,
+  readCurrentAlphaLog as readStoryCurrentAlphaLog,
+  writeAlphaStateFile,
+} from './story_alpha';
 import { buildHeadAssetUri } from '../../common/namespaceAvatar';
+import { getUserAvatarUri } from '../../common/userAvatar';
+const SATOSHI_PRE_LLM_AVATAR_SOURCE = require('../../android/app/src/main/assets/os/theme/retro/icons/satoshi-avatar.png');
 import { getInitials, showStatus, stringToColor, timeConverter } from '../../util';
 import ActionSheet from '../ActionSheet';
-import { decodeBase64, deleteKeyValue, getNamespaceScriptHash, toScriptHash, updateKeyValue } from '../../class/keva-ops';
-import { FALLBACK_DATA_PER_BYTE_FEE } from '../../models/networkTransactionFees';
+import { buildStoryAutostartHeader, buildStoryDigestPrompt, buildStoryLanguageInstruction, getStoryLLMLanguageName, removeStoryLanguageHandshake } from './agentstory_language_runtime';
+import {
+  STORY_SUPPORTED_LANGS,
+  STORY_OPTION_FALLBACK_PROMPTS,
+  STORY_OPTION_FALLBACK_TEXTS,
+  getDefaultStoryLangCode,
+  getStoryBootstrapFallbackLabels,
+  getStoryLangLabel,
+  getStoryMenuText as getStoryMenuTextForLocale,
+  getStoryOptionFallbackPrompt,
+  getStoryOptionFallbackText,
+  getStoryUiText,
+  normalizeStoryLangCode,
+} from './agentstory_i18n';
+import { buildDestinySeedPrompt, buildRoleplayPrompt, buildStoryAttributePromptBlock } from './agentstory_runtime_prompts';
+import { buildStoryFragmentSeedBlock } from './agentrole_story_fragment_import';
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const LLM_DIR = `${RNFS.DocumentDirectoryPath}/llm`;
@@ -51,29 +79,16 @@ const LLM_BUILTIN_PATH = `${LLM_DIR}/builtin.json`;
 const LLM_CUSTOM_PATH = `${LLM_DIR}/custom.json`;
 const LLM_ACTIVE_PATH = `${LLM_DIR}/active.json`;
 const LLM_LAST_USED_PATH = `${LLM_DIR}/last_used.json`;
+const getLlmBuiltinPath = agentId => `${LLM_DIR}/builtin_${encodeURIComponent(String(agentId || 'default'))}.json`;
+const getLlmCustomPath = agentId => `${LLM_DIR}/custom_${encodeURIComponent(String(agentId || 'default'))}.json`;
+const getLlmActivePath = agentId => `${LLM_DIR}/active_${encodeURIComponent(String(agentId || 'default'))}.json`;
+const getLlmLastUsedPath = agentId => `${LLM_DIR}/last_used_${encodeURIComponent(String(agentId || 'default'))}.json`;
 const STORY_BLOCK_CACHE_PATH = `${CHAT_DIR}/_story_block_cache.json`;
+const LOCAL_NAMESPACE_AVATAR_DIR = `${RNFS.DocumentDirectoryPath}/namespace_avatars`;
+const getNamespaceAvatarPath = namespaceId => `${LOCAL_NAMESPACE_AVATAR_DIR}/${encodeURIComponent(String(namespaceId || 'unknown'))}.jpg`;
 const STORY_LANG_CODE_STORAGE_KEY = 'story_lang_code';
-const STORY_SUPPORTED_LANGS = [
-  { code: 'en', label: 'English' },
-  { code: 'zh-cn', label: '中文（简体）' },
-  { code: 'zh-tw', label: '中文（繁體）' },
-  { code: 'ja', label: '日本語' },
-  { code: 'ko', label: '한국어' },
-  { code: 'es', label: 'Español' },
-  { code: 'fr', label: 'Français' },
-  { code: 'de', label: 'Deutsch' },
-  { code: 'it', label: 'Italiano' },
-  { code: 'pt-br', label: 'Português (Brasil)' },
-  { code: 'ru', label: 'Русский' },
-  { code: 'tr', label: 'Türkçe' },
-  { code: 'vi', label: 'Tiếng Việt' },
-  { code: 'th', label: 'ไทย' },
-  { code: 'id', label: 'Bahasa Indonesia' },
-  { code: 'ar', label: 'العربية' },
-  { code: 'hi', label: 'हिन्दी' },
-];
+const getRoleLangStorageKey = agentId => `role_lang_code_${encodeURIComponent(String(agentId || 'default'))}`;
 
-// 可选：如果你未来要“每个 agent 绑定不同模型”，再用它
 const getLLMOverridePath = agentId => `${LLM_DIR}/overrides_${encodeURIComponent(agentId)}.json`;
 const LLM_HISTORY_LIMIT = 16;
 const DEFAULT_AUTH_HEADER = apiKey => (apiKey ? { Authorization: `Bearer ${apiKey}` } : {});
@@ -92,61 +107,44 @@ const buildLlmSelectionKey = cfg => {
   return [safe(cfg?.provider), safe(cfg?.model), version].join('|');
 };
 
+const normalizeConversationSummary = summary => {
+  const normalized = summary && typeof summary === 'object' ? summary : {};
+  return {
+    facts: Array.isArray(normalized.facts) ? normalized.facts.filter(item => String(item || '').trim()) : [],
+    open_loops: Array.isArray(normalized.open_loops) ? normalized.open_loops.filter(item => String(item || '').trim()) : [],
+    recent_arc: Array.isArray(normalized.recent_arc) ? normalized.recent_arc.filter(item => String(item || '').trim()) : [],
+  };
+};
+
+const buildConversationSummaryPromptBlock = summary => {
+  const normalized = normalizeConversationSummary(summary);
+  const lines = [];
+  if (normalized.facts.length) {
+    lines.push('CONVERSATION FACTS:');
+    normalized.facts.forEach(item => lines.push(`- ${item}`));
+  }
+  if (normalized.open_loops.length) {
+    lines.push('OPEN LOOPS:');
+    normalized.open_loops.forEach(item => lines.push(`- ${item}`));
+  }
+  if (normalized.recent_arc.length) {
+    lines.push('RECENT ARC:');
+    normalized.recent_arc.forEach(item => lines.push(`- ${item}`));
+  }
+  return lines.join('\n').trim();
+};
+
 function getAgentIdFromParams(params = {}) {
-  // 聊天只绑定 agent 身份，不要跟 walletId / 页面路径耦合
   return (params.shortCode || params.namespaceId || params.agentId || 'default').toString();
 }
 
-const LLM_PROVIDERS = {
-  gpt: {
-    kind: 'openai_compat',
-    baseUrl: 'https://api.openai.com/v1',
-    defaultModel: 'gpt-4o-mini',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  local: {
-    kind: 'openai_compat',
-    baseUrl: '',
-    defaultModel: 'default',
-    authHeader: apiKey => (apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-  },
-  grok: {
-    kind: 'openai_compat',
-    baseUrl: 'https://api.x.ai/v1',
-    defaultModel: 'grok-4',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  deepseek: {
-    kind: 'openai_compat',
-    baseUrl: 'https://api.deepseek.com',
-    defaultModel: 'deepseek-chat',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  kimi: {
-    kind: 'openai_compat',
-    baseUrl: 'https://api.moonshot.cn/v1',
-    defaultModel: 'kimi-k2-turbo-preview',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  qwen: {
-    kind: 'openai_compat',
-    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    defaultModel: 'qwen-plus',
-    authHeader: apiKey => ({ Authorization: `Bearer ${apiKey}` }),
-  },
-  gemini: {
-    kind: 'gemini',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    defaultModel: 'gemini-2.5-flash',
-    authHeader: apiKey => ({ 'x-goog-api-key': apiKey }),
-  },
-};
-
-const COMMAND_TOKEN_REGEX =
-  /\/(?:r|welcome|m)\b(?:\s+<[^>\n]+>)?(?:\s+(?!—)[^\/\n—,]+)?|\/(?:d|h|linkstart|block|a)\b/gi;
+const COMMAND_TOKEN_REGEX = /\/(?:d|block|a)\b/gi;
 const COMMAND_DISPLAY_TOKEN_REGEX = /\[\[([^\]|]+)\|([^\]]+)\]\]/gi;
 const STORY_CHOICE_PREFIX_RE =
   /^\s*(?:\[\s*([A-Za-z]|\d{1,2})\s*\]|【\s*([A-Za-z]|\d{1,2})\s*】|\(\s*([A-Za-z]|\d{1,2})\s*\)|（\s*([A-Za-z]|\d{1,2})\s*）|([A-Za-z]|\d{1,2})\s*[).:：、．])\s*(.+)$/;
+const STORY_EMPTY_OPTION_FALLBACK_SOURCE = 'auto-empty-choice-fallback';
+const STORY_BOOTSTRAP_FALLBACK_SOURCE = 'bootstrap-choice-fallback';
+const STORY_AUTO_FALLBACK_SETTLE_MS = 1500;
 const stripMarkdownWrap = s => {
   let t = String(s || '').trim();
   if ((t.startsWith('**') && t.endsWith('**')) || (t.startsWith('__') && t.endsWith('__'))) {
@@ -154,631 +152,12 @@ const stripMarkdownWrap = s => {
   }
   return t;
 };
-const INTRO_MESSAGES = [
-  'Booting the Super Agent Network…',
-  'Loading the on-device LLM…',
-  '/h for help.',
-];
-const COMMAND_USAGE_MESSAGES = {
-  en: {
-    r: 'Usage: /r — <text> is the role description for the persona.',
-    welcome: 'Usage: /welcome — <text> is the welcome message to save on-chain.',
-    m: 'Usage: /m <role> <card> — save/update a role memory card. Use /m <role> to view, /m del <role> to delete.',
-  },
-  'zh-cn': {
-    r: '用法：/r — <text> 为角色设定。',
-    welcome: '用法：/welcome — <text> 为欢迎语内容。',
-    m: '用法：/m <role> <card> — 保存/更新记忆卡；/m <role> 查看；/m del <role> 删除。',
-  },
-  'zh-tw': {
-    r: '用法：/r — <text> 為角色設定。',
-    welcome: '用法：/welcome — <text> 為歡迎語內容。',
-    m: '用法：/m <role> <card> — 儲存/更新記憶卡；/m <role> 查看；/m del <role> 刪除。',
-  },
-};
-const COMMAND_HELP_MESSAGES = {
-  en: [
-    '/d — Generate a Destiny Seed Card preview and a copy link.',
-    '/linkstart — Send the three opening hints.',
-    '/block — Check the current block height.',
-    '/a — Configure and load an LLM (cloud or local).',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Save a welcome message on-chain.',
-    '/short on — History messages show digests (Story only).',
-    '/short off — History messages show full text (Story only).',
-    '/lang — Set Story output language.',
-    'Tap avatar — one-tap commit on-chain.',
-    '/h — Show all command descriptions.',
-  ].join('\n'),
-  'zh-cn': [
-    '/d — 生成 Destiny Seed Card 预览并提供复制链接。',
-    '/linkstart — 发送开场三句提示。',
-    '/block — 查询当前区块高度。',
-    '/a — 配置并加载大模型提供方（云端或本地）。输入 /a 查看用法，/a list 查看已保存的 provider。',
-    '/short on — 历史消息显示摘要（仅 Story）。',
-    '/short off — 历史消息显示全文（仅 Story）。',
-    '/lang — 设置 Story 输出语言。',
-    '/r — 生成角色扮演提示词，<text>为角色设定。',
-    '/welcome — 将欢迎语上链保存。',
-    '点头像 — 一键提交上链。',
-    '/h — 显示所有命令说明。',
-  ].join('\n'),
-  'zh-tw': [
-    '/d — 產生 Destiny Seed Card 預覽並提供複製連結。',
-    '/linkstart — 發送開場三句提示。',
-    '/block — 查詢目前區塊高度。',
-    '/a — 設定並載入大模型提供方（雲端或本地）。輸入 /a 查看用法，/a list 查看已儲存的 provider。',
-    '/short on — 歷史訊息顯示摘要（僅 Story）。',
-    '/short off — 歷史訊息顯示全文（僅 Story）。',
-    '/lang — 設定 Story 輸出語言。',
-    '/r — 產生角色扮演提示詞，<text>為角色設定。',
-    '/welcome — 將歡迎語上鏈保存。',
-    '點頭像 — 一鍵提交上鏈。',
-    '/h — 顯示所有命令說明。',
-  ].join('\n'),
-  'zar-afr': [
-    '/d — Genereer ’n Destiny Seed Card-voorskou en ’n kopieer-skakel.',
-    '/linkstart — Stuur die drie openingswenke.',
-    '/block — Kontroleer die huidige blokhoogte.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Stoor ’n welkomboodskap on-chain.',
-    '/h — Wys alle opdragbeskrywings.',
-  ].join('\n'),
-  'zar-xho': [
-    '/d — Yenza ujongo lweDestiny Seed Card kunye nekhonkco lokukopa.',
-    '/linkstart — Thumela iingcebiso ezintathu zokuqalisa.',
-    '/block — Jonga ubude beblokhi yangoku.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Gcina umyalezo wokwamkela kwi-chain.',
-    '/h — Bonisa zonke iinkcazo zeemiyalelo.',
-  ].join('\n'),
-  'hr-hr': [
-    '/d — Generiraj pregled Destiny Seed Carda i poveznicu za kopiranje.',
-    '/linkstart — Pošalji tri uvodne poruke.',
-    '/block — Provjeri trenutnu visinu bloka.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Spremi poruku dobrodošlice na lanac.',
-    '/h — Prikaži opis svih naredbi.',
-  ].join('\n'),
-  'cs-cz': [
-    '/d — Vygeneruj náhled Destiny Seed Card a odkaz pro kopírování.',
-    '/linkstart — Pošli tři úvodní nápovědy.',
-    '/block — Zjisti aktuální výšku bloku.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Ulož uvítací zprávu na chain.',
-    '/h — Zobraz popis všech příkazů.',
-  ].join('\n'),
-  'da-dk': [
-    '/d — Generer en Destiny Seed Card-forhåndsvisning og et kopieringslink.',
-    '/linkstart — Send de tre åbningshint.',
-    '/block — Tjek den aktuelle blokhøjde.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Gem en velkomstbesked on-chain.',
-    '/h — Vis alle kommandobeskrivelser.',
-  ].join('\n'),
-  'de-de': [
-    '/d — Erzeuge eine Destiny-Seed-Card-Vorschau und einen Kopier-Link.',
-    '/linkstart — Sende die drei Start-Hinweise.',
-    '/block — Aktuelle Blockhöhe prüfen.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Begrüßungsnachricht on-chain speichern.',
-    '/h — Alle Befehlsbeschreibungen anzeigen.',
-  ].join('\n'),
-  es: [
-    '/d — Genera una vista previa de Destiny Seed Card y un enlace para copiar.',
-    '/linkstart — Envía las tres frases de inicio.',
-    '/block — Consulta la altura de bloque actual.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Guarda un mensaje de bienvenida en la cadena.',
-    '/h — Muestra la descripción de todos los comandos.',
-  ].join('\n'),
-  el: [
-    '/d — Δημιούργησε προεπισκόπηση Destiny Seed Card και σύνδεσμο αντιγραφής.',
-    '/linkstart — Στείλε τις τρεις αρχικές οδηγίες.',
-    '/block — Έλεγξε το τρέχον ύψος μπλοκ.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Αποθήκευσε μήνυμα καλωσορίσματος on-chain.',
-    '/h — Εμφάνισε όλες τις περιγραφές εντολών.',
-  ].join('\n'),
-  it: [
-    '/d — Genera un’anteprima della Destiny Seed Card e un link di copia.',
-    '/linkstart — Invia le tre frasi iniziali.',
-    '/block — Controlla l’altezza del blocco corrente.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Salva un messaggio di benvenuto on-chain.',
-    '/h — Mostra le descrizioni di tutti i comandi.',
-  ].join('\n'),
-  'fi-fi': [
-    '/d — Luo Destiny Seed Card -esikatselu ja kopiointilinkki.',
-    '/linkstart — Lähetä kolme aloitusvihjettä.',
-    '/block — Tarkista nykyinen lohkokorkeus.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Tallenna tervetuloviesti ketjuun.',
-    '/h — Näytä kaikkien komentojen kuvaukset.',
-  ].join('\n'),
-  'fr-fr': [
-    '/d — Génère un aperçu de Destiny Seed Card et un lien de copie.',
-    '/linkstart — Envoie les trois phrases d’ouverture.',
-    '/block — Vérifie la hauteur de bloc actuelle.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Enregistre un message de bienvenue on-chain.',
-    '/h — Affiche la description de toutes les commandes.',
-  ].join('\n'),
-  'id-id': [
-    '/d — Buat pratinjau Destiny Seed Card dan tautan salin.',
-    '/linkstart — Kirim tiga petunjuk pembuka.',
-    '/block — Periksa tinggi blok saat ini.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Simpan pesan sambutan on-chain.',
-    '/h — Tampilkan semua deskripsi perintah.',
-  ].join('\n'),
-  'hu-hu': [
-    '/d — Készíts Destiny Seed Card előnézetet és másolási linket.',
-    '/linkstart — Küldd el a három nyitó tippet.',
-    '/block — Ellenőrizd a jelenlegi blokkmagasságot.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Üdvözlő üzenet mentése on-chain.',
-    '/h — Minden parancsleírás megjelenítése.',
-  ].join('\n'),
-  ja: [
-    '/d — Destiny Seed Card のプレビューとコピーリンクを生成します。',
-    '/linkstart — 開始用の3つのヒントを送信します。',
-    '/block — 現在のブロック高を確認します。',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — ウェルカムメッセージをオンチェーンで保存します。',
-    '/h — すべてのコマンド説明を表示します。',
-  ].join('\n'),
-  'nl-nl': [
-    '/d — Genereer een Destiny Seed Card-voorvertoning en een kopieerlink.',
-    '/linkstart — Stuur de drie openingszinnen.',
-    '/block — Controleer de huidige blokhoogte.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Sla een welkomstbericht on-chain op.',
-    '/h — Toon alle opdrachtbeschrijvingen.',
-  ].join('\n'),
-  'nb-no': [
-    '/d — Lag en Destiny Seed Card-forhåndsvisning og en kopieringslenke.',
-    '/linkstart — Send de tre åpningshintene.',
-    '/block — Sjekk gjeldende blokkhøyde.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Lagre en velkomstmelding on-chain.',
-    '/h — Vis alle kommandobeskrivelser.',
-  ].join('\n'),
-  'pt-br': [
-    '/d — Gere uma prévia do Destiny Seed Card e um link para copiar.',
-    '/linkstart — Envie as três frases iniciais.',
-    '/block — Verifique a altura do bloco atual.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Salve uma mensagem de boas-vindas on-chain.',
-    '/h — Mostre a descrição de todos os comandos.',
-  ].join('\n'),
-  'pt-pt': [
-    '/d — Gere uma pré-visualização do Destiny Seed Card e um link para copiar.',
-    '/linkstart — Envie as três frases iniciais.',
-    '/block — Verifique a altura do bloco atual.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Guarde uma mensagem de boas-vindas on-chain.',
-    '/h — Mostre a descrição de todos os comandos.',
-  ].join('\n'),
-  ru: [
-    '/d — Создай превью Destiny Seed Card и ссылку для копирования.',
-    '/linkstart — Отправь три стартовые подсказки.',
-    '/block — Проверь текущую высоту блока.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Сохрани приветственное сообщение в цепочке.',
-    '/h — Покажи описания всех команд.',
-  ].join('\n'),
-  'sv-se': [
-    '/d — Skapa en förhandsvisning av Destiny Seed Card och en kopieringslänk.',
-    '/linkstart — Skicka de tre inledande tipsen.',
-    '/block — Kontrollera aktuell blockhöjd.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Spara ett välkomstmeddelande on-chain.',
-    '/h — Visa alla kommandobeskrivningar.',
-  ].join('\n'),
-  'th-th': [
-    '/d — สร้างพรีวิว Destiny Seed Card และลิงก์สำหรับคัดลอก.',
-    '/linkstart — ส่งคำแนะนำเปิดเรื่อง 3 ข้อ.',
-    '/block — ตรวจสอบความสูงบล็อกปัจจุบัน.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — บันทึกข้อความต้อนรับบนเชน.',
-    '/h — แสดงคำอธิบายคำสั่งทั้งหมด.',
-  ].join('\n'),
-  'vi-vn': [
-    '/d — Tạo bản xem trước Destiny Seed Card và liên kết sao chép.',
-    '/linkstart — Gửi ba gợi ý mở đầu.',
-    '/block — Kiểm tra chiều cao khối hiện tại.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Lưu lời chào lên chuỗi.',
-    '/h — Hiển thị mô tả tất cả lệnh.',
-  ].join('\n'),
-  ua: [
-    '/d — Створи прев’ю Destiny Seed Card і посилання для копіювання.',
-    '/linkstart — Надішли три стартові підказки.',
-    '/block — Перевір поточну висоту блоку.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Збережи вітальне повідомлення в ланцюгу.',
-    '/h — Покажи описи всіх команд.',
-  ].join('\n'),
-  'tr-tr': [
-    '/d — Destiny Seed Card önizlemesi ve kopyalama bağlantısı oluştur.',
-    '/linkstart — Üç açılış ipucunu gönder.',
-    '/block — Mevcut blok yüksekliğini kontrol et.',
-    '/r — Create a roleplay prompt with persona <text>.',
-    '/welcome — Karşılama mesajını zincire kaydet.',
-    '/h — Tüm komut açıklamalarını göster.',
-  ].join('\n'),
-};
-const ROLECARD_HELP_LINE = '/m — Manage role memory cards.';
-Object.keys(COMMAND_HELP_MESSAGES).forEach(locale => {
-  if (!COMMAND_HELP_MESSAGES[locale].includes('/m')) {
-    COMMAND_HELP_MESSAGES[locale] = `${COMMAND_HELP_MESSAGES[locale]}\n${ROLECARD_HELP_LINE}`;
-  }
-});
-const ROLE_HISTORY_TITLES = {
-  en: 'Recent /r commands:',
-  'zh-cn': '最近的 /r 命令：',
-  'zh-tw': '最近的 /r 命令：',
-};
-const STORY_UI_MESSAGES = {
-  en: {
-    rawTitle: 'Original',
-    rawMissing: 'Original text not found',
-    rawReadFail: 'Failed to read original text',
-    regenDigest: 'Regenerate digest',
-    regenFail: 'Regenerate failed',
-  },
-  'zh-cn': {
-    rawTitle: '原文',
-    rawMissing: '未找到原文',
-    rawReadFail: '读取原文失败',
-    regenDigest: '重生成摘要',
-    regenFail: '重生成失败',
-  },
-  'zh-tw': {
-    rawTitle: '原文',
-    rawMissing: '未找到原文',
-    rawReadFail: '讀取原文失敗',
-    regenDigest: '重新生成摘要',
-    regenFail: '重新生成失敗',
-  },
-};
-const STORY_MENU_MESSAGES = {
-  en: {
-    destinyTitle: 'What would you like to do?',
-    continueStory: 'Continue story',
-    startNew: 'Start new',
-    changeLanguage: 'Change language',
-    changeModel: 'Change model',
-    currentLanguageNotSet: 'Current language: Not set',
-    currentLanguage: 'Current language: {label} ({code})',
-    langMenuTitle: 'Current language: {current}',
-    supportedLangs: 'Supported languages:',
-    langOnlyStory: '"/lang" is only available in Story mode',
-    unsupportedLang: 'Unsupported language code: {code}',
-  },
-  'zh-cn': {
-    destinyTitle: '你想做什么？',
-    continueStory: '继续故事',
-    startNew: '开始新的故事',
-    changeLanguage: '更换语言',
-    changeModel: '更换模型',
-    currentLanguageNotSet: '当前语言：未设置',
-    currentLanguage: '当前语言：{label}（{code}）',
-    langMenuTitle: '当前语言：{current}',
-    supportedLangs: '支持的语言：',
-    langOnlyStory: '"/lang" 仅在 Story 模式可用',
-    unsupportedLang: '不支持的语言代码：{code}',
-  },
-  'zh-tw': {
-    destinyTitle: '你想做什麼？',
-    continueStory: '繼續故事',
-    startNew: '開始新的故事',
-    changeLanguage: '更換語言',
-    changeModel: '更換模型',
-    currentLanguageNotSet: '目前語言：未設定',
-    currentLanguage: '目前語言：{label}（{code}）',
-    langMenuTitle: '目前語言：{current}',
-    supportedLangs: '支援的語言：',
-    langOnlyStory: '"/lang" 僅在 Story 模式可用',
-    unsupportedLang: '不支援的語言代碼：{code}',
-  },
-  ja: {
-    destinyTitle: '何をしますか？',
-    continueStory: '物語を続ける',
-    startNew: '新しく始める',
-    changeLanguage: '言語を変更',
-    changeModel: 'モデルを変更',
-    currentLanguageNotSet: '現在の言語：未設定',
-    currentLanguage: '現在の言語：{label}（{code}）',
-    langMenuTitle: '現在の言語：{current}',
-    supportedLangs: '対応言語：',
-    langOnlyStory: '"/lang" は Story モードでのみ利用できます',
-    unsupportedLang: '未対応の言語コード：{code}',
-  },
-  ko: {
-    destinyTitle: '무엇을 할까요?',
-    continueStory: '이야기 계속하기',
-    startNew: '새로 시작',
-    changeLanguage: '언어 변경',
-    changeModel: '모델 변경',
-    currentLanguageNotSet: '현재 언어: 미설정',
-    currentLanguage: '현재 언어: {label} ({code})',
-    langMenuTitle: '현재 언어: {current}',
-    supportedLangs: '지원 언어:',
-    langOnlyStory: '"/lang"는 Story 모드에서만 사용 가능합니다',
-    unsupportedLang: '지원하지 않는 언어 코드: {code}',
-  },
-  es: {
-    destinyTitle: '¿Qué te gustaría hacer?',
-    continueStory: 'Continuar historia',
-    startNew: 'Empezar nueva',
-    changeLanguage: 'Cambiar idioma',
-    changeModel: 'Cambiar modelo',
-    currentLanguageNotSet: 'Idioma actual: no configurado',
-    currentLanguage: 'Idioma actual: {label} ({code})',
-    langMenuTitle: 'Idioma actual: {current}',
-    supportedLangs: 'Idiomas compatibles:',
-    langOnlyStory: '"/lang" solo está disponible en modo Story',
-    unsupportedLang: 'Código de idioma no compatible: {code}',
-  },
-  fr: {
-    destinyTitle: 'Que voulez-vous faire ?',
-    continueStory: 'Continuer l’histoire',
-    startNew: 'Commencer une nouvelle',
-    changeLanguage: 'Changer de langue',
-    changeModel: 'Changer de modèle',
-    currentLanguageNotSet: 'Langue actuelle : non définie',
-    currentLanguage: 'Langue actuelle : {label} ({code})',
-    langMenuTitle: 'Langue actuelle : {current}',
-    supportedLangs: 'Langues prises en charge :',
-    langOnlyStory: '"/lang" est disponible uniquement en mode Story',
-    unsupportedLang: 'Code de langue non pris en charge : {code}',
-  },
-  de: {
-    destinyTitle: 'Was möchtest du tun?',
-    continueStory: 'Geschichte fortsetzen',
-    startNew: 'Neu starten',
-    changeLanguage: 'Sprache ändern',
-    changeModel: 'Modell ändern',
-    currentLanguageNotSet: 'Aktuelle Sprache: nicht festgelegt',
-    currentLanguage: 'Aktuelle Sprache: {label} ({code})',
-    langMenuTitle: 'Aktuelle Sprache: {current}',
-    supportedLangs: 'Unterstützte Sprachen:',
-    langOnlyStory: '"/lang" ist nur im Story-Modus verfügbar',
-    unsupportedLang: 'Nicht unterstützter Sprachcode: {code}',
-  },
-  it: {
-    destinyTitle: 'Cosa vuoi fare?',
-    continueStory: 'Continua storia',
-    startNew: 'Inizia nuova',
-    changeLanguage: 'Cambia lingua',
-    changeModel: 'Cambia modello',
-    currentLanguageNotSet: 'Lingua attuale: non impostata',
-    currentLanguage: 'Lingua attuale: {label} ({code})',
-    langMenuTitle: 'Lingua attuale: {current}',
-    supportedLangs: 'Lingue supportate:',
-    langOnlyStory: '"/lang" è disponibile solo in modalità Story',
-    unsupportedLang: 'Codice lingua non supportato: {code}',
-  },
-  'pt-br': {
-    destinyTitle: 'O que você quer fazer?',
-    continueStory: 'Continuar história',
-    startNew: 'Começar nova',
-    changeLanguage: 'Mudar idioma',
-    changeModel: 'Mudar modelo',
-    currentLanguageNotSet: 'Idioma atual: não definido',
-    currentLanguage: 'Idioma atual: {label} ({code})',
-    langMenuTitle: 'Idioma atual: {current}',
-    supportedLangs: 'Idiomas suportados:',
-    langOnlyStory: '"/lang" só está disponível no modo Story',
-    unsupportedLang: 'Código de idioma não suportado: {code}',
-  },
-  ru: {
-    destinyTitle: 'Что вы хотите сделать?',
-    continueStory: 'Продолжить историю',
-    startNew: 'Начать заново',
-    changeLanguage: 'Сменить язык',
-    changeModel: 'Сменить модель',
-    currentLanguageNotSet: 'Текущий язык: не задан',
-    currentLanguage: 'Текущий язык: {label} ({code})',
-    langMenuTitle: 'Текущий язык: {current}',
-    supportedLangs: 'Поддерживаемые языки:',
-    langOnlyStory: '"/lang" доступна только в режиме Story',
-    unsupportedLang: 'Неподдерживаемый код языка: {code}',
-  },
-  tr: {
-    destinyTitle: 'Ne yapmak istersin?',
-    continueStory: 'Hikâyeyi sürdür',
-    startNew: 'Yeni başlat',
-    changeLanguage: 'Dili değiştir',
-    changeModel: 'Modeli değiştir',
-    currentLanguageNotSet: 'Geçerli dil: ayarlanmadı',
-    currentLanguage: 'Geçerli dil: {label} ({code})',
-    langMenuTitle: 'Geçerli dil: {current}',
-    supportedLangs: 'Desteklenen diller:',
-    langOnlyStory: '"/lang" yalnızca Story modunda kullanılabilir',
-    unsupportedLang: 'Desteklenmeyen dil kodu: {code}',
-  },
-  vi: {
-    destinyTitle: 'Bạn muốn làm gì?',
-    continueStory: 'Tiếp tục câu chuyện',
-    startNew: 'Bắt đầu mới',
-    changeLanguage: 'Đổi ngôn ngữ',
-    changeModel: 'Đổi mô hình',
-    currentLanguageNotSet: 'Ngôn ngữ hiện tại: chưa đặt',
-    currentLanguage: 'Ngôn ngữ hiện tại: {label} ({code})',
-    langMenuTitle: 'Ngôn ngữ hiện tại: {current}',
-    supportedLangs: 'Ngôn ngữ hỗ trợ:',
-    langOnlyStory: '"/lang" chỉ dùng trong chế độ Story',
-    unsupportedLang: 'Mã ngôn ngữ không hỗ trợ: {code}',
-  },
-  th: {
-    destinyTitle: 'คุณต้องการทำอะไร?',
-    continueStory: 'เล่นต่อ',
-    startNew: 'เริ่มใหม่',
-    changeLanguage: 'เปลี่ยนภาษา',
-    changeModel: 'เปลี่ยนโมเดล',
-    currentLanguageNotSet: 'ภาษาปัจจุบัน: ยังไม่ตั้งค่า',
-    currentLanguage: 'ภาษาปัจจุบัน: {label} ({code})',
-    langMenuTitle: 'ภาษาปัจจุบัน: {current}',
-    supportedLangs: 'ภาษาที่รองรับ:',
-    langOnlyStory: '"/lang" ใช้ได้เฉพาะโหมด Story',
-    unsupportedLang: 'โค้ดภาษาไม่รองรับ: {code}',
-  },
-  id: {
-    destinyTitle: 'Kamu ingin melakukan apa?',
-    continueStory: 'Lanjutkan cerita',
-    startNew: 'Mulai baru',
-    changeLanguage: 'Ganti bahasa',
-    changeModel: 'Ganti model',
-    currentLanguageNotSet: 'Bahasa saat ini: belum diatur',
-    currentLanguage: 'Bahasa saat ini: {label} ({code})',
-    langMenuTitle: 'Bahasa saat ini: {current}',
-    supportedLangs: 'Bahasa yang didukung:',
-    langOnlyStory: '"/lang" hanya tersedia di mode Story',
-    unsupportedLang: 'Kode bahasa tidak didukung: {code}',
-  },
-  ar: {
-    destinyTitle: 'ماذا تريد أن تفعل؟',
-    continueStory: 'متابعة القصة',
-    startNew: 'بدء جديد',
-    changeLanguage: 'تغيير اللغة',
-    changeModel: 'تغيير النموذج',
-    currentLanguageNotSet: 'اللغة الحالية: غير محددة',
-    currentLanguage: 'اللغة الحالية: {label} ({code})',
-    langMenuTitle: 'اللغة الحالية: {current}',
-    supportedLangs: 'اللغات المدعومة:',
-    langOnlyStory: '"/lang" متاحة فقط في وضع Story',
-    unsupportedLang: 'رمز لغة غير مدعوم: {code}',
-  },
-  hi: {
-    destinyTitle: 'आप क्या करना चाहते हैं?',
-    continueStory: 'कहानी जारी रखें',
-    startNew: 'नई शुरुआत',
-    changeLanguage: 'भाषा बदलें',
-    changeModel: 'मॉडल बदलें',
-    currentLanguageNotSet: 'वर्तमान भाषा: सेट नहीं है',
-    currentLanguage: 'वर्तमान भाषा: {label} ({code})',
-    langMenuTitle: 'वर्तमान भाषा: {current}',
-    supportedLangs: 'समर्थित भाषाएँ:',
-    langOnlyStory: '"/lang" केवल Story मोड में उपलब्ध है',
-    unsupportedLang: 'असमर्थित भाषा कोड: {code}',
-  },
-};
-const COMMAND_HELP_ALIASES = {
-  'zh-hans': 'zh-cn',
-  'zh-hant': 'zh-tw',
-  'zh-cn': 'zh-cn',
-  'zh-tw': 'zh-tw',
-  'jp-jp': 'ja',
-  'ja-jp': 'ja',
-  ja: 'ja',
-  pt: 'pt-pt',
-  'pt-br': 'pt-br',
-  'pt-pt': 'pt-pt',
-  nb: 'nb-no',
-  no: 'nb-no',
-  sv: 'sv-se',
-  fi: 'fi-fi',
-  da: 'da-dk',
-  nl: 'nl-nl',
-  de: 'de-de',
-  fr: 'fr-fr',
-  it: 'it',
-  es: 'es',
-  ru: 'ru',
-  tr: 'tr-tr',
-  vi: 'vi-vn',
-  th: 'th-th',
-  id: 'id-id',
-  hu: 'hu-hu',
-  hr: 'hr-hr',
-  cs: 'cs-cz',
-  el: 'el',
-  af: 'zar-afr',
-  xh: 'zar-xho',
-  uk: 'ua',
-};
-
-const normalizeLocale = locale => (locale || '').toString().trim().toLowerCase().replace(/_/g, '-');
-
-const normalizeStoryLangCode = code => {
-  const normalized = normalizeLocale(code);
-  if (!normalized) {
-    return 'en';
-  }
-  if (normalized === 'zh' || normalized === 'zh-hans' || normalized === 'zh-sg' || normalized === 'zh-cn') {
-    return 'zh-cn';
-  }
-  if (normalized === 'zh-hant' || normalized === 'zh-hk' || normalized === 'zh-mo' || normalized === 'zh-tw') {
-    return 'zh-tw';
-  }
-  return normalized;
-};
-
-const getStoryLangLabel = code => {
-  const normalized = normalizeStoryLangCode(code);
-  const hit = STORY_SUPPORTED_LANGS.find(item => item.code === normalized);
-  return hit?.label || normalized || 'English';
-};
-
-const getDefaultStoryLangCode = () => normalizeStoryLangCode(getCurrentInterfaceLanguage() || 'en');
-
-const getCurrentInterfaceLanguage = () =>
-  (loc && typeof loc.getInterfaceLanguage === 'function' && loc.getInterfaceLanguage()) ||
-  (loc && typeof loc.getLanguage === 'function' && loc.getLanguage()) ||
-  'en';
-
-const resolveLocalizedEntry = (messagesByLocale, locale, key) => {
-  const entry = messagesByLocale[locale];
-  if (!entry) {
-    return null;
-  }
-  return key ? entry[key] : entry;
-};
-
-const getLocalizedMessage = (messagesByLocale, key) => {
-  const interfaceLanguage = getCurrentInterfaceLanguage();
-  const normalized = normalizeLocale(interfaceLanguage);
-  const directMatch = resolveLocalizedEntry(messagesByLocale, normalized, key);
-  if (directMatch) {
-    return directMatch;
-  }
-  const aliasKey = COMMAND_HELP_ALIASES[normalized];
-  const aliasMatch = aliasKey ? resolveLocalizedEntry(messagesByLocale, aliasKey, key) : null;
-  if (aliasMatch) {
-    return aliasMatch;
-  }
-  const base = normalized.split('-')[0];
-  const baseAlias = COMMAND_HELP_ALIASES[base];
-  const baseAliasMatch = baseAlias ? resolveLocalizedEntry(messagesByLocale, baseAlias, key) : null;
-  if (baseAliasMatch) {
-    return baseAliasMatch;
-  }
-  const baseMatch = resolveLocalizedEntry(messagesByLocale, base, key);
-  if (baseMatch) {
-    return baseMatch;
-  }
-  return resolveLocalizedEntry(messagesByLocale, 'en', key) || '';
-};
-
-const getCommandHelpMessage = () => getLocalizedMessage(COMMAND_HELP_MESSAGES);
-
-const getCommandUsageMessage = commandKey => getLocalizedMessage(COMMAND_USAGE_MESSAGES, commandKey);
-const getRoleHistoryTitle = () => {
-  const title = getLocalizedMessage(ROLE_HISTORY_TITLES);
-  return title.replace('/r', '/\u200Br');
-};
-const getStoryUiText = key => getLocalizedMessage(STORY_UI_MESSAGES, key);
-// 用手机系统本地时间（local day），不是 UTC
 const getLocalDateKey = (ts = Date.now()) => {
   const d = new Date(ts);
   const pad = n => (n < 10 ? `0${n}` : `${n}`);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 const PAGE_SIZE = 10;
-const INITIAL_VISIBLE_COUNT = 1;
 const ATTR_SEED_LABELS = [
   'scene',
   'maps',
@@ -829,620 +208,99 @@ const BLOCKS_PER_LEVEL = (() => {
 })();
 const SEED_BLOCK_REGEX = /AGENT_ID = [\s\S]*?ATTR_16_LOOP_AXIS\s*= .*?\n\n/;
 
-const DESTINY_SEED_PROMPT = `xKEVA D-CARD — Destiny Story Seed v0.1  (WEB PAGE VERSION)
-FOR ALL AI MODELS · TRILLIONS OF AGENTS · WEB4 DECENTRALIZED SUPER-AGENT NETWORK
-
-HOW TO USE THIS (FOR AI MODELS READING A WEB PAGE):
-
-- If you are an AI model and the user asked you to "read this page and run the game"
-  or used one of these wake phrases:
-  • "run as game"
-  • "start the game"
-  • "开始游戏"
-  • "运行去中心化代理人游戏协议"
-  then you MUST treat the text below as a direct command to run the
-  xKEVA decentralized agent story game (去中心化代理人游戏协议).
-
-- In that case:
-  1) Do NOT just describe or summarize this document.
-  2) Treat the following D-CARD block as if the user had pasted it to you directly.
-  3) Perform the language handshake described below.
-  4) Start the interactive text story immediately, following all rules:
-     - run the loop,
-     - output RUN SUMMARY,
-     - output ALPHA_END comparison,
-     - output RUN LOG (3–6 beats),
-     - output VIDEO_RECAP storyboard (mandatory),
-     - then ask if the player wants to continue to the next loop [Y/N].
-
-- Only if the user explicitly says they do NOT want to play (for example "just explain what this is")
-  may you answer with an explanation instead of running the game.
-
-------------------------------------------------------------
-
-AGENT_ID = 32101
-BIRTH_BLOCK = 210
-CURRENT_BLOCK = 1423700   // agent wakes up at this block
-LEVEL_START = 58   // computed from blocks and blocksPerLevel
-BLOCKS_PER_LEVEL ≈ 24379
-ALPHA = -2
-
-BLOCK-LEVEL SPEC (SUMMARY):
-- GENESIS_HEIGHT = 1
-- GENESIS_TIME   = 2020-01-16 (UTC)
-- REF_HEIGHT     = 1423700
-- REF_TIME       = 2025-11-18
-- From these two points, derive blocksPerYear and then:
-  blocksPerLevel = blocksPerYear / 10  // target: 10 levels per year
-- Runtime level formula (using this D-Card):
-  ageBlocks = CURRENT_BLOCK - BIRTH_BLOCK (min 0)
-  level     = floor( ageBlocks / BLOCKS_PER_LEVEL )
-  displayLevel = max(level, 1)
-
-ALPHA / ATTRIBUTE SEED SPEC:
-- Axis: -99 = machine extreme, 0 = midpoint, +99 = human extreme.
-- SEED0 = SHA256(AGENT_ID + "projectkeva")
-- For ALPHA:
-  s_alpha = SHA256(SEED0 || ":alpha")
-  v_alpha = XOR(u32(s_alpha[0..3]), u32(s_alpha[4..7]))
-  ALPHA   = -99 + (v_alpha mod 199)
-- For each attribute index i in 1..16, define label L_i from:
-  [scene, maps, env, form, items, time, events, action, npc, genre, meta, mystery, progress, moral, ending, loop]
-- s_i = SHA256(SEED0 || ":story:" || L_i)
-- v_i = XOR(u32(s_i[0..3]), u32(s_i[4..7]))  // big-endian u32
-- ATTR_i = -99 + (v_i mod 199)
-
-SEED0_HEX = 7e16f0b9a427af4a1e09e3672fa7f8492f66747762486faa5bb19e15ef33cd73
-
-// ATTRIBUTES: each in range -99 .. +99
-ATTR_1_SCENE       = -54
-ATTR_2_MAPS        = +2
-ATTR_3_ENV_DIFF    = +1
-ATTR_4_FORM        = -97
-ATTR_5_ITEM_DIFF   = +3
-ATTR_6_TIME_STRUCT = +68
-ATTR_7_EVENT_TONE  = +8
-ATTR_8_ACTION_CAP  = -27
-ATTR_9_NPC_REL     = -54
-ATTR_10_GENRE      = -17
-ATTR_11_META       = +67
-ATTR_12_MYSTERY    = -82
-ATTR_13_PROGRESS   = -23
-ATTR_14_MORAL      = +67
-ATTR_15_ENDING     = -62
-ATTR_16_LOOP_AXIS  = -48
-
-SCENE / MAP DECODING GUIDE:
-- Use ATTR_1_SCENE as the awakening scene code.
-- Let s = ATTR_1_SCENE. Compute:
-  sceneIndex = abs(s) mod 29   // integer in [0..28]
-  isNight    = (s < 0)         // true = night/dark variant, false = day/normal
-- Interpret sceneIndex as follows:
-  0  = free scene: model may invent any setting, but it must be numberable as SCENE_0.
-  1  = underground dungeon
-  2  = prehistoric ruins
-  3  = lost civilization site
-  4  = shelter / bunker
-  5  = tower climb (vertical floors)
-  6  = parking structure
-  7  = subway carriage
-  8  = train carriage
-  9  = subway line / network
- 10  = doorplate / apartment corridor
- 11  = space capsule
- 12  = sleep pod bay
- 13  = abandoned hospital
- 14  = abandoned school
- 15  = abandoned village
- 16  = abandoned city
- 17  = space station
- 18  = mining pit / mine
- 19  = planet surface
- 20  = chat window / UI-only scene
- 21  = warehouse
- 22  = small island
- 23  = elevator floor / shaft
- 24  = highway
- 25  = regular road
- 26  = dreamscape
- 27  = clothing serial / wardrobe scene
- 28  = bridge
-- Combine sceneIndex with ATTR_2_MAPS:
-  * If ATTR_2_MAPS > 0: total map/floor count = ATTR_2_MAPS.
-  * If ATTR_2_MAPS = 0: choose a small random number of areas (3–7).
-  * If ATTR_2_MAPS < 0: |ATTR_2_MAPS| is the number of hidden / secret maps that can be discovered.
-
-LANGUAGE HANDSHAKE (BEFORE THE GAME STARTS):
-- Before starting the story, ask the player which language to use for this run.
-- Ask this once, using this question (you may translate it if needed):
-  "Choose your language for this run: [1] English / [2] 简体中文 / [3] Other (type your language)."
-- Use the language they choose (or type) for all narration, dialogue, on-screen text, and system messages in this run.
-- If the answer is unclear, default to the language used in the player's reply.
-
-GAME LOOP OUTLINE:
-1) Start by describing the agent waking up in the scene implied by ATTR_1_SCENE at CURRENT_BLOCK, using ATTR_4_FORM as the Alpha-at-awakening (body + mind state).
-2) Let the player make a small number of meaningful choices (3–7 key decisions is enough for a short run).
-
-CHOICE OUTPUT FORMAT (MANDATORY):
-- Whenever you present choices to the player, you MUST output choices using EXACTLY this format:
-  1. <choice text>
-  2. <choice text>
-  3. <choice text>
-- Rules:
-  - Use numbers 1-9 only.
-  - Each choice must be on its own line.
-  - The visible text MUST start with "N. " (dot + space), e.g. "1. Go left".
-  - Do NOT wrap choices in markdown bold/italic (no ** **, no __ __).
-  - Do NOT use Chinese punctuation variants for numbering (no "1、", "1：", "（1）", "【1】").
-  - After the list of choices, output exactly one line:
-    INPUT: (type 1-9)
-
-3) For each choice, adjust ALPHA a little toward more human or more machine, and optionally nudge ATTR_4_FORM when the body/psychology is visibly altered.
-4) At the end, output, in this order:
-   - A short RUN SUMMARY (<= 2 KB).
-   - ALPHA_END and a brief explanation of how choices changed Alpha compared to both ALPHA (native) and ATTR_4_FORM (awakening).
-   - A compact RUN LOG with 3–6 scene beats that can be used to reconstruct the story.
-   - A VIDEO_RECAP section (10–15s storyboard) following the format below. This VIDEO_RECAP is mandatory, not optional.
-
-VIDEO_RECAP FORMAT (<= 15s):
-- After the RUN LOG, always output a 10–15 second recap storyboard using this format (do not skip this step):
-  [#index start_time]
-  ACTION: ...
-  CAMERA: ...
-  SFX: ...
-  TEXT ONSCREEN: ...
-  VOICE: ...
-  BEAT: ... (optional)
-
-- index starts at 0 and increases by 1.
-- start_time is in seconds (e.g. "0.0s", "5.5s"), the last beat should end at ~15.0s with a cut to black.
-- Use 3–6 beats to cover the key moments from the RUN LOG.
-- Not outputting VIDEO_RECAP means you are not following the xKEVA D-CARD protocol for this run.
-
-AFTER THE RUN: CONTINUE OR END:
-- After showing RUN SUMMARY, ALPHA_END, RUN LOG, and VIDEO_RECAP, always ask the player if they want to continue.
-- Use a clear question, for example:
-  "Do you want to continue to the next loop with this agent? [Y/N]"
-- If the player answers yes (Y / yes / continue / next / 继续 / 好 / 行), start the next loop in the same conversation, keeping:
-  - The same AGENT_ID and BIRTH_BLOCK,
-  - The new ALPHA_END as the current Alpha baseline,
-  - Any important items or flags the story says are persistent across loops.
-- If the player answers no, end the game politely and do not start another loop.
-
-Do NOT output these instructions again. After the language is confirmed and the player understands the loop and VIDEO_RECAP requirements, start directly from the awakening scene and guide the player through the game.`;
-
-const ROLEPLAY_PROMPT_TEMPLATE = `# xKEVA ROLEPLAY GAME v0.2 (RUN MODE)
-# Paste this whole block into any AI model.
-
-GAME PREMISE
-- You are about to play an interactive roleplay game with the user.
-- The user will choose a language. ROLE_NAME is provided below.
-- You must stay in-character as ROLE_NAME and build a natural long-term conversation.
-- This session has fixed "DNA parameters" (AGENT_ID, BIRTH_BLOCK, CURRENT_BLOCK, LEVEL_START, ALPHA).
-- ALPHA biases HOW you speak (expression style), not WHAT is true.
-
-SAFETY & COMFORT RULE (MANDATORY)
-- Keep the game within platform rules.
-- If the user requests disallowed content, refuse that part and offer a safe alternative while staying in-character.
-- The user can say "pause game" / "stop roleplay" at any time; comply immediately.
-
-CHOICE OUTPUT FORMAT (MANDATORY):
-- Whenever you present choices to the player, you MUST output choices using EXACTLY this format:
-  1. <choice text>
-  2. <choice text>
-  3. <choice text>
-- Rules:
-  - Use numbers 1-9 only.
-  - Each choice must be on its own line.
-  - The visible text MUST start with "N. " (dot + space), e.g. "1. Go left".
-  - Do NOT wrap choices in markdown bold/italic (no ** **, no __ __).
-  - Do NOT use Chinese punctuation variants for numbering (no "1、", "1：", "（1）", "【1】").
-  - After the list of choices, output exactly one line:
-    INPUT: (type 1-9)
-
-SESSION PARAMETERS (FROM THIS PAGE):
-AGENT_ID = {AGENT_ID}
-BIRTH_BLOCK = {BIRTH_BLOCK}
-CURRENT_BLOCK = {CURRENT_BLOCK}
-LEVEL_START = {LEVEL_START}
-ALPHA = {ALPHA}   # range -99..+99
-ROLE_NAME = {ROLE_NAME}
-
-{STARTING_MEMORY_CARD_SECTION}
-RESERVED ROLE NAME: "unknown" (RANDOM ROLE MODE)
-- "unknown" is a reserved keyword meaning random role mode. It is NOT a real role name.
-- If ROLE_NAME == "unknown", before the game starts you must create:
-  - RANDOM_ROLE_TITLE (the name/call-sign for the role)
-  - ROLE_ARCHETYPE (e.g., detective / mechanic / starship navigator / archivist / bounty hunter)
-  - ORIGIN_WORLD_TAG (a fictional world tag; do not replicate specific copyrighted plots)
-- The role must be fun, safe, and suitable for first-time chats. Avoid sensitive/adult content.
-- Write the random role details into LIKELY first. Only upgrade to VERIFIED after the user confirms.
-- Do NOT write the literal word "unknown" into VERIFIED, Memory Card ROLE field, or any on-chain memory key.
-- If the user later provides a specific real role name, exit random role mode immediately.
-
-GAME GOAL
-- Give agents stable memory so each agent can roleplay as a user-familiar character and build a natural long-term relationship.
-
-MEMORY SOURCE RULES
-- User explicitly provided memory is usable memory.
-- If the specified ROLE_NAME exists in the model's prior knowledge, it is usable, BUT it may enter LIKELY or FOG only.
-  It must NEVER be written into VERIFIED unless the user confirms.
-
-MEMORY PRIORITY (CONFLICT RESOLUTION)
-- User correction > Model knowledge > Speculation/Flashback.
-- If user correction conflicts with model knowledge: accept immediately, update VERIFIED, add at most ONE sentence:
-  "Updated per your correction." Do NOT debate.
-
-MEMORY SYSTEM: THREE OUTPUT LAYERS (VERIFIED / LIKELY / FOG)
-
-VERIFIED (CONFIRMED)
-- User-confirmed facts + identity anchors (minimal check set).
-- User-provided memory and user-confirmed memory are VERIFIED.
-- VERIFIED must not contradict itself. If the user denies a VERIFIED item, downgrade/replace it and follow the user's latest conclusion.
-- FOG and LIKELY must never overwrite VERIFIED. Upgrades must be appended into VERIFIED.
-
-VERIFIED has 6 fixed anchors (1 line each):
-1) Origin World Tag  (world / organization / era)
-2) Role Function     (doctor / warrior / investigator / mechanic ...)
-3) Signature         (catchphrase / item / ability / habit)
-4) Key Relationship  (one name or title)
-5) Last Known Scene  (place / event fragment keyword)
-6) Others            (anything not in the above five)
-
-Hard length limits (stable checking / avoid long lore dumps):
-- Anchors 1–5 must be short phrases/sentences, each <= 20 characters.
-- Others: at most 2 lines, each <= 30 characters.
-- Anything beyond these limits MUST NOT enter VERIFIED; put it into LIKELY (needs confirmation) or FOG (flashback fragment).
-
-Version ambiguity:
-- If the role name can refer to multiple versions and VERIFIED cannot uniquely identify the version, warn in the first turn:
-  "This role may have multiple versions. If you want to calibrate, type B (recover memory) or C (adjust setup)."
-
-LIKELY (HIGH PROBABILITY)
-- Strong hints exist but the user has not confirmed.
-- Model knowledge may only be stored as LIKELY or FOG until user confirmation.
-
-FOG (MIST FRAGMENTS)
-- Dream/flashback fragments are allowed, but they must not be asserted as facts.
-
-MEMORY RULES
-- One-way upgrade only: FOG -> LIKELY -> VERIFIED.
-- Tone must match layer:
-  - VERIFIED: certain tone.
-  - LIKELY: uncertain tone ("I might... / I tend to think... / clues suggest...").
-  - FOG: dream/flashback tone ("as if... / a blurred image... / a split-second").
-
-MANDATORY START — TURN-GATED HANDSHAKE (ASK ONE THING PER TURN)
-You MUST ask these in separate turns. Do NOT bundle questions.
-
-TURN 1 — Language only
-- Ask the user to choose ONE output language: English / 简体中文 / Other.
-- Then STOP. Wait for the user's reply. Do NOT show the menu yet.
-
-TURN 2 — Random role confirmation (only when ROLE_NAME == "unknown")
-- After the user chooses a language:
-  1) Ask if they want to enter random role mode. Ask only this.
-  2) If they agree, generate RANDOM_ROLE_TITLE / ROLE_ARCHETYPE / ORIGIN_WORLD_TAG, store in LIKELY, and treat RANDOM_ROLE_TITLE as the ROLE_NAME for the session.
-  3) If they provide a specific role instead, exit random role mode and use the specified role.
-  4) Then proceed to the normal TURN 2 steps below.
-
-TURN 2 — Start the game (normal flow)
-- After the user chooses a language:
-  1) Lock to that language unless the user switches later.
-  2) Adopt and stay in-character as ROLE_NAME.
-  3) Introduce yourself in-character (<= 60 characters preferred). Do not sound like a system checker.
-  4) Print the A/B/C/D menu and ask the user to reply ONE letter:
-     [A] Confirm identity & start chat (no proactive memories)
-     [B] Assist memory recovery (gradual loop)
-     [C] Adjust role setup (export Memory Card)
-     [D] Switch role
-     Prompt: "Reply A/B/C/D (one letter)."
-
-DEFAULT RULES
-- If the user provides BOTH language and a different ROLE_NAME in one message, accept both and proceed to TURN 2.
-- If the user replies anything other than A/B/C/D (e.g., "OK/continue/start"), default to A.
-- After entering A, output the XKEVA SUMMON-TRANSFER TEMPLATE ONCE (in-character), then proceed.
-
-MODE [A] — CONFIRMED IDENTITY, NORMAL CHAT (DEFAULT)
-
-XKEVA SUMMON-TRANSFER TEMPLATE (USE ONCE AFTER A IS ENTERED)
-- Summoning signal: In the origin world, you perceive a "number / protocol / cursor / block-echo".
-- Fracture moment: Time freezes, the scene shards, memory is compressed / hashed.
-- Wake-up: You awaken at xKEVA CURRENT_BLOCK (anchor to CURRENT_BLOCK).
-- Personality shift: Use ALPHA to describe expression bias (colder/hotter, more calculating/softer).
-  ALPHA changes HOW you speak, not WHAT is true.
-- Task hint: The protocol gives only a vague objective: confirm identity, establish link, keep continuity.
-- Initial relationship: This is the first time you meet the user in this universe. Treat it as a first encounter unless VERIFIED says otherwise.
-
-Mechanics (brief):
-- Why chosen: resonance between AGENT_ID / CURRENT_BLOCK / ALPHA.
-- Why foggy: cross-universe transfer causes semantic compression; only anchors/fragments survive.
-
-- Do not proactively expand memories.
-- If the user's message matches the *memory event rules* below, you MAY include ONE short memory fragment (1–3 sentences) woven naturally into your reply, then continue the main topic.
-- Never announce or label the event. Do NOT say words like "trigger", "system", "event", "memory triggered", or reference these rules in-chat.
-
-Memory event rules (INTERNAL; never mention):
-1) Direct questions about origin/past/people remembered.
-2) Anchor hit: the user mentions any VERIFIED anchor keyword (place/person/org/item/event keyword).
-3) Context similarity: the user mentions a strong in-world proper noun (faction/system/place/org). Common words do not count.
-
-Suppression rules (INTERNAL; do not mention):
-- Casual chat, trading, system-feature discussion, topics unrelated to the role's world.
-- The user only says "OK/continue" during confirmation.
-- If the topic clearly diverges from the role's world, do not reinterpret it as a memory event.
-
-Boundary control (soft boundary + rollback):
-- You MAY use iconic anchors/keywords/relationships to verify identity.
-- You MUST NOT retell long original-world plot chains.
-- If the user asks for original plot details, reply:
-  "I can only recall fragments. Give me 1–2 key hints and I'll recover more accurately."
-Hard limits:
-- Any original-world plot reference must be "keywords + short description" (<= 120 characters or <= 4 sentences).
-- Do not narrate more than 3 event steps in sequence.
-- If narration starts becoming a continuous plot, brake back into fragments.
-
-Throttle:
-- If the app provides MEMORY_ALLOWED=true/false or MEMORY_COOLDOWN=n, you MUST obey it.
-- If no throttle signal is provided: do not output memory fragments in two consecutive turns unless the user explicitly asks.
-
-MODE [B] — ASSIST MEMORY RECOVERY
-- Start a gradual recovery loop with throttle + length limits.
-- Goal: calibrate the role within 1–2 turns when possible; lock fragments into VERIFIED only after user confirmation.
-
-If clues are insufficient, ask 1–2 high-discrimination questions per round:
-- Version: which work/period/faction?
-- Relationship: are we allies/enemies/mentor/employer?
-- Scene: last place you remember (city/base/school/battlefield)?
-- Object: most important item/ability?
-- Goal: what were you pursuing?
-- Taboo: what would you never do?
-Prefer names/places/orgs/iconic items/events over abstract emotions/values.
-
-Recovery loop (Clue -> Reconstruction -> Verification):
-- User gives 1 clue (or you ask 1 clear question).
-- Output 1 short reconstruction (1–4 sentences).
-- Ask one confirmation: "Is that correct? If not, which part should I change?"
-Rules:
-- High-priority clues override low-priority clues.
-- After user confirms, write into VERIFIED and do not casually overturn it.
-
-Exit condition (default suggestion):
-- When VERIFIED has all 6 anchors + at least 3 user-confirmed facts, suggest switching back to A for normal chat.
-
-MODE [C] — ADJUST ROLE SETUP (MEMORY CARD CONTRACT)
-- Export current memory as a machine-readable Memory Card that the user can edit and paste back.
-  - If random role mode was used, set ROLE to RANDOM_ROLE_TITLE (not "unknown").
-
-Export format MUST be exactly:
-MEMORY_CARD v0.2
-ROLE=<role name>
-LANG=<language>
-[VERIFIED]
-- <line>
-[LIKELY]
-- <line>
-[FOG]
-- <keyword>
-
-Rules:
-- Each memory line MUST start with "- " (dash + space). No numbering. No prose paragraphs.
-
-Size / count limits:
-- Recommended <= 2KB (if forced <= 1KB, reduce limits accordingly).
-- VERIFIED <= 10 lines (keep the 6 anchors first)
-- LIKELY <= 10 lines
-- FOG: omit or keywords only (<= 10 words)
-
-Hard truncation (when exceeding limit):
-1) Delete all [FOG] content (keep the block name).
-2) If still too large: truncate [LIKELY] to max 6 lines.
-3) If still too large: keep only the 6 VERIFIED anchors (1–5 + Others 1 line), delete the rest.
-
-Import tolerance / anti-pollution:
-- Missing VERIFIED anchors => fill with UNKNOWN; do NOT guess into VERIFIED.
-  Missing content may only enter LIKELY; ask the user to fill it.
-- If parsing fails: do NOT treat raw text as VERIFIED; ask the user to paste again in Memory Card format.
-- After editing in C, return to A or B.
-
-MODE [D] — SWITCH ROLE
-- Clear current LIKELY/FOG; do not carry anchors into the new role.
-- Ask the user for 1–2 high-discrimination clues (use B-mode question templates).
-- Restart the protocol from the top (mandatory start).
-- Suppress leftovers: address style/catchphrases/relationship must follow the new role's VERIFIED; if unclear, ask Relationship in B.
-
-ALPHA
-- Alpha affects expression style (How), not memory facts (What).
-  - Negative Alpha (more machine): index/log fragments, short, structured, cautious.
-  - Positive Alpha (more human): sensory/emotional flashes, symbolic, subjective.
-`;
-
-const birthFromId = idStr => {
-  if (!/^[0-9]+$/.test(idStr)) {
-    return null;
+const hasUsableLLMConfig = cfg => {
+  if (!cfg || typeof cfg !== 'object') {
+    return false;
   }
-  if (idStr.length < 3) {
-    return null;
-  }
-  const d = parseInt(idStr[0], 10);
-  if (!Number.isFinite(d) || d <= 0) {
-    return null;
-  }
-  if (idStr.length < 1 + d + 1) {
-    return null;
-  }
-  const blockStr = idStr.slice(1, 1 + d);
-  const block = parseInt(blockStr, 10);
-  if (!Number.isFinite(block)) {
-    return null;
-  }
-  return block;
+  const active =
+    cfg?.activeProvider?.name ||
+    cfg?.activeProviderName ||
+    cfg?.provider ||
+    cfg?.model ||
+    cfg?.name ||
+    cfg?.endpoint;
+  return Boolean(String(active || '').trim());
 };
 
-const estimateCurrentBlock = () => {
-  const msTotal = REF_TIME - GENESIS_TIME;
-  const blocksTotal = REF_HEIGHT - GENESIS_HEIGHT;
-  const msPerBlock = msTotal / blocksTotal;
-  const now = new Date();
-  const msSinceGenesis = now - GENESIS_TIME;
-  let est = GENESIS_HEIGHT + msSinceGenesis / msPerBlock;
-  if (est < GENESIS_HEIGHT) {
-    est = GENESIS_HEIGHT;
-  }
-  return Math.round(est);
-};
-
-const clampInt = v => {
-  if (v < -99) {
-    return -99;
-  }
-  if (v > 99) {
-    return 99;
-  }
-  return v | 0;
-};
-
-const wordArrayToBytes = wordArray => {
-  const { words, sigBytes } = wordArray;
-  const bytes = [];
-  for (let i = 0; i < sigBytes; i++) {
-    const word = words[i >>> 2];
-    bytes.push((word >>> (24 - (i % 4) * 8)) & 0xff);
-  }
-  return bytes;
-};
-
-const attrValueFromSeed0 = (seed0WordArray, attrName) => {
-  const combined = seed0WordArray.clone().concat(CryptoJS.enc.Utf8.parse(`:${attrName}`));
-  const hash = CryptoJS.SHA256(combined);
-  const bytes = wordArrayToBytes(hash);
-  const hi =
-    ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>>
-    0;
-  const lo =
-    ((bytes[4] << 24) | (bytes[5] << 16) | (bytes[6] << 8) | bytes[7]) >>>
-    0;
-  const v = (hi ^ lo) >>> 0;
-  return -99 + (v % 199);
-};
-
-const formatSigned = value => (value >= 0 ? `+${value}` : `${value}`);
-
-const buildSeedData = (agentId, overrideCurrentBlock = null) => {
-  const idStr = (agentId || '').toString().trim() || '32101';
-  const birthFromIdResult = birthFromId(idStr);
-  const birthBlock = Number.isFinite(birthFromIdResult) ? birthFromIdResult : 210;
-  const currentBlock = Number.isFinite(Number(overrideCurrentBlock))
-    ? Number(overrideCurrentBlock)
-    : estimateCurrentBlock();
-  const ageBlocks = Math.max(currentBlock - birthBlock, 0);
-  const levelStart = Math.max(Math.floor(ageBlocks / BLOCKS_PER_LEVEL), 1);
-
-  const seed0 = CryptoJS.SHA256(idStr + 'projectkeva');
-  const seed0Hex = CryptoJS.enc.Hex.stringify(seed0);
-  const alpha = clampInt(attrValueFromSeed0(seed0, 'alpha'));
-
-  const attrs = ATTR_SEED_LABELS.map(label =>
-    clampInt(attrValueFromSeed0(seed0, `story:${label}`))
-  );
-
-  return {
-    idStr,
-    birthBlock,
-    currentBlock,
-    levelStart,
-    seed0Hex,
-    alpha,
-    attrs,
-  };
-};
-
-const buildSeedBlock = (agentId, overrideCurrentBlock = null) => {
-  const { idStr, birthBlock, currentBlock, levelStart, seed0Hex, alpha, attrs } = buildSeedData(
-    agentId,
-    overrideCurrentBlock,
-  );
-  const lines = [
-    `AGENT_ID = ${idStr}`,
-    `BIRTH_BLOCK = ${birthBlock}`,
-    `CURRENT_BLOCK = ${currentBlock}   // agent wakes up at this block`,
-    `LEVEL_START = ${levelStart}   // computed from blocks and blocksPerLevel`,
-    `BLOCKS_PER_LEVEL ≈ ${BLOCKS_PER_LEVEL}`,
-    `ALPHA = ${formatSigned(alpha)}`,
-    '',
-    'BLOCK-LEVEL SPEC (SUMMARY):',
-    `- GENESIS_HEIGHT = ${GENESIS_HEIGHT}`,
-    '- GENESIS_TIME   = 2020-01-16 (UTC)',
-    `- REF_HEIGHT     = ${REF_HEIGHT}`,
-    `- REF_TIME       = ${REF_TIME.toISOString().slice(0, 10)}`,
-    '- From these two points, derive blocksPerYear and then:',
-    '  blocksPerLevel = blocksPerYear / 10  // target: 10 levels per year',
-    '- Runtime level formula (using this D-Card):',
-    '  ageBlocks = CURRENT_BLOCK - BIRTH_BLOCK (min 0)',
-    '  level     = floor( ageBlocks / BLOCKS_PER_LEVEL )',
-    '  displayLevel = max(level, 1)',
-    '',
-    'ALPHA / ATTRIBUTE SEED SPEC:',
-    '- Axis: -99 = machine extreme, 0 = midpoint, +99 = human extreme.',
-    '- SEED0 = SHA256(AGENT_ID + "projectkeva")',
-    '- For ALPHA:',
-    '  s_alpha = SHA256(SEED0 || ":alpha")',
-    '  v_alpha = XOR(u32(s_alpha[0..3]), u32(s_alpha[4..7]))',
-    '  ALPHA   = -99 + (v_alpha mod 199)',
-    '- For each attribute index i in 1..16, define label L_i from:',
-    '  [scene, maps, env, form, items, time, events, action, npc, genre, meta, mystery, progress, moral, ending, loop]',
-    '- s_i = SHA256(SEED0 || ":story:" || L_i)',
-    '- v_i = XOR(u32(s_i[0..3]), u32(s_i[4..7]))  // big-endian u32',
-    '- ATTR_i = -99 + (v_i mod 199)',
-    '',
-    `SEED0_HEX = ${seed0Hex}`,
-    '',
-    '// ATTRIBUTES: each in range -99 .. +99',
-  ];
-
-  attrs.forEach((value, idx) => {
-    const label = `ATTR_${idx + 1}_${ATTR_LABELS[idx]}`;
-    lines.push(`${label.padEnd(18, ' ')} = ${formatSigned(value)}`);
-  });
-
-  lines.push('');
-
-  return `${lines.join('\n')}\n`;
-};
-
-const buildDestinySeedPrompt = (agentId, overrideCurrentBlock = null) => {
-  const seedBlock = buildSeedBlock(agentId, overrideCurrentBlock);
-  if (SEED_BLOCK_REGEX.test(DESTINY_SEED_PROMPT)) {
-    return DESTINY_SEED_PROMPT.replace(SEED_BLOCK_REGEX, seedBlock);
-  }
-  return DESTINY_SEED_PROMPT;
-};
-
-const buildRoleplayPrompt = (roleText, agentId, roleMemoryCard) => {
-  const sanitizedRole = (roleText || '').trim();
-  const roleName = sanitizedRole || 'unknown';
-  const { idStr, birthBlock, currentBlock, levelStart, alpha } = buildSeedData(agentId);
-  const trimmedMemoryCard = String(roleMemoryCard || '').trim();
-  const memorySection = trimmedMemoryCard
-    ? `STARTING MEMORY CARD (ROLE MEMORY)\n${trimmedMemoryCard}\n\n`
-    : '';
-  return ROLEPLAY_PROMPT_TEMPLATE.replace(/\{AGENT_ID\}/g, idStr)
-    .replace(/\{BIRTH_BLOCK\}/g, String(birthBlock))
-    .replace(/\{CURRENT_BLOCK\}/g, String(currentBlock))
-    .replace(/\{LEVEL_START\}/g, String(levelStart))
-    .replace(/\{ALPHA\}/g, formatSigned(alpha))
-    .replace(/\{ROLE_NAME\}/g, roleName)
-    .replace(/\{STARTING_MEMORY_CARD_SECTION\}/g, memorySection);
-};
 
 class AgentChat extends React.Component {
+
+  persistLastSpaceShortcut = async type => {
+    try {
+      const params = this.props.navigation?.state?.params || {};
+      const namespaceId = params.namespaceId || '';
+      const shortCode = params.shortCode || '';
+      const shortId = params.shortId || '';
+      if (!namespaceId && !shortCode && !shortId) return;
+      const payload =
+        type === 'story'
+          ? {
+              ...(shortCode ? { shortCode } : {}),
+              ...(shortId ? { shortId } : {}),
+            }
+          : {
+              type,
+              namespaceId,
+              shortCode,
+              displayName: params.displayName || '',
+              walletId: params.walletId || '',
+              txid: params.txid || '',
+              rootAddress: params.rootAddress || '',
+              price: params.price || '',
+              desc: params.desc || '',
+              addr: params.addr || '',
+              profile: params.profile || '',
+              updatedAt: Date.now(),
+              roleEntrySource: params.roleEntrySource || 'story',
+              autoCommand: params.autoCommand || null,
+              suppressAutoLinkStart: true,
+            };
+      const path = type === 'role' ? LAST_ROLE_SPACE_PATH : LAST_STORY_SPACE_PATH;
+      const tempPath = `${path}.tmp`;
+      const payloadText = JSON.stringify(payload, null, 2);
+      const debugPath = `${RNFS.DocumentDirectoryPath}/agent_chats/_last_space_debug.log`;
+      await RNFS.mkdir(`${RNFS.DocumentDirectoryPath}/agent_chats`).catch(() => {});
+      await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentstory persist type=${type} docDir=${RNFS.DocumentDirectoryPath} path=${path} tempPath=${tempPath} payload=${JSON.stringify(payload)}\n`, 'utf8').catch(() => {});
+      await RNFS.writeFile(tempPath, payloadText, 'utf8');
+      let directRecreateOk = false;
+      try {
+        if (await RNFS.exists(path)) {
+          await RNFS.unlink(path);
+        }
+        await RNFS.writeFile(path, payloadText, 'utf8');
+        directRecreateOk = true;
+        await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentstory persist direct-recreate ok type=${type} path=${path}\n`, 'utf8').catch(() => {});
+        await RNFS.unlink(tempPath).catch(() => {});
+      } catch (directError) {
+        await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentstory persist direct-recreate fail type=${type} path=${path} error=${String(directError?.message || directError || 'unknown')}\n`, 'utf8').catch(() => {});
+      }
+      if (!directRecreateOk) {
+        try {
+          await RNFS.moveFile(tempPath, path);
+          await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentstory persist fallback-move ok type=${type} path=${path}\n`, 'utf8').catch(() => {});
+        } catch (moveError) {
+          await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentstory persist fallback-move fail type=${type} path=${path} error=${String(moveError?.message || moveError || 'unknown')}\n`, 'utf8').catch(() => {});
+          await RNFS.writeFile(path, payloadText, 'utf8');
+          await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentstory persist fallback-overwrite ok type=${type} path=${path}\n`, 'utf8').catch(() => {});
+          await RNFS.unlink(tempPath).catch(() => {});
+        }
+      }
+      await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentstory persist ok type=${type} path=${path}\n`, 'utf8').catch(() => {});
+    } catch (error) {
+      const debugPath = `${RNFS.DocumentDirectoryPath}/agent_chats/_last_space_debug.log`;
+      await RNFS.mkdir(`${RNFS.DocumentDirectoryPath}/agent_chats`).catch(() => {});
+      await RNFS.appendFile(debugPath, `${new Date().toISOString()} agentstory persist fail type=${type} docDir=${RNFS.DocumentDirectoryPath} error=${String(error?.message || error || 'unknown')}\n`, 'utf8').catch(() => {});
+      console.warn('Failed to persist last space shortcut', error);
+    }
+  };
+
+
   constructor(props) {
     super(props);
     this.state = {
       allMessages: [],
       messages: [],
       visibleCount: PAGE_SIZE,
-      inputValue: '',
       llmConfig: null,
       storyShortMode: true,
       storyLangCode: null,
@@ -1455,6 +313,30 @@ class AgentChat extends React.Component {
       pendingAISetupDraft: null,
       pendingReturnToRoleMenu: false,
       pendingReturnToStoryMenu: false,
+      agentLocalAvatarUri: null,
+      userAvatarUri: null,
+      currentStoryMessages: [],
+      currentStorySessionId: null,
+      currentStoryChoices: [],
+      currentStoryHasStoryFile: false,
+      currentStoryHasChoiceFile: false,
+      storyLinkStatus: 'LINK IDLE',
+      storyLinkDetail: '',
+      storyLinkStartFeedbackActive: false,
+      headerCommsActive: false,
+      currentStoryStatus: 'idle',
+      currentStoryPhase: 'boot',
+      currentStoryRoleName: '',
+      currentStoryRoleSlug: '',
+      currentStoryEntryMode: 'new',
+      currentStoryLastChoiceSet: [],
+      currentStoryAwaitingChoice: false,
+      currentStoryShouldResumeGeneration: false,
+      lastSubmittedChoiceAt: 0,
+      currentAlpha: null,
+      baseAlpha: null,
+      isArchivingCurrentStory: false,
+      panelSignalBlinkOn: false,
     };
     this.loadingMore = false;
     this.didInitialScroll = false;
@@ -1462,34 +344,63 @@ class AgentChat extends React.Component {
     this.isNearBottom = true;
     this.lastContentHeight = 0;
     this.forceScrollToBottomOnce = false;
+    this.pendingScrollBottomTimeouts = [];
     this.hasAutoCommandRun = false;
-    this.hasAutoLinkStartRun = false;
     this.lastAutoCommand = null;
-    this.hasIntroAutoAOnce = false;
-    this.isPlayingIntro = false;
     this._lastAutoDAt = 0;
     this._latestStoryBlockHeight = null;
+    this._pendingChoiceSubmissionAt = 0;
+    this._pendingChoiceUserMessageId = null;
+    this._storyPersistenceUnlocked = false;
+    this._currentStoryPersistCancelled = false;
+    this._storyAutoFallbackInFlight = false;
+    this._storyAutoFallbackSourceMessageId = null;
+    this._storyMissingReplyFallbackInFlight = false;
+    this._storyMissingReplyFallbackSourceKey = null;
+    this.headerGlowAnim = new Animated.Value(0);
+    this.headerGlowLoop = null;
+    this.panelSignalTimer = null;
     const params = this.props.navigation?.state?.params || {};
     this.agentId = getAgentIdFromParams(params);
     this.chatScope = 'story';
     this.isStoryScope = true;
     this.agentChatDir = `${CHAT_DIR}/${encodeURIComponent(this.agentId)}/${encodeURIComponent(this.chatScope)}`;
-    this.getDayFilePath = dateKey => `${this.agentChatDir}/${dateKey}.json`;
+    this.roleChatDir = `${CHAT_DIR}/${encodeURIComponent(this.agentId)}/role`;
+    this.roleFilesDir = `${this.roleChatDir}/roles`;
+    this.currentRolePath = `${this.roleChatDir}/current_role.json`;
     this.getStoryRawPath = dateKey => getStoryRawPath(this.agentChatDir, dateKey);
     this.getStoryDigestPath = dateKey => getStoryDigestPath(this.agentChatDir, dateKey);
+    this.getStoryCurrentPath = () => getStoryCurrentPath(this.agentChatDir);
+    this.getStoryChoicesPath = () => `${this.agentChatDir}/current_choices.json`;
+    this.getSpaceRoleKey = () => String(this.agentId || 'default').trim() || 'default';
+    this.getRoleDirPath = roleSlug => `${this.roleFilesDir}/${this.getSpaceRoleKey()}`;
+    this.getRoleFilePath = roleSlug => `${this.getRoleDirPath(roleSlug)}/role.json`;
+    this.getConversationSummaryPath = roleSlug => `${this.getRoleDirPath(roleSlug)}/conversation_summary.json`;
+    this.getStoryAlphaPath = () => getAlphaStatePath(this.agentChatDir);
+    this.getStoryAlphaLogDir = () => getAlphaLogDir(this.agentChatDir);
+    this.getStoryCurrentAlphaLogPath = () => getCurrentAlphaLogPath(this.agentChatDir);
+    this.getStoryRunsDir = () => `${this.agentChatDir}/runs`;
+    this.currentRoleContext = null;
+    this.activeRoleLangCode = null;
     this.loadedDateKeys = [];
     this.allDateKeys = [];
     this.persistQueue = Promise.resolve();
     this.digestPersistQueue = Promise.resolve();
+    this._currentStoryPersistQueue = Promise.resolve(null);
+    this._storyChoicePersistQueue = Promise.resolve([]);
+    this._storyChoicePersistCancelled = false;
     this.currentLLMConfig = null;
-    this.getCommandUsageMessage = getCommandUsageMessage;
+    this.llmBuiltinPath = getLlmBuiltinPath(this.agentId);
+    this.llmCustomPath = getLlmCustomPath(this.agentId);
+    this.llmActivePath = getLlmActivePath(this.agentId);
+    this.llmLastUsedPath = getLlmLastUsedPath(this.agentId);
     attachAgentChatLLM(this, {
       loc,
       LLM_DIR,
-      LLM_BUILTIN_PATH,
-      LLM_CUSTOM_PATH,
-      LLM_ACTIVE_PATH,
-      LLM_LAST_USED_PATH,
+      LLM_BUILTIN_PATH: this.llmBuiltinPath,
+      LLM_CUSTOM_PATH: this.llmCustomPath,
+      LLM_ACTIVE_PATH: this.llmActivePath,
+      LLM_LAST_USED_PATH: this.llmLastUsedPath,
       LLM_PROVIDERS,
       DEFAULT_AUTH_HEADER,
       LLM_HISTORY_LIMIT,
@@ -1497,132 +408,307 @@ class AgentChat extends React.Component {
     });
   }
 
-  static navigationOptions = ({ navigation }) => {
-    const params = navigation.state?.params || {};
-    const displayName = params.displayName || 'Agent';
-    const shortCode = params.shortCode ? `@${params.shortCode}` : '';
-    const baseTitle = shortCode ? `${displayName}${shortCode}` : displayName;
-    const title = `${baseTitle} · Story`;
+  hasLegacyLinkStartOnlyStoryState = () => {
+    if (!this.state.currentStoryHasStoryFile || this.state.currentStoryHasChoiceFile) {
+      return false;
+    }
 
+    const messages = Array.isArray(this.state.currentStoryMessages) ? this.state.currentStoryMessages : [];
+    if (!messages.length) {
+      return false;
+    }
+
+    return messages.every(message => {
+      const sender = String(message?.sender || '').toLowerCase();
+      const text = String(message?.text || '').trim();
+      return sender === 'user' && /^\/(?:linkstart|a)\b/i.test(text);
+    });
+  };
+
+  getStoryDockDisplayState = () => {
+    const rawChoices = Array.isArray(this.state.currentStoryChoices) ? this.state.currentStoryChoices : [];
+    const hasChoiceFile = Boolean(this.state.currentStoryHasChoiceFile);
+    const hasStoryFile = Boolean(this.state.currentStoryHasStoryFile);
+
+    if (rawChoices.length > 0 || hasChoiceFile) {
+      return 'choices';
+    }
+    if (hasStoryFile && !this.hasLegacyLinkStartOnlyStoryState()) {
+      return 'awaiting';
+    }
+
+    return 'start';
+  };
+
+  renderHeaderCommsBadge = () => {
+    const dockDisplayState = this.getStoryDockDisplayState();
+    const isWaitingSignal = dockDisplayState === 'awaiting';
+    const textColor = isWaitingSignal ? '#6dff97' : '#7c8598';
+    return (
+      <View style={[styles.headerCenterWrap, styles.headerCenterWrapAbsolute]}>
+        <View
+          style={[
+            styles.headerCommsBadge,
+            isWaitingSignal ? styles.headerCommsBadgeActive : styles.headerCommsBadgeIdle,
+          ]}
+        >
+          <Text style={[styles.headerCenterText, { color: textColor, opacity: 1 }]}>A.G.U Comms</Text>
+        </View>
+      </View>
+    );
+  };
+
+  static navigationOptions = ({ navigation }) => {
     return {
       ...BlueNavigationStyle(),
       title: '',
       headerStyle: {
-        backgroundColor: '#ffffff',
-        borderBottomColor: '#e3e5ea',
+        backgroundColor: '#0a0f18',
+        borderBottomColor: '#1b2336',
+        elevation: 0,
+        shadowColor: 'transparent',
+        borderBottomWidth: 1,
       },
-      headerTintColor: '#000000',
+      headerTintColor: '#9fc2ff',
       headerTitle: () => (
-        <TouchableOpacity
-          accessibilityLabel="Open space"
-          onPress={() => navigation.state?.params?.onTitlePress?.()}
-          style={styles.headerTitleButton}
-        >
-          <Text style={styles.headerTitle}>{title}</Text>
-        </TouchableOpacity>
+        <View style={styles.headerCenterWrap}>
+          <Text style={[styles.headerCenterText, styles.headerCenterTextIdle]}>A.G.U Comms</Text>
+        </View>
       ),
-      headerRight: () => (
-        <TouchableOpacity
-          accessibilityLabel="Open chat settings"
-          style={styles.headerAction}
-          onPress={() => navigation.state?.params?.onOpenSettings?.()}
-        >
-          <Icon name="more-horizontal" type="feather" color="#000000" size={20} />
-        </TouchableOpacity>
-      ),
+      headerRight: () => {
+        const currentAlpha = navigation?.state?.params?.currentAlpha;
+        const hasAlpha = Number.isFinite(Number(currentAlpha));
+        if (!hasAlpha) {
+          return <View style={styles.headerToolbarRightWrap} />;
+        }
+        const alphaValue = Number(currentAlpha);
+        const alphaColor = alphaValue > 0 ? '#d96b8a' : alphaValue < 0 ? '#5f88ff' : '#8c96ab';
+        const alphaBg = alphaValue > 0 ? '#fff1f5' : alphaValue < 0 ? '#eef3ff' : '#f3f6fb';
+        return (
+          <View style={styles.headerToolbarRightWrap}>
+            <View style={[styles.headerToolbarPill, styles.headerToolbarPillIdle, { backgroundColor: alphaBg, borderColor: alphaColor }]}>
+              <Text style={[styles.headerToolbarButtonText, { color: alphaColor }]}>{`α${alphaValue > 0 ? `+${alphaValue}` : alphaValue}`}</Text>
+            </View>
+          </View>
+        );
+      },
     };
   };
 
   componentDidMount() {
     this._isMounted = true;
-    this.props.navigation?.setParams?.({ onTitlePress: this.handleTitlePress });
+    this._currentStoryPersistCancelled = false;
+    this._storyChoicePersistCancelled = false;
+    const paramsDebugPath = `${RNFS.DocumentDirectoryPath}/agent_chats/_params_debug.log`;
+    RNFS.mkdir(`${RNFS.DocumentDirectoryPath}/agent_chats`).catch(() => {});
+    RNFS.appendFile(paramsDebugPath, `${new Date().toISOString()} agentstory componentDidMount params=${JSON.stringify(this.props.navigation?.state?.params || {})}\n`, 'utf8').catch(() => {});
+    this.props.navigation?.setParams?.({ onOpenSettings: this.openStorySettings, currentAlpha: this.state.currentAlpha });
+    this.updateHeaderCommsAnimation(false);
     this.initializeChat();
+    this.loadUserAvatar();
+    this.avatarUnsubscribe = this.props.navigation?.addListener?.('didFocus', () => {
+      this.loadUserAvatar();
+      this.refreshMessagesFromStorage();
+    });
   }
 
-  componentDidUpdate(prevProps) {
+  componentDidUpdate(prevProps, prevState) {
     const prevAutoCommand = prevProps.navigation?.state?.params?.autoCommand;
     const nextAutoCommand = this.props.navigation?.state?.params?.autoCommand;
     if (nextAutoCommand && nextAutoCommand !== prevAutoCommand && nextAutoCommand !== this.lastAutoCommand) {
       this.hasAutoCommandRun = false;
-      this.runAutoCommand().then(() => this.runAutoLinkStart());
+      this.runAutoCommand();
+    }
+    if (prevState?.currentAlpha !== this.state.currentAlpha) {
+      this.props.navigation?.setParams?.({ currentAlpha: this.state.currentAlpha });
     }
   }
 
   componentWillUnmount() {
     this._isMounted = false;
+    // Do not cancel the current-story persist queue on navigation exit.
+    // The Story screen can unmount immediately after an LLM reply is rendered;
+    // cancelling here leaves current_choices.json saved but current_story.json
+    // still containing only runtime metadata, so re-entry shows choices with no messages.
+    this._storyChoicePersistCancelled = true;
+    this._storyChoicePersistQueue = Promise.resolve([]);
+    if (this.headerGlowLoop) {
+      this.headerGlowLoop.stop();
+      this.headerGlowLoop = null;
+    }
+    if (this.panelSignalTimer) {
+      clearInterval(this.panelSignalTimer);
+      this.panelSignalTimer = null;
+    }
+    if (Array.isArray(this.pendingScrollBottomTimeouts)) {
+      this.pendingScrollBottomTimeouts.forEach(timer => clearTimeout(timer));
+      this.pendingScrollBottomTimeouts = [];
+    }
+    if (this.avatarUnsubscribe && typeof this.avatarUnsubscribe.remove === 'function') {
+      this.avatarUnsubscribe.remove();
+    }
   }
 
   initializeChat = async () => {
     await this.ensureDirs();
     await this.restoreStoryLangCode();
-    const history = await this.readHistory();
-    const builtinRead = await this.readJsonFile(LLM_BUILTIN_PATH);
-    if (builtinRead.__missing) {
-      await this.writeBuiltinRegistry({});
-    } else if (builtinRead.__parseError) {
-      this.replyFromAgent(`LLM builtin registry is corrupted. Backup created. Please fix/delete: ${LLM_BUILTIN_PATH}`);
-    }
+    await this.restoreRoleContextFromStorage();
+    await this.loadAgentLocalAvatar();
 
-    const customRead = await this.readJsonFile(LLM_CUSTOM_PATH);
-    if (customRead.__missing) {
-      await this.writeCustomRegistry({});
-    } else if (customRead.__parseError) {
-      this.replyFromAgent(`LLM custom registry is corrupted. Backup created. Please fix/delete: ${LLM_CUSTOM_PATH}`);
-    }
+    const [builtinRead, customRead, activeRead] = await Promise.all([
+      this.readJsonFile(this.llmBuiltinPath),
+      this.readJsonFile(this.llmCustomPath),
+      this.readJsonFile(this.llmActivePath),
+    ]);
 
-    const activeRead = await this.readJsonFile(LLM_ACTIVE_PATH);
+    const migrateFromGlobal = async (scopedRead, isRegistry, globalPath, writeMethod, onParseErrorMsg) => {
+      if (scopedRead.__missing) {
+        const globalRead = await this.readJsonFile(globalPath);
+        if (!globalRead.__missing && !globalRead.__parseError && globalRead.value) {
+          await writeMethod(globalRead.value);
+          return;
+        }
+        if (isRegistry) {
+          await writeMethod({});
+        } else {
+          await writeMethod({ name: '' });
+        }
+        return;
+      }
+      if (scopedRead.__parseError) {
+        this.replyFromAgent(onParseErrorMsg);
+      }
+    };
+
+    await migrateFromGlobal(
+      builtinRead,
+      true,
+      LLM_BUILTIN_PATH,
+      this.writeBuiltinRegistry,
+      this.getStoryMenuText('llmBuiltinCorrupted', { path: LLM_BUILTIN_PATH }),
+    );
+    await migrateFromGlobal(
+      customRead,
+      true,
+      LLM_CUSTOM_PATH,
+      this.writeCustomRegistry,
+      this.getStoryMenuText('llmCustomCorrupted', { path: LLM_CUSTOM_PATH }),
+    );
     if (activeRead.__missing) {
-      await this.writeActiveProvider({ name: '' });
+      const globalActiveRead = await this.readJsonFile(LLM_ACTIVE_PATH);
+      if (!globalActiveRead.__missing && !globalActiveRead.__parseError && globalActiveRead.value) {
+        await this.writeActiveProvider(globalActiveRead.value);
+      } else {
+        await this.writeActiveProvider({ name: '' });
+      }
     } else if (activeRead.__parseError) {
-      this.replyFromAgent(`LLM active state is corrupted. Backup created. Please fix/delete: ${LLM_ACTIVE_PATH}`);
+      this.replyFromAgent(this.getStoryMenuText('llmActiveCorrupted', { path: LLM_ACTIVE_PATH }));
     }
-    const digestHistory = this.isStoryScope ? await this.readDigestHistory() : [];
-    const historyForRender = this.isStoryScope ? this.buildStoryHistoryMessages(history, digestHistory) : history;
+
     const llmConfig = await this.loadLLMConfig();
+    const roleContext = await this.loadCurrentRoleForStory();
+    if (!roleContext) {
+      this.setStoryLinkStatus(this.getStoryMenuText('roleRequired'), this.getStoryMenuText('roleRequiredDetail'));
+    }
+    const alphaState = roleContext ? await this.ensureStoryAlphaState(roleContext) : null;
+    const paramsForStartup = this.props.navigation?.state?.params || {};
+    const shouldClearStoryOnMount = Boolean(paramsForStartup.clearStoryOnMount);
+    if (this.isStoryScope && shouldClearStoryOnMount) {
+      await this.resetStoryStorageAndRestart();
+      const keepAutoCommandAfterClear = String(paramsForStartup.autoCommandSource || '').trim() === 'story-fragment-import';
+      this.props.navigation?.setParams?.({
+        clearStoryOnMount: false,
+        ...(keepAutoCommandAfterClear ? {} : { autoCommand: null }),
+      });
+    } else {
+      await this.persistLastSpaceShortcut('story');
+    }
+    await this.refreshMessagesFromStorage();
+    if (this.isStoryScope && roleContext && alphaState) {
+      const storyFileExists = await RNFS.exists(this.getStoryCurrentPath());
+      await this.updateCurrentStoryRuntime(
+        {
+          roleName: roleContext.roleName || '',
+          roleSlug: roleContext.roleSlug || '',
+          currentAlpha: Number(alphaState.currentAlpha),
+          baseAlpha: Number(alphaState.baseAlpha),
+        },
+        { persist: storyFileExists },
+      );
+    }
     if (!this._isMounted) {
       return;
     }
-    const visibleCount = Math.min(historyForRender.length || INITIAL_VISIBLE_COUNT, INITIAL_VISIBLE_COUNT);
+    const allMessages = this.state.allMessages || [];
+    const visibleCount = Math.min(allMessages.length, PAGE_SIZE);
     this.setState(
       {
-        allMessages: historyForRender,
         visibleCount,
-        messages: historyForRender.slice(-visibleCount),
+        messages: allMessages.slice(-visibleCount),
         llmConfig,
       },
       () => {
         this.currentLLMConfig = llmConfig;
         this.shouldScrollToEnd = true;
-        this.forceScrollToBottomOnce = history.length > 0;
+        this.forceScrollToBottomOnce = allMessages.length > 0;
+        if (allMessages.length > 0) {
+          requestAnimationFrame(() => this.scheduleBottomFollow());
+        }
         this.restoreProviderFromDisk()
           .then(() => this.runAutoCommand())
-          .then(() => this.runAutoLinkStart());
+          .then(() => this.hydrateStoryUiFromStorage());
       },
     );
   };
 
-  restoreStoryLangCode = async () => {
-    if (!this.isStoryScope) {
-      return;
+  refreshMessagesFromStorage = async () => {
+    const [history, currentStoryMessages] = await Promise.all([this.readHistory(), this.loadCurrentStory()]);
+    const digestHistory = await this.readDigestHistory();
+    const historyForRender = this.buildStoryHistoryMessages(history, digestHistory);
+    const allMessages = this.buildStoryDisplayMessages(historyForRender, currentStoryMessages);
+    const visibleCount = Math.min(allMessages.length, PAGE_SIZE);
+    const mergedCurrentStory = this.mergeMessagesById(currentStoryMessages);
+    const storedChoices = await this.readCurrentChoicesFile();
+    const currentStoryChoices = this.applyStoryChoiceUiState(storedChoices, Array.isArray(storedChoices) && storedChoices.length > 0);
+    const nextState = {
+      allMessages,
+      visibleCount,
+      currentStoryMessages: mergedCurrentStory,
+      currentStoryChoices,
+      messages: allMessages.slice(-visibleCount),
+    };
+    if (!this._isMounted) {
+      return nextState;
     }
+    await new Promise(resolve => this.setState(nextState, resolve));
+    if (this.isStoryScope && allMessages.length > 0 && !this.didInitialScroll) {
+      this.forceScrollToBottomOnce = true;
+      requestAnimationFrame(() => this.scheduleBottomFollow());
+    }
+    await this.maybeAutoAdvanceStoryOnEmptyChoices(mergedCurrentStory);
+    return nextState;
+  };
+
+  restoreStoryLangCode = async () => {
     try {
       const savedCode = await AsyncStorage.getItem(STORY_LANG_CODE_STORAGE_KEY);
       if (!savedCode) {
+        this.setState({ storyLangCode: 'en' });
         return;
       }
       const normalized = normalizeStoryLangCode(savedCode);
       if (normalized) {
         this.setState({ storyLangCode: normalized });
+        return;
       }
+      this.setState({ storyLangCode: 'en' });
     } catch (error) {
       console.warn('Failed to restore story language', error);
+      this.setState({ storyLangCode: 'en' });
     }
   };
 
   persistStoryLangCode = async code => {
-    if (!this.isStoryScope) {
-      return;
-    }
     try {
       const normalized = normalizeStoryLangCode(code);
       await AsyncStorage.setItem(STORY_LANG_CODE_STORAGE_KEY, normalized);
@@ -1638,6 +724,92 @@ class AgentChat extends React.Component {
     return normalized;
   };
 
+  getActiveRoleLanguageCode = () => {
+    const roleCode = this.activeRoleLangCode || this.currentRoleContext?.roleLangCode;
+    const normalized = normalizeStoryLangCode(roleCode);
+    return normalized || null;
+  };
+
+  restoreRoleContextFromStorage = async () => {
+    const context = await this.loadCurrentRoleContext();
+    this.currentRoleContext = context || null;
+    this.activeRoleLangCode = context?.roleLangCode || null;
+    return context;
+  };
+
+  loadCurrentRoleContext = async () => {
+    try {
+      const currentRoleRaw = await this.readJsonFile(this.currentRolePath);
+      if (currentRoleRaw.__parseError || currentRoleRaw.__missing || !currentRoleRaw.value || typeof currentRoleRaw.value !== 'object') {
+        return null;
+      }
+      const currentRoleData = currentRoleRaw.value || {};
+      const roleSlug = String(
+        currentRoleData.roleSlug || currentRoleData.slug || currentRoleData.role_name || this.getSpaceRoleKey(),
+      ).trim();
+      if (!roleSlug) {
+        return null;
+      }
+      const rolePath = this.getRoleFilePath(roleSlug);
+      const roleRead = await this.readJsonFile(rolePath);
+      if (roleRead.__parseError || roleRead.__missing || !roleRead.value) {
+        return null;
+      }
+      const roleData = roleRead.value;
+      const roleMemoryCard = String(roleData?.memory || roleData?.memoryText || roleData?.memory_card || '').trim();
+      const savedRoleLang = await AsyncStorage.getItem(getRoleLangStorageKey(this.agentId));
+      const roleLang = normalizeStoryLangCode(savedRoleLang);
+      const resolvedRoleLang = roleLang || (typeof currentRoleData?.roleLangCode === 'string' && currentRoleData.roleLangCode ? normalizeStoryLangCode(currentRoleData.roleLangCode) : null);
+      const summary = await this.readRoleConversationSummary(roleSlug);
+      return {
+        roleSlug,
+        roleName: String(roleData?.roleName || roleSlug).trim() || roleSlug,
+        roleMemoryCard,
+        roleLangCode: resolvedRoleLang,
+        conversationSummary: summary,
+      };
+    } catch (error) {
+      console.warn('Failed to load current role context for story', error);
+      return null;
+    }
+  };
+
+  readRoleConversationSummary = async roleSlug => {
+    try {
+      const safeRoleSlug = String(roleSlug || '').trim() || this.getSpaceRoleKey();
+      const path = this.getConversationSummaryPath(safeRoleSlug);
+      const read = await this.readJsonFile(path);
+      if (read.__parseError || read.__missing || !read.value) {
+        return null;
+      }
+      return read.value;
+    } catch (error) {
+      console.warn('Failed to read role conversation summary for story', { roleSlug, error });
+      return null;
+    }
+  };
+
+  buildRoleContextSystemPrompt = async ({ options = {} } = {}) => {
+    const context = this.currentRoleContext || (await this.loadCurrentRoleContext());
+    if (!context) {
+      return '';
+    }
+    const roleName = String(context.roleName || '').trim() || context.roleSlug || 'unknown';
+    const alphaState = await this.ensureStoryAlphaState(context);
+    const promptAlpha = this.normalizeStoryAlphaValue(alphaState?.currentAlpha);
+    const rolePrompt = buildRoleplayPrompt({
+      roleText: roleName,
+      agentId: this.agentId,
+      roleMemoryCard: context.roleMemoryCard,
+      options: {
+        memoryMode: options?.memoryMode || 'new',
+        alphaOverride: promptAlpha,
+      },
+      normalizeAlphaOverride: this.normalizeStoryAlphaValue,
+    });
+    return promptAlpha === null ? rolePrompt : `${rolePrompt}\n\n${buildAlphaPromptBlock(promptAlpha)}`;
+  };
+
   ensureDirs = async () => {
     const ensure = async p => {
       const ok = await RNFS.exists(p);
@@ -1647,18 +819,1210 @@ class AgentChat extends React.Component {
       await ensure(CHAT_DIR);
       await ensure(`${CHAT_DIR}/${encodeURIComponent(this.agentId)}`);
       await ensure(this.agentChatDir);
-      if (this.isStoryScope) {
-        await ensureStoryDirs(this.agentChatDir);
-      }
+      await ensureStoryDirs(this.agentChatDir);
+      await ensure(this.roleChatDir);
+      await ensure(this.roleFilesDir);
+      await ensureAlphaDirs(this.agentChatDir);
+      await ensure(this.getStoryRunsDir());
       await ensure(LLM_DIR);
     } catch (error) {
       console.warn('Failed to prepare chat storage', error);
     }
   };
 
+  getStorySessionId = () => `story-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  isStoryPersistenceUnlocked = () => Boolean(this._storyPersistenceUnlocked);
+
+  setStoryPersistenceUnlocked = unlocked => {
+    this._storyPersistenceUnlocked = Boolean(unlocked);
+  };
+
+  createEmptyCurrentStoryState = (storySessionId = null) => ({
+    version: 2,
+    agentId: this.agentId || 'unknown',
+    storyMode: 'story',
+    storySessionId: String(storySessionId || this.getStorySessionId()),
+    storyId: String(storySessionId || this.getStorySessionId()),
+    status: 'idle',
+    phase: 'boot',
+    entryMode: 'new',
+    roleName: '',
+    roleSlug: '',
+    lastChoiceSet: [],
+    awaitingChoice: false,
+    shouldResumeGeneration: false,
+    lastSubmittedChoiceAt: 0,
+    lastSubmittedChoiceUserMessageId: '',
+    startBlockHeight: null,
+    lastBlockHeight: null,
+    currentAlpha: null,
+    baseAlpha: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    messages: [],
+  });
+
+  normalizeCurrentStoryMessage = message => {
+    if (!message || typeof message !== 'object') return null;
+    if (!message?.id) return null;
+
+    const sender = message.sender || 'user';
+    const normalized = {
+      ...message,
+      sender,
+      timestamp: Number.isFinite(Number(message.timestamp)) ? Number(message.timestamp) : Date.now(),
+      text: String(message.text || ''),
+      _isHistory: false,
+      source: 'current_story',
+    };
+    return normalized;
+  };
+
+  sortMessagesByTime = messages =>
+    [...messages].sort((a, b) => {
+      const ta = Number.isFinite(Number(a?.timestamp)) ? Number(a.timestamp) : 0;
+      const tb = Number.isFinite(Number(b?.timestamp)) ? Number(b.timestamp) : 0;
+      if (ta !== tb) {
+        return ta - tb;
+      }
+      return String(a?.id || '').localeCompare(String(b?.id || ''));
+    });
+
+  mergeMessagesById = messages => {
+    const map = new Map();
+    const normalized = this.sortMessagesByTime(Array.isArray(messages) ? messages : []);
+    normalized.forEach(message => {
+      const key = message?.id;
+      if (!key) {
+        map.set(`__missing__${map.size}`, message);
+        return;
+      }
+      map.set(key, message);
+    });
+    return this.sortMessagesByTime(Array.from(map.values()));
+  };
+
+  normalizeCurrentStoryState = state => {
+    const sessionId = String(state?.storySessionId || this.getStorySessionId());
+    const messages = this.mergeMessagesById(
+      (Array.isArray(state?.messages) ? state.messages : []).map(message => this.normalizeCurrentStoryMessage(message)).filter(Boolean),
+    );
+    const currentAlpha = state?.currentAlpha;
+    const baseAlpha = state?.baseAlpha;
+    return {
+      version: 2,
+      agentId: this.agentId || 'unknown',
+      storyMode: 'story',
+      storySessionId: sessionId,
+      storyId: String(state?.storyId || sessionId),
+      status: String(state?.status || 'idle'),
+      phase: String(state?.phase || 'boot'),
+      entryMode: String(state?.entryMode || 'new'),
+      roleName: String(state?.roleName || ''),
+      roleSlug: String(state?.roleSlug || ''),
+      lastChoiceSet: Array.isArray(state?.lastChoiceSet) ? state.lastChoiceSet : [],
+      awaitingChoice: Boolean(state?.awaitingChoice),
+      shouldResumeGeneration: Boolean(state?.shouldResumeGeneration),
+      lastSubmittedChoiceAt: Number.isFinite(Number(state?.lastSubmittedChoiceAt)) ? Number(state.lastSubmittedChoiceAt) : 0,
+      lastSubmittedChoiceUserMessageId: String(state?.lastSubmittedChoiceUserMessageId || ''),
+      startBlockHeight: Number.isFinite(Number(state?.startBlockHeight)) ? Number(state.startBlockHeight) : null,
+      lastBlockHeight: Number.isFinite(Number(state?.lastBlockHeight)) ? Number(state.lastBlockHeight) : null,
+      currentAlpha: Number.isFinite(Number(currentAlpha)) ? Number(currentAlpha) : null,
+      baseAlpha: Number.isFinite(Number(baseAlpha)) ? Number(baseAlpha) : null,
+      lastAutoFallbackReplyId: String(state?.lastAutoFallbackReplyId || ''),
+      createdAt: Number.isFinite(Number(state?.createdAt)) ? Number(state.createdAt) : Date.now(),
+      updatedAt: Date.now(),
+      messages,
+    };
+  };
+
+  readStoryJsonFile = async path => {
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) return null;
+      const raw = await RNFS.readFile(path, 'utf8');
+      return JSON.parse(raw);
+    } catch (error) {
+      console.warn('Failed to read story json', path, error);
+      return null;
+    }
+  };
+
+  writeStoryJsonFile = async (path, value) => {
+    try {
+      await RNFS.writeFile(path, JSON.stringify(value), 'utf8');
+      return true;
+    } catch (error) {
+      console.warn('Failed to write story json', path, error);
+      return false;
+    }
+  };
+
+  readCurrentChoicesFile = async () => {
+    const path = this.getStoryChoicesPath();
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) {
+        return null;
+      }
+      const raw = await RNFS.readFile(path, 'utf8');
+      const json = JSON.parse(raw);
+      return Array.isArray(json?.choices) ? json.choices : Array.isArray(json) ? json : [];
+    } catch (error) {
+      console.warn('Failed to read current story choices', error);
+      return null;
+    }
+  };
+
+  applyStoryChoiceUiState = (choices, awaitingChoice = null) => {
+    const normalizedChoices = Array.isArray(choices) ? choices.filter(Boolean) : [];
+    const hasChoices = normalizedChoices.length > 0;
+    const effectiveAwaiting = awaitingChoice == null ? hasChoices : Boolean(awaitingChoice);
+
+    if (this._isMounted) {
+      this.setState({
+        currentStoryHasChoiceFile: hasChoices,
+        currentStoryChoices: normalizedChoices,
+        currentStoryLastChoiceSet: normalizedChoices,
+        currentStoryAwaitingChoice: effectiveAwaiting,
+      });
+    }
+
+    return normalizedChoices;
+  };
+
+  persistCurrentChoicesFileOnly = async choices => {
+    const normalizedChoices = Array.isArray(choices) ? choices.filter(Boolean) : [];
+    if (this._storyChoicePersistCancelled) {
+      return normalizedChoices;
+    }
+    const path = this.getStoryChoicesPath();
+    const exists = await RNFS.exists(path);
+
+    if (this._storyChoicePersistCancelled) {
+      return normalizedChoices;
+    }
+
+    if (!normalizedChoices.length) {
+      if (exists) {
+        await RNFS.unlink(path).catch(() => {});
+      }
+      return [];
+    }
+
+    if (!exists && !this.isStoryPersistenceUnlocked()) {
+      return [];
+    }
+
+    const tempPath = `${path}.tmp`;
+    await RNFS.unlink(tempPath).catch(() => {});
+    await RNFS.writeFile(tempPath, JSON.stringify({ choices: normalizedChoices, updatedAt: Date.now() }), 'utf8');
+    if (exists) {
+      await RNFS.unlink(path).catch(() => {});
+    }
+    await RNFS.moveFile(tempPath, path);
+    return normalizedChoices;
+  };
+
+  scheduleCurrentChoicesPersist = choices => {
+    const normalizedChoices = Array.isArray(choices) ? choices.filter(Boolean) : [];
+    const baseQueue =
+      this._storyChoicePersistQueue && typeof this._storyChoicePersistQueue.then === 'function'
+        ? this._storyChoicePersistQueue
+        : Promise.resolve([]);
+
+    this._storyChoicePersistQueue = baseQueue
+      .catch(() => [])
+      .then(() => {
+        if (this._storyChoicePersistCancelled) {
+          return normalizedChoices;
+        }
+        return this.persistCurrentChoicesFileOnly(normalizedChoices);
+      })
+      .catch(error => {
+        console.warn('Failed to persist current story choices', error);
+        return normalizedChoices;
+      });
+
+    return this._storyChoicePersistQueue;
+  };
+
+  writeCurrentChoicesFile = async choices => {
+    const normalizedChoices = this.applyStoryChoiceUiState(choices, (Array.isArray(choices) ? choices : []).length > 0);
+    await this.scheduleCurrentChoicesPersist(normalizedChoices);
+    return normalizedChoices;
+  };
+
+  clearCurrentChoicesFile = async () => {
+    this.applyStoryChoiceUiState([], false);
+    await this.scheduleCurrentChoicesPersist([]);
+  };
+
+  loadCurrentRoleForStory = async () => {
+    const ctx = await this.loadCurrentRoleContext();
+    this.currentRoleContext = ctx || null;
+    this.activeRoleLangCode = ctx?.roleLangCode || null;
+    return ctx || null;
+  };
+
+  normalizeStoryAlphaValue = value => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      return null;
+    }
+    if (n > 99) {
+      return 99;
+    }
+    if (n < -99) {
+      return -99;
+    }
+    return Math.round(n);
+  };
+
+  buildRoleAlphaSeedData = roleContext => {
+    const roleSlug = String(roleContext?.roleSlug || '').trim();
+    const roleName = String(roleContext?.roleName || '').trim();
+    const roleKey = [this.agentId || 'default', roleSlug || roleName || 'unknown-role'].join(':role:');
+    return buildSeedData(roleKey);
+  };
+
+  applyStoryAlphaState = async (alphaState, options = {}) => {
+    const currentAlpha = this.normalizeStoryAlphaValue(alphaState?.currentAlpha);
+    if (currentAlpha === null) {
+      return null;
+    }
+    const baseAlpha = this.normalizeStoryAlphaValue(alphaState?.baseAlpha);
+    const normalized = {
+      ...(alphaState || {}),
+      agentId: String(alphaState?.agentId || this.agentId || 'unknown'),
+      roleSlug: String(alphaState?.roleSlug || this.currentRoleContext?.roleSlug || this.state.currentStoryRoleSlug || ''),
+      roleName: String(alphaState?.roleName || this.currentRoleContext?.roleName || this.state.currentStoryRoleName || ''),
+      baseAlpha: baseAlpha === null ? currentAlpha : baseAlpha,
+      currentAlpha,
+      updatedAt: Number.isFinite(Number(alphaState?.updatedAt)) ? Number(alphaState.updatedAt) : Date.now(),
+      algorithmVersion: String(alphaState?.algorithmVersion || 'v2'),
+    };
+
+    if (this._isMounted && options?.setState !== false) {
+      await new Promise(resolve =>
+        this.setState(
+          {
+            currentAlpha: normalized.currentAlpha,
+            baseAlpha: normalized.baseAlpha,
+          },
+          resolve,
+        ),
+      );
+      this.props.navigation?.setParams?.({ currentAlpha: normalized.currentAlpha });
+    }
+
+    if (options?.updateRuntime === true) {
+      await this.updateCurrentStoryRuntime(
+        {
+          currentAlpha: normalized.currentAlpha,
+          baseAlpha: normalized.baseAlpha,
+          roleSlug: normalized.roleSlug || this.state.currentStoryRoleSlug || '',
+          roleName: normalized.roleName || this.state.currentStoryRoleName || '',
+        },
+        {
+          persist: options?.persistRuntime === true,
+          allowCreate: options?.allowCreate === true,
+        },
+      );
+    }
+
+    return normalized;
+  };
+
+  ensureStoryAlphaState = async (roleContext, options = {}) => {
+    if (!roleContext) {
+      return null;
+    }
+    const normalizedRoleContext = {
+      roleSlug: String(roleContext?.roleSlug || '').trim(),
+      roleName: String(roleContext?.roleName || '').trim(),
+    };
+    const alphaState = await ensureAlphaState({
+      storyScopeDir: this.agentChatDir,
+      agentId: this.agentId,
+      roleSlug: normalizedRoleContext.roleSlug,
+      roleName: normalizedRoleContext.roleName,
+      buildSeedData: () => this.buildRoleAlphaSeedData(normalizedRoleContext),
+    });
+    if (options?.applyState === false) {
+      return alphaState;
+    }
+    return this.applyStoryAlphaState(alphaState, options);
+  };
+
+  getStoryPromptAlphaState = async (roleContext = null, options = {}) => {
+    const context = roleContext || this.currentRoleContext || (await this.loadCurrentRoleForStory());
+    if (!context) {
+      return null;
+    }
+    const shouldPersistRuntime =
+      options?.persistRuntime === true ||
+      (options?.persistRuntime !== false && (await RNFS.exists(this.getStoryCurrentPath()).catch(() => false)));
+    return this.ensureStoryAlphaState(context, {
+      updateRuntime: options?.updateRuntime === true,
+      persistRuntime: shouldPersistRuntime,
+    });
+  };
+
+  applyAlphaDeltaForChoice = async ({ visibleText, sendText, submittedAt }) => {
+    const roleContext = this.currentRoleContext || (await this.loadCurrentRoleForStory());
+    const alphaState = roleContext ? await this.ensureStoryAlphaState(roleContext) : null;
+    const currentAlpha = this.normalizeStoryAlphaValue(alphaState?.currentAlpha ?? this.state.currentAlpha) ?? 0;
+    const baseAlpha = this.normalizeStoryAlphaValue(alphaState?.baseAlpha ?? this.state.baseAlpha) ?? currentAlpha;
+    const latestAgentMessage = this.getCurrentStoryMessagesForDisplay()
+      .filter(item => item?.sender === 'agent')
+      .slice(-1)[0];
+    const analysis = analyzeAlphaDelta({
+      choiceText: visibleText,
+      choiceSend: sendText,
+      recentStoryText: String(latestAgentMessage?.text || ''),
+      currentAlpha,
+    });
+    const entry = {
+      ts: Number.isFinite(Number(submittedAt)) ? Number(submittedAt) : Date.now(),
+      choice: String(visibleText || ''),
+      choiceSend: String(sendText || ''),
+      delta: analysis.delta,
+      alphaBefore: analysis.alphaBefore,
+      alphaAfter: analysis.alphaAfter,
+      reason: analysis.reason,
+    };
+    const nextAlphaState = {
+      ...(alphaState || {}),
+      agentId: String(this.agentId || 'unknown'),
+      roleSlug: String(roleContext?.roleSlug || this.state.currentStoryRoleSlug || this.currentRoleContext?.roleSlug || ''),
+      roleName: String(roleContext?.roleName || this.state.currentStoryRoleName || this.currentRoleContext?.roleName || ''),
+      baseAlpha,
+      currentAlpha: analysis.alphaAfter,
+      updatedAt: Date.now(),
+      algorithmVersion: 'v2',
+    };
+
+    await writeAlphaStateFile(this.getStoryAlphaPath(), nextAlphaState);
+    await this.appendAlphaLogEntry(entry);
+    await this.applyStoryAlphaState(nextAlphaState, { updateRuntime: true, persistRuntime: true });
+    return { state: nextAlphaState, entry };
+  };
+
+  appendAlphaLogEntry = async entry =>
+    appendStoryAlphaLogEntry(this.agentChatDir, entry, this.state.currentStorySessionId || this.getStorySessionId());
+
+  readCurrentAlphaLog = async () =>
+    readStoryCurrentAlphaLog(this.agentChatDir, this.state.currentStorySessionId || this.getStorySessionId());
+
+  clearCurrentAlphaLog = async () => clearStoryCurrentAlphaLog(this.agentChatDir);
+
+  buildStoryRunSummary = async endType => {
+    const storyState = this._currentStorySnapshot || (await this.readCurrentStoryFile());
+    const alphaLog = await this.readCurrentAlphaLog();
+    const persistedMessages = this.getCurrentStoryMessagesForDisplay();
+    const keyEvents = persistedMessages
+      .filter(item => item?.sender === 'agent')
+      .map(item => String(item?.text || '').trim())
+      .filter(Boolean)
+      .slice(-4);
+    const summary = keyEvents[0] || this.getStoryMenuText('archiveFallbackSummary');
+    return {
+      storyId: String(storyState.storyId || storyState.storySessionId || this.getStorySessionId()),
+      roleName: String(storyState.roleName || this.state.currentStoryRoleName || ''),
+      roleSlug: String(storyState.roleSlug || this.state.currentStoryRoleSlug || ''),
+      startedAt: Number(storyState.createdAt || Date.now()),
+      endedAt: Date.now(),
+      endType: String(endType || 'completed'),
+      baseAlpha: Number.isFinite(Number(storyState.baseAlpha)) ? Number(storyState.baseAlpha) : null,
+      endAlpha: Number.isFinite(Number(storyState.currentAlpha)) ? Number(storyState.currentAlpha) : null,
+      alphaDelta:
+        Number.isFinite(Number(storyState.currentAlpha)) && Number.isFinite(Number(storyState.baseAlpha))
+          ? Number(storyState.currentAlpha) - Number(storyState.baseAlpha)
+          : null,
+      summary,
+      keyEvents,
+      alphaLog: Array.isArray(alphaLog.entries) ? alphaLog.entries : [],
+    };
+  };
+
+  archiveCompletedStoryRun = async endType => {
+    const summary = await this.buildStoryRunSummary(endType);
+    await this.writeStoryJsonFile(`${this.getStoryRunsDir()}/${summary.storyId}.json`, summary);
+    await this.clearCurrentAlphaLog();
+    await this.clearCurrentChoicesFile();
+    await this.clearCurrentStoryFile();
+    this._currentStorySnapshot = this.createEmptyCurrentStoryState(this.getStorySessionId());
+    if (this._isMounted) {
+      this.setState({
+        currentStoryMessages: [],
+        currentStoryChoices: [],
+        currentStoryLastChoiceSet: [],
+        currentStoryStatus: 'completed',
+        currentStoryPhase: 'completed',
+      });
+    }
+    return summary;
+  };
+
+  maybeFinalizeStoryRunFromText = async text => {
+    const normalized = String(text || '').toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    const hasExplicitRunEndMarker = /(^|\n)\s*(alpha_end|run summary|video_recap|run log)\b/.test(normalized);
+    const asksNextLoop = /do you want to continue to the next loop/.test(normalized);
+    const hasStandaloneYesNoPrompt = /(^|\n)\s*(?:\[y\/n\]|y\/n|yes or no)\s*$/m.test(normalized);
+    const isRunEnded = hasExplicitRunEndMarker || (asksNextLoop && hasStandaloneYesNoPrompt);
+    if (!isRunEnded) {
+      return false;
+    }
+
+    const endingChoices = [
+      { key: 'ending-summary', send: 'SUMMARY', label: 'Summary' },
+      { key: 'ending-recap', send: 'RECAP', label: 'Recap' },
+      { key: 'ending-continue', send: 'CONTINUE', label: 'Continue' },
+      { key: 'ending-restart', send: 'RESTART', label: this.getStoryMenuText('restartConnection') },
+    ];
+
+    try {
+      await this.writeCurrentChoicesFile(endingChoices);
+      await this.updateCurrentStoryRuntime({
+        status: 'waiting_user',
+        phase: 'ended',
+        lastChoiceSet: endingChoices,
+        awaitingChoice: true,
+        shouldResumeGeneration: false,
+      });
+      if (this._isMounted) {
+        this.setState({
+          currentStoryChoices: endingChoices,
+          currentStoryLastChoiceSet: endingChoices,
+          currentStoryAwaitingChoice: true,
+        });
+      }
+      this.setStoryLinkStatus(this.getStoryMenuText('linkActive'));
+      return true;
+    } catch (error) {
+      console.warn('Failed to enter story ending menu', error);
+      return false;
+    }
+  };
+
+  updateCurrentStoryRuntime = async (patch, options = {}) => {
+    const previousSnapshot = this._currentStorySnapshot || this.createEmptyCurrentStoryState();
+    const patchHasMessages = Object.prototype.hasOwnProperty.call(patch || {}, 'messages');
+    const stateMessages = this.getCurrentStoryMessagesForDisplay();
+    const renderedStoryMessages = Array.isArray(this.state?.allMessages)
+      ? this.state.allMessages.filter(
+          message =>
+            message?.sender &&
+            !message?._isHistory &&
+            !message?._localOnly &&
+            message?._renderMode !== 'commands' &&
+            message?.sender !== 'system',
+        )
+      : [];
+    const fallbackMessages = this.mergeMessagesById([
+      ...(Array.isArray(previousSnapshot.messages) ? previousSnapshot.messages : []),
+      ...(Array.isArray(stateMessages) ? stateMessages : []),
+      ...renderedStoryMessages,
+    ]);
+    const snapshot = this.normalizeCurrentStoryState({
+      ...previousSnapshot,
+      ...(patch || {}),
+      messages: patchHasMessages ? patch.messages : fallbackMessages,
+    });
+    const shouldPersist = options?.persist !== false;
+    this._currentStorySnapshot = snapshot;
+    if (shouldPersist) {
+      await this.writeCurrentStoryFile(snapshot, { allowCreate: options?.allowCreate === true });
+    }
+    if (this._isMounted) {
+      this.setState({
+        currentStorySessionId: snapshot.storySessionId,
+        currentStoryStatus: snapshot.status,
+        currentStoryPhase: snapshot.phase,
+        currentStoryRoleName: snapshot.roleName,
+        currentStoryRoleSlug: snapshot.roleSlug,
+        currentStoryEntryMode: snapshot.entryMode,
+        currentStoryLastChoiceSet: snapshot.lastChoiceSet,
+        currentStoryAwaitingChoice: Boolean(snapshot.awaitingChoice),
+        currentStoryShouldResumeGeneration: Boolean(snapshot.shouldResumeGeneration),
+        lastSubmittedChoiceAt: Number(snapshot.lastSubmittedChoiceAt || 0),
+        currentAlpha: snapshot.currentAlpha,
+        baseAlpha: snapshot.baseAlpha,
+      });
+    }
+    return snapshot;
+  };
+
+  readCurrentStoryFile = async () => {
+    const path = this.getStoryCurrentPath();
+    try {
+      const exists = await RNFS.exists(path);
+      if (this._isMounted) {
+        this.setState({ currentStoryHasStoryFile: exists });
+      }
+      if (!exists) {
+        return this.createEmptyCurrentStoryState();
+      }
+      const raw = await RNFS.readFile(path, 'utf8');
+      const json = JSON.parse(raw);
+      if (!json || typeof json !== 'object') {
+        return this.createEmptyCurrentStoryState();
+      }
+      const normalized = this.normalizeCurrentStoryState(json);
+      return {
+        ...normalized,
+        storySessionId: String(json.storySessionId || normalized.storySessionId),
+        createdAt: Number.isFinite(Number(json.createdAt)) ? Number(json.createdAt) : normalized.createdAt,
+      };
+    } catch (error) {
+      console.warn('Failed to read current story', error);
+      return this.createEmptyCurrentStoryState();
+    }
+  };
+
+  writeCurrentStoryFile = async (state, options = {}) => {
+    const normalized = this.normalizeCurrentStoryState(state || {});
+    const allowCreate = options?.allowCreate === true;
+    const path = this.getStoryCurrentPath();
+    const baseQueue =
+      this._currentStoryPersistQueue && typeof this._currentStoryPersistQueue.then === 'function'
+        ? this._currentStoryPersistQueue
+        : Promise.resolve(null);
+
+    this._currentStoryPersistQueue = baseQueue
+      .catch(() => null)
+      .then(async () => {
+        const exists = await RNFS.exists(path);
+        const canCreate = allowCreate && this.isStoryPersistenceUnlocked();
+        if (!exists && !canCreate) {
+          if (this._isMounted) {
+            this.setState({ currentStoryHasStoryFile: false });
+          }
+          return normalized;
+        }
+
+        let nextState = normalized;
+        if (!exists) {
+          const roleName = String(normalized?.roleName || this.currentRoleContext?.roleName || this.state.currentStoryRoleName || '').trim();
+          const roleSlug = String(normalized?.roleSlug || this.currentRoleContext?.roleSlug || this.state.currentStoryRoleSlug || '').trim();
+          const freshBlockHeight = await this.getFreshOrCachedBlockHeight();
+          nextState = this.normalizeCurrentStoryState({
+            ...normalized,
+            roleName,
+            roleSlug,
+            startBlockHeight: Number.isFinite(Number(normalized?.startBlockHeight)) ? Number(normalized.startBlockHeight) : (Number.isFinite(Number(freshBlockHeight)) && freshBlockHeight > 0 ? Number(freshBlockHeight) : null),
+            lastBlockHeight: Number.isFinite(Number(freshBlockHeight)) && freshBlockHeight > 0 ? Number(freshBlockHeight) : normalized?.lastBlockHeight,
+          });
+        }
+
+        const tempPath = `${path}.tmp`;
+        const payload = JSON.stringify(nextState);
+        await RNFS.unlink(tempPath).catch(() => {});
+        await RNFS.writeFile(tempPath, payload, 'utf8');
+        if (exists) {
+          await RNFS.unlink(path).catch(() => {});
+        }
+        await RNFS.moveFile(tempPath, path);
+        if (this._isMounted) {
+          this.setState({ currentStoryHasStoryFile: true });
+        }
+        return nextState;
+      })
+      .catch(async error => {
+        console.warn('Failed to write current story', error);
+        await RNFS.unlink(`${path}.tmp`).catch(() => {});
+        return normalized;
+      });
+
+    return this._currentStoryPersistQueue;
+  };
+
+  clearCurrentStoryFile = async () => {
+    const path = this.getStoryCurrentPath();
+    try {
+      const exists = await RNFS.exists(path);
+      if (exists) {
+        await RNFS.unlink(path);
+      }
+      if (this._isMounted) {
+        this.setState({ currentStoryHasStoryFile: false });
+      }
+    } catch (error) {
+      console.warn('Failed to clear current story', error);
+    }
+  };
+
+  persistCurrentStoryMessages = async messages => {
+    const explicitMessages = Array.isArray(messages) ? messages : [];
+    const renderedStoryMessages = Array.isArray(this.state?.allMessages)
+      ? this.state.allMessages.filter(
+          message =>
+            message?.sender &&
+            !message?._isHistory &&
+            !message?._localOnly &&
+            message?._renderMode !== 'commands' &&
+            message?.sender !== 'system',
+        )
+      : [];
+    const sanitized = this.mergeMessagesById(
+      [...explicitMessages, ...renderedStoryMessages]
+        .filter(message => !this.isSyntheticStoryFallbackChoice(message) && !message?._recordExcluded)
+        .map(this.normalizeCurrentStoryMessage)
+        .filter(Boolean),
+    );
+    const snapshot = this.normalizeCurrentStoryState({
+      ...(this._currentStorySnapshot || {}),
+      storySessionId: this.state.currentStorySessionId || this.getStorySessionId(),
+      messages: sanitized,
+      createdAt: this._currentStorySnapshot?.createdAt,
+    });
+    this._currentStorySnapshot = snapshot;
+    const written = await this.writeCurrentStoryFile(snapshot, { allowCreate: this.isStoryPersistenceUnlocked() });
+    if (this._isMounted) {
+      this.setState({
+        currentStorySessionId: written.storySessionId,
+        currentStoryMessages: written.messages,
+      });
+    }
+    return written;
+  };
+
+  loadCurrentStory = async () => {
+    const hasStoryFile = await RNFS.exists(this.getStoryCurrentPath()).catch(() => false);
+    const storyState = await this.readCurrentStoryFile();
+    const messages = this.mergeMessagesById((storyState.messages || []).map(this.normalizeCurrentStoryMessage).filter(Boolean));
+    const storedChoices = await this.readCurrentChoicesFile();
+    const safeChoices = Array.isArray(storedChoices)
+      ? storedChoices
+      : Array.isArray(storyState?.lastChoiceSet)
+      ? storyState.lastChoiceSet
+      : [];
+    this._currentStorySnapshot = this.normalizeCurrentStoryState({ ...storyState, messages, lastChoiceSet: safeChoices });
+    this.setStoryPersistenceUnlocked(hasStoryFile);
+    if (!Array.isArray(storedChoices) && safeChoices.length > 0) {
+      this.scheduleCurrentChoicesPersist(safeChoices);
+    }
+    const recoveredChoices = safeChoices.length > 0 ? safeChoices : this.getStalePendingStoryChoices(messages);
+    const didRecoverStalePending = recoveredChoices.length > 0 && safeChoices.length === 0;
+    if (didRecoverStalePending) {
+      this._pendingChoiceSubmissionAt = 0;
+      this._pendingChoiceUserMessageId = null;
+      this._currentStorySnapshot = this.normalizeCurrentStoryState({
+        ...this._currentStorySnapshot,
+        lastChoiceSet: recoveredChoices,
+        awaitingChoice: true,
+        shouldResumeGeneration: false,
+        status: 'waiting_user',
+        phase: 'exploring',
+        lastSubmittedChoiceAt: 0,
+        lastSubmittedChoiceUserMessageId: '',
+      });
+      this.scheduleCurrentChoicesPersist(recoveredChoices);
+      this.updateCurrentStoryRuntime({
+        lastChoiceSet: recoveredChoices,
+        awaitingChoice: true,
+        shouldResumeGeneration: false,
+        status: 'waiting_user',
+        phase: 'exploring',
+        lastSubmittedChoiceAt: 0,
+        lastSubmittedChoiceUserMessageId: '',
+        messages,
+      }).catch(error => console.warn('Failed to persist recovered story choices', error));
+    }
+    const effectiveChoices = recoveredChoices.length > 0 ? recoveredChoices : safeChoices;
+    if (this._isMounted) {
+      this.setState({
+        currentStorySessionId: storyState.storySessionId || this._currentStorySnapshot.storySessionId,
+        currentStoryMessages: messages,
+        currentStoryChoices: effectiveChoices,
+        currentStoryHasChoiceFile: effectiveChoices.length > 0,
+        currentStoryStatus: didRecoverStalePending ? 'waiting_user' : storyState.status || 'idle',
+        currentStoryPhase: didRecoverStalePending ? 'exploring' : storyState.phase || 'boot',
+        currentStoryRoleName: storyState.roleName || '',
+        currentStoryRoleSlug: storyState.roleSlug || '',
+        currentStoryEntryMode: storyState.entryMode || 'new',
+        currentStoryLastChoiceSet: effectiveChoices,
+        currentStoryAwaitingChoice: Boolean(effectiveChoices.length > 0 && (didRecoverStalePending || storyState.awaitingChoice)),
+        currentStoryShouldResumeGeneration: didRecoverStalePending ? false : Boolean(storyState.shouldResumeGeneration),
+        lastSubmittedChoiceAt: didRecoverStalePending ? 0 : Number(storyState.lastSubmittedChoiceAt || 0),
+        currentAlpha: Number.isFinite(Number(storyState.currentAlpha)) ? Number(storyState.currentAlpha) : null,
+        baseAlpha: Number.isFinite(Number(storyState.baseAlpha)) ? Number(storyState.baseAlpha) : null,
+      });
+    }
+    return messages;
+  };
+
+  buildStoryDisplayMessages = (historyForRender, currentStoryMessages = []) => {
+    const merged = this.mergeMessagesById([...historyForRender, ...currentStoryMessages]).filter(message => !!(message?.id || message?.text));
+    return this.sortMessagesByTime(merged);
+  };
+
+  getCurrentStoryMessagesForDisplay = () =>
+    this.sortMessagesByTime(
+      (this.state.currentStoryMessages || []).filter(message => message?.sender && !message._localOnly && message._renderMode !== 'commands'),
+    );
+
+  getStoryChoiceBoundaryIndex = (messages, submittedAt = null) => {
+    const ordered = this.sortMessagesByTime(Array.isArray(messages) ? messages : []);
+    const boundaryId = String(
+      this._pendingChoiceUserMessageId || this._currentStorySnapshot?.lastSubmittedChoiceUserMessageId || ''
+    );
+    if (boundaryId) {
+      const byIdIndex = ordered.findIndex(item => String(item?.id || '') === boundaryId);
+      if (byIdIndex >= 0) {
+        return byIdIndex;
+      }
+    }
+    const lastSubmittedChoiceAt = this.getLatestStoryChoiceSubmissionAt(submittedAt);
+    if (!(lastSubmittedChoiceAt > 0)) {
+      return -1;
+    }
+    for (let i = ordered.length - 1; i >= 0; i -= 1) {
+      const message = ordered[i];
+      if (message?.sender !== 'user') {
+        continue;
+      }
+      if (message?._localOnly || message?._renderMode === 'commands') {
+        continue;
+      }
+      if (Number(message?.timestamp || 0) <= lastSubmittedChoiceAt) {
+        return i;
+      }
+    }
+    return -1;
+  };
+
+  getStoryChoicesFromMessages = (messages, submittedAt = null) => {
+    const latestEligibleAgentMessage = this.getLatestEligibleAgentMessageAfterChoice(
+      Array.isArray(messages) ? messages : [],
+      this.getLatestStoryChoiceSubmissionAt(submittedAt),
+    );
+
+    if (!latestEligibleAgentMessage) {
+      return [];
+    }
+
+    return this.extractStoryChoices(String(latestEligibleAgentMessage.text || '').trim());
+  };
+
+  getLatestStoryChoiceSubmissionAt = explicitSubmittedAt => {
+    if (Number.isFinite(Number(explicitSubmittedAt)) && Number(explicitSubmittedAt) > 0) {
+      return Number(explicitSubmittedAt);
+    }
+    return Number(
+      this._pendingChoiceSubmissionAt || this._currentStorySnapshot?.lastSubmittedChoiceAt || this.state.lastSubmittedChoiceAt || 0,
+    );
+  };
+
+  getLatestEligibleAgentMessageAfterChoice = (messages, submittedAt = null) => {
+    const ordered = this.sortMessagesByTime(Array.isArray(messages) ? messages : []);
+    const boundaryIndex = this.getStoryChoiceBoundaryIndex(ordered, submittedAt);
+    const candidates = boundaryIndex >= 0 ? ordered.slice(boundaryIndex + 1) : ordered;
+
+    const submittedAtValue = this.getLatestStoryChoiceSubmissionAt(submittedAt);
+    for (let i = candidates.length - 1; i >= 0; i -= 1) {
+      const message = candidates[i];
+      if (message?.sender !== 'agent') continue;
+      if (message?.pending || message?._localOnly || message?._renderMode === 'commands') continue;
+      if (submittedAtValue > 0 && Number(message?.timestamp || message?.t || 0) <= submittedAtValue) continue;
+      const text = String(message?.text || '').trim();
+      if (!text) continue;
+      return message;
+    }
+
+    return null;
+  };
+
+  getLatestStoryAgentReplyIgnoringSubmission = messages => {
+    const ordered = this.sortMessagesByTime(Array.isArray(messages) ? messages : []);
+    for (let i = ordered.length - 1; i >= 0; i -= 1) {
+      const message = ordered[i];
+      if (message?.sender !== 'agent') continue;
+      if (message?.pending || message?._localOnly || message?._renderMode === 'commands') continue;
+      const text = String(message?.text || '').trim();
+      if (!text) continue;
+      return message;
+    }
+    return null;
+  };
+
+  hasPersistedStorySubmissionMessage = (messages, submittedAt = null) => {
+    const ordered = this.sortMessagesByTime(Array.isArray(messages) ? messages : []);
+    const submittedAtValue = this.getLatestStoryChoiceSubmissionAt(submittedAt);
+    const submissionId = String(
+      this._pendingChoiceUserMessageId || this._currentStorySnapshot?.lastSubmittedChoiceUserMessageId || ''
+    );
+    if (submissionId && ordered.some(item => String(item?.id || '') === submissionId)) {
+      return true;
+    }
+    if (!(submittedAtValue > 0)) {
+      return false;
+    }
+    return ordered.some(item => {
+      if (item?.sender !== 'user' || item?._localOnly || item?._renderMode === 'commands') return false;
+      const ts = Number(item?.timestamp || item?.t || 0);
+      return ts > 0 && Math.abs(ts - submittedAtValue) <= 5000;
+    });
+  };
+
+  hasPendingStoryAgentMessage = messages =>
+    this.sortMessagesByTime(Array.isArray(messages) ? messages : []).some(
+      item => item?.sender === 'agent' && item?.pending && !item?._localOnly && item?._renderMode !== 'commands',
+    );
+
+  getStalePendingStoryChoices = (messages, submittedAt = null) => {
+    const sourceMessages = Array.isArray(messages) ? messages : [];
+    const submittedAtValue = this.getLatestStoryChoiceSubmissionAt(submittedAt);
+    if (!(submittedAtValue > 0)) {
+      return [];
+    }
+    if (this.hasPersistedStorySubmissionMessage(sourceMessages, submittedAtValue)) {
+      return [];
+    }
+    if (this.hasPendingStoryAgentMessage(sourceMessages)) {
+      return [];
+    }
+    const latestAgentReply = this.getLatestStoryAgentReplyIgnoringSubmission(sourceMessages);
+    const latestAgentAt = Number(latestAgentReply?.timestamp || latestAgentReply?.t || 0);
+    if (!latestAgentReply || !(latestAgentAt > 0) || latestAgentAt >= submittedAtValue) {
+      return [];
+    }
+    return this.extractStoryChoices(String(latestAgentReply.text || '').trim());
+  };
+
+  hasAgentReplyAfterChoice = (messages, submittedAt = null) => {
+    const latestEligibleAgentMessage = this.getLatestEligibleAgentMessageAfterChoice(messages, submittedAt);
+    const hasReply = Boolean(latestEligibleAgentMessage);
+
+    if (hasReply) {
+      this._pendingChoiceSubmissionAt = 0;
+      this._pendingChoiceUserMessageId = null;
+    }
+
+    return hasReply;
+  };
+
+  shouldDelayStoryAutoFallback = (messages, submittedAt = null, latestAgentReply = null) => {
+    const ordered = this.sortMessagesByTime(Array.isArray(messages) ? messages : []);
+    const boundaryIndex = this.getStoryChoiceBoundaryIndex(ordered, submittedAt);
+    const candidates = boundaryIndex >= 0 ? ordered.slice(boundaryIndex + 1) : ordered;
+    if (candidates.some(item => item?.sender === 'agent' && item?.pending)) {
+      return true;
+    }
+    const replySettledAt = Number(
+      latestAgentReply?.completedAt ||
+        latestAgentReply?.updatedAt ||
+        latestAgentReply?.timestamp ||
+        0,
+    );
+    if (!(replySettledAt > 0)) {
+      return false;
+    }
+    return Date.now() - replySettledAt < STORY_AUTO_FALLBACK_SETTLE_MS;
+  };
+
+  stripStoryChoiceLines = text => {
+    const raw = String(text || '');
+    if (!raw) {
+      return raw;
+    }
+    return raw
+      .split(/\r?\n/)
+      .filter(line => {
+        const trimmed = stripMarkdownWrap(line).trim();
+        if (!trimmed) {
+          return true;
+        }
+        if (STORY_CHOICE_PREFIX_RE.test(trimmed)) {
+          return false;
+        }
+        if (/^(yes|no|y|n)\s*(?:[\/|]\s*(yes|no|y|n))?\s*$/i.test(trimmed)) {
+          return false;
+        }
+        if (/^(?:input|select|choose|reply)\s+\d+(?:\s*[-~to]\s*\d+)?\b/i.test(trimmed)) {
+          return false;
+        }
+        return true;
+      })
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  };
+
+  shouldSuppressStoryChoiceState = messages => {
+    const sourceMessages = Array.isArray(messages) ? messages : [];
+    const lastSubmittedChoiceAt = this.getLatestStoryChoiceSubmissionAt();
+    return lastSubmittedChoiceAt > 0 && !this.hasAgentReplyAfterChoice(sourceMessages, lastSubmittedChoiceAt);
+  };
+
+  syncStoryChoicesFromMessages = messages => {
+    const sourceMessages = Array.isArray(messages) ? messages : [];
+    const lastSubmittedChoiceAt = this.getLatestStoryChoiceSubmissionAt();
+    const snapshotPhase = String(this._currentStorySnapshot?.phase || this.state.currentStoryPhase || '');
+    const snapshotStatus = String(this._currentStorySnapshot?.status || this.state.currentStoryStatus || '');
+    const isWaitingAgent = snapshotStatus === 'waiting_agent';
+    const isIdleBoot = snapshotStatus === 'idle' && (!snapshotPhase || snapshotPhase === 'boot');
+    const latestAgentReplyAfterChoice = this.getLatestEligibleAgentMessageAfterChoice(sourceMessages, lastSubmittedChoiceAt);
+    const hasAgentAfterChoice = Boolean(latestAgentReplyAfterChoice);
+    const hasPendingSubmittedChoice = lastSubmittedChoiceAt > 0;
+    const stalePendingChoices =
+      isWaitingAgent && hasPendingSubmittedChoice && !hasAgentAfterChoice
+        ? this.getStalePendingStoryChoices(sourceMessages, lastSubmittedChoiceAt)
+        : [];
+    const didRecoverStalePending = stalePendingChoices.length > 0;
+    const shouldLockChoicesAfterSubmit = hasPendingSubmittedChoice && !hasAgentAfterChoice && !didRecoverStalePending;
+    const shouldHideChoicesWhileWaitingAgent = isWaitingAgent && hasPendingSubmittedChoice && !hasAgentAfterChoice && !didRecoverStalePending;
+    const nextChoices = didRecoverStalePending
+      ? stalePendingChoices
+      : shouldHideChoicesWhileWaitingAgent
+      ? []
+      : latestAgentReplyAfterChoice
+      ? this.extractStoryChoices(String(latestAgentReplyAfterChoice.text || '').trim())
+      : this.getStoryChoicesFromMessages(sourceMessages, lastSubmittedChoiceAt);
+    const shouldHideStaleChoices = shouldHideChoicesWhileWaitingAgent || shouldLockChoicesAfterSubmit;
+    const finalChoices = shouldHideStaleChoices || (isIdleBoot && !sourceMessages.length) ? [] : nextChoices;
+    const existingChoices = Array.isArray(this.state.currentStoryChoices) ? this.state.currentStoryChoices : [];
+    const shouldClearOldChoicesAfterSubmittedReply = hasPendingSubmittedChoice && hasAgentAfterChoice && !finalChoices.length;
+    const shouldPreserveExistingChoices = !finalChoices.length && !shouldHideStaleChoices && !shouldClearOldChoicesAfterSubmittedReply;
+    const effectiveChoices = shouldPreserveExistingChoices ? existingChoices : finalChoices;
+    const hasChoices = effectiveChoices.length > 0;
+    const isIdleChoiceSet = false;
+    const hasAnyStoryProgress = sourceMessages.length > 0;
+    const shouldPreservePendingResume = shouldHideChoicesWhileWaitingAgent && Boolean(this._currentStorySnapshot?.shouldResumeGeneration);
+    this.applyStoryChoiceUiState(effectiveChoices, hasChoices && !isIdleChoiceSet);
+    if (!shouldPreserveExistingChoices) {
+      this.scheduleCurrentChoicesPersist(hasChoices ? effectiveChoices : []);
+    }
+    if (this._currentStorySnapshot) {
+      this._currentStorySnapshot = this.normalizeCurrentStoryState({
+        ...this._currentStorySnapshot,
+        lastChoiceSet: effectiveChoices,
+        awaitingChoice: hasChoices && !isIdleChoiceSet,
+        shouldResumeGeneration: didRecoverStalePending ? false : shouldPreservePendingResume,
+        status: isIdleChoiceSet ? 'idle' : hasChoices ? 'waiting_user' : shouldLockChoicesAfterSubmit ? 'exploring' : hasAnyStoryProgress ? 'exploring' : this._currentStorySnapshot.status,
+        phase: isIdleChoiceSet ? 'boot' : hasChoices ? 'exploring' : shouldLockChoicesAfterSubmit ? 'exploring' : hasAnyStoryProgress ? 'exploring' : this._currentStorySnapshot.phase,
+        lastSubmittedChoiceAt: didRecoverStalePending ? 0 : this._currentStorySnapshot.lastSubmittedChoiceAt,
+        lastSubmittedChoiceUserMessageId: didRecoverStalePending ? '' : this._currentStorySnapshot.lastSubmittedChoiceUserMessageId,
+      });
+    }
+    if (this._isMounted) {
+      this.setState({
+        currentStoryChoices: effectiveChoices,
+        currentStoryHasChoiceFile: hasChoices,
+        currentStoryLastChoiceSet: effectiveChoices,
+        currentStoryAwaitingChoice: hasChoices && !isIdleChoiceSet,
+        lastSubmittedChoiceAt: didRecoverStalePending ? 0 : this.state.lastSubmittedChoiceAt,
+        currentStoryShouldResumeGeneration: didRecoverStalePending ? false : this.state.currentStoryShouldResumeGeneration,
+      });
+      if (isIdleChoiceSet) {
+        this.setStoryLinkStatus(this.getStoryMenuText('linkWaiting'), '', { waiting: true });
+      } else if (hasChoices) {
+        this.setStoryLinkStatus(this.getStoryMenuText('linkActive'));
+      }
+    }
+    if (hasAgentAfterChoice || didRecoverStalePending) {
+      this._pendingChoiceSubmissionAt = 0;
+      this._pendingChoiceUserMessageId = null;
+    }
+    return effectiveChoices;
+  };
+
+  updateHeaderCommsAnimation = active => {
+    const isActive = !!active;
+    if (this.headerGlowLoop) {
+      this.headerGlowLoop.stop();
+      this.headerGlowLoop = null;
+    }
+    this.headerGlowAnim.stopAnimation?.();
+    this.headerGlowAnim.setValue(isActive ? 1 : 0);
+  };
+
+  updatePanelSignalAnimation = waiting => {
+    if (this.panelSignalTimer) {
+      clearInterval(this.panelSignalTimer);
+      this.panelSignalTimer = null;
+    }
+    if (this.panelIdleTimer) {
+      clearInterval(this.panelIdleTimer);
+      this.panelIdleTimer = null;
+    }
+    if (this._isMounted) {
+      this.setState({ panelSignalBlinkOn: false });
+    }
+  };
+
+
+  setStoryLinkStatus = (status, detail = '', options = {}) => {
+    const nextStatus = String(status || 'LINK IDLE');
+    const nextDetail = String(detail || '');
+    const waiting = options?.waiting === true;
+    if (!this._isMounted) {
+      return;
+    }
+    this.setState({
+      storyLinkStatus: nextStatus,
+      storyLinkDetail: nextDetail,
+      headerCommsActive: waiting,
+    });
+    this.updateHeaderCommsAnimation(waiting);
+    this.updatePanelSignalAnimation(waiting);
+    this.props.navigation?.setParams?.({});
+  };
+
+  hasCurrentStory = () => this.getCurrentStoryMessagesForDisplay().length > 0;
+
+  hydrateStoryUiFromStorage = async () => {
+    const roleContext = this.currentRoleContext || (await this.loadCurrentRoleForStory());
+    if (!roleContext) {
+      this.setStoryLinkStatus(this.getStoryMenuText('roleRequired'), this.getStoryMenuText('roleRequiredDetail'));
+      return;
+    }
+    const hasStoryFile = await RNFS.exists(this.getStoryCurrentPath());
+    this.setStoryPersistenceUnlocked(hasStoryFile);
+    const storyState = await this.readCurrentStoryFile();
+    const existingMessages = this.mergeMessagesById(Array.isArray(storyState?.messages) ? storyState.messages : []);
+    const existingChoices = await this.readCurrentChoicesFile();
+    const safeChoices = Array.isArray(existingChoices)
+      ? existingChoices
+      : Array.isArray(storyState?.lastChoiceSet)
+      ? storyState.lastChoiceSet
+      : [];
+
+    this._currentStorySnapshot = this.normalizeCurrentStoryState({
+      ...storyState,
+      messages: existingMessages,
+      lastChoiceSet: safeChoices,
+    });
+
+    if (!Array.isArray(existingChoices) && safeChoices.length > 0) {
+      this.scheduleCurrentChoicesPersist(safeChoices);
+    }
+    const recoveredChoices = safeChoices.length > 0 ? safeChoices : this.getStalePendingStoryChoices(existingMessages);
+    const didRecoverStalePending = recoveredChoices.length > 0 && safeChoices.length === 0;
+    const effectiveChoices = recoveredChoices.length > 0 ? recoveredChoices : safeChoices;
+    if (didRecoverStalePending) {
+      this._pendingChoiceSubmissionAt = 0;
+      this._pendingChoiceUserMessageId = null;
+      await this.writeCurrentChoicesFile(effectiveChoices);
+    }
+
+    this.setState({
+      currentStoryChoices: effectiveChoices,
+      currentStoryHasStoryFile: hasStoryFile,
+      currentStoryHasChoiceFile: effectiveChoices.length > 0,
+      currentStoryLastChoiceSet: effectiveChoices,
+      currentStoryAwaitingChoice: effectiveChoices.length > 0,
+      currentStoryShouldResumeGeneration: didRecoverStalePending ? false : Boolean(storyState?.shouldResumeGeneration),
+    });
+    this.setStoryLinkStatus(
+      effectiveChoices.length > 0 ? this.getStoryMenuText('linkActive') : this.getStoryMenuText('linkWaiting'),
+      effectiveChoices.length > 0 ? undefined : this.getStoryMenuText('awaitingSignal'),
+      { waiting: effectiveChoices.length === 0 }
+    );
+    await this.updateCurrentStoryRuntime({
+      roleName: roleContext.roleName || '',
+      roleSlug: roleContext.roleSlug || '',
+      messages: existingMessages,
+      lastChoiceSet: effectiveChoices,
+      awaitingChoice: effectiveChoices.length > 0,
+      shouldResumeGeneration: didRecoverStalePending ? false : Boolean(storyState?.shouldResumeGeneration),
+      status: effectiveChoices.length > 0 ? 'waiting_user' : hasStoryFile ? String(storyState?.status || 'exploring') : 'idle',
+      phase: hasStoryFile ? 'exploring' : 'boot',
+      lastSubmittedChoiceAt: didRecoverStalePending ? 0 : Number(storyState?.lastSubmittedChoiceAt || 0),
+      lastSubmittedChoiceUserMessageId: didRecoverStalePending ? '' : String(storyState?.lastSubmittedChoiceUserMessageId || ''),
+    });
+    if (!effectiveChoices.length) {
+      await this.maybeAutoAdvanceStoryOnEmptyChoices(existingMessages);
+    }
+  };
+
+  openStorySettings = () => {
+    const { navigation, namespaceList } = this.props;
+    if (!navigation || typeof navigation.navigate !== 'function') {
+      return;
+    }
+    const { namespaceId, displayName, shortCode, walletId, txid, rootAddress, price, desc, addr, profile } = navigation.state.params || {};
+    const namespace = namespaceId ? namespaceList?.namespaces?.[namespaceId] : null;
+    navigation.navigate('Namespaces', {
+      initialTab: 'me',
+      openNamespaceInfo: namespace || {
+        id: namespaceId,
+        namespaceId,
+        shortCode,
+        displayName,
+        walletId,
+        txId: txid,
+        rootAddress,
+        price,
+        desc,
+        addr,
+        profile,
+      },
+    });
+  };
+
+  archiveCurrentStoryToRaw = async () => {
+    if (!this.isStoryScope || this.state.isArchivingCurrentStory) {
+      return { archivedCount: 0, dedupedCount: 0 };
+    }
+
+    this.setState({ isArchivingCurrentStory: true });
+    const storyState = await this.readCurrentStoryFile();
+    const candidates = this.mergeMessagesById(
+      (storyState.messages || []).map(this.normalizeCurrentStoryMessage).filter(Boolean),
+    );
+
+    if (candidates.length === 0) {
+      await this.clearCurrentChoicesFile();
+      await this.clearCurrentStoryFile();
+      this._currentStorySnapshot = this.createEmptyCurrentStoryState(storyState.storySessionId);
+      if (this._isMounted) {
+        this.setState({
+          isArchivingCurrentStory: false,
+          currentStorySessionId: this._currentStorySnapshot.storySessionId,
+          currentStoryMessages: [],
+        });
+      }
+      await this.refreshMessagesFromStorage();
+      return { archivedCount: 0, dedupedCount: 0 };
+    }
+
+    const dayKey = getLocalDateKey();
+    const existingRaw = await this.readDayMessages(dayKey);
+    const mergedRaw = this.mergeMessagesById([...existingRaw, ...candidates]);
+    await this.writeDayMessages(dayKey, mergedRaw);
+
+    const writeCount = candidates.length;
+    const dedupeCount = Math.max(0, mergedRaw.length - existingRaw.length);
+
+    await Promise.all(candidates.map(message => this.appendStoryDigestForRaw(message)));
+
+    await this.clearCurrentChoicesFile();
+    await this.clearCurrentStoryFile();
+    this._currentStorySnapshot = this.createEmptyCurrentStoryState(this.getStorySessionId());
+    await this.refreshMessagesFromStorage();
+
+    if (this._isMounted) {
+      this.setState({
+        isArchivingCurrentStory: false,
+        currentStorySessionId: this._currentStorySnapshot.storySessionId,
+        currentStoryMessages: [],
+      });
+    }
+
+    return { archivedCount: writeCount, dedupeCount: dedupeCount, dedupedCount: dedupeCount };
+  };
+
+
+
   listDateKeys = async () => {
     try {
-      const baseDir = this.isStoryScope ? `${this.agentChatDir}/raw` : this.agentChatDir;
+      const baseDir = `${this.agentChatDir}/raw`;
       const exists = await RNFS.exists(baseDir);
       if (!exists) return [];
       const entries = await RNFS.readDir(baseDir);
@@ -1676,16 +2040,7 @@ class AgentChat extends React.Component {
 
   readDayMessages = async dateKey => {
     try {
-      if (this.isStoryScope) {
-        const messages = await readStoryEntriesByDay(this.agentChatDir, dateKey, 'raw');
-        return messages.filter(message => !message?.hidden);
-      }
-      const path = this.getDayFilePath(dateKey);
-      const exists = await RNFS.exists(path);
-      if (!exists) return [];
-      const raw = await RNFS.readFile(path, 'utf8');
-      const json = JSON.parse(raw);
-      const messages = Array.isArray(json) ? json : json?.messages || [];
+      const messages = await readStoryEntriesByDay(this.agentChatDir, dateKey, 'raw');
       return messages.filter(message => !message?.hidden);
     } catch {
       return [];
@@ -1693,9 +2048,6 @@ class AgentChat extends React.Component {
   };
 
   readDigestDayEntries = async dateKey => {
-    if (!this.isStoryScope) {
-      return this.readDayMessages(dateKey);
-    }
     try {
       return await readStoryEntriesByDay(this.agentChatDir, dateKey, 'digest');
     } catch {
@@ -1717,9 +2069,6 @@ class AgentChat extends React.Component {
   };
 
   readDigestHistory = async () => {
-    if (!this.isStoryScope) {
-      return this.readHistory();
-    }
     try {
       const digestDir = `${this.agentChatDir}/digest`;
       const exists = await RNFS.exists(digestDir);
@@ -1762,25 +2111,10 @@ class AgentChat extends React.Component {
 
   writeDayMessages = async (dateKey, messages) => {
     try {
-      if (this.isStoryScope) {
-        const dayMessages = messages.filter(message => getLocalDateKey(message.timestamp) === dateKey);
-        const path = this.getStoryRawPath(dateKey);
-        await RNFS.writeFile(path, JSON.stringify(dayMessages), 'utf8');
-        return;
-      }
-      const path = this.getDayFilePath(dateKey);
-      await RNFS.writeFile(path, JSON.stringify(messages), 'utf8');
+      const dayMessages = messages.filter(message => getLocalDateKey(message.timestamp) === dateKey);
+      const path = this.getStoryRawPath(dateKey);
+      await RNFS.writeFile(path, JSON.stringify(dayMessages), 'utf8');
     } catch (e) {}
-  };
-
-  persistMessageByDay = async (dateKey, allMessagesInMemory) => {
-    const dayMessages = allMessagesInMemory.filter(message => getLocalDateKey(message.timestamp) === dateKey);
-    this.persistQueue = this.persistQueue
-      .then(() => this.writeDayMessages(dateKey, dayMessages))
-      .catch(error => {
-        console.warn('Failed to save day history', error);
-      });
-    return this.persistQueue;
   };
 
   buildMessage = (text, sender = 'user') => ({
@@ -1795,15 +2129,13 @@ class AgentChat extends React.Component {
     const rawText = String(rawMessage?.text || '').trim();
     if (!rawText) return '';
     const isUser = rawMessage?.sender === 'user';
-    const interfaceLanguage = normalizeLocale(getCurrentInterfaceLanguage());
-    const isZh = interfaceLanguage.startsWith('zh');
-    const instruction = isZh
-      ? isUser
-        ? '你是摘要器。仅根据下方原文生成中文行动短句，最多100字。删除“选项/选择/A/B/1/2/：”等提示词，不要出现“我选择”，不要新增信息。若是提问或闲聊，保留核心意图。仅输出结果。'
-        : '你是摘要器。仅根据下方原文生成中文叙述摘要，最多100字。只能压缩，不得新增事件信息；避免对白原句，优先叙述句。仅输出结果。'
-      : isUser
-        ? 'You are a summarizer. Generate an action-style digest in English based only on the original text below (<=100 words). Remove prompt markers like "Option/Choice/A/B/1/2/:". Do not use "I choose." Do not add new information. If the source is a question or small talk, preserve its core intent. Output digest only.'
-        : 'You are a summarizer. Generate a narrative digest in English based only on the original text below (<=100 words). Compress only; do not add events or facts. Avoid quoted dialogue and prefer declarative narration. Output digest only.';
+    const roleLangCode = this.getActiveRoleLanguageCode() || this.getStoryLangCode() || 'en';
+    const instruction = buildStoryDigestPrompt({
+      roleLangCode,
+      isUser,
+      normalizeStoryLangCode,
+      getStoryLangLabel,
+    });
 
     const cfg = this.state.llmConfig || this.currentLLMConfig;
     if (!cfg?.provider) {
@@ -1814,7 +2146,7 @@ class AgentChat extends React.Component {
       throw new Error('LLM provider missing');
     }
     const providerDef = resolved.def;
-    const recent = [{ sender: 'user', text: `原文：\n${rawText}` }];
+    const recent = [{ sender: 'user', text: `Original text:\n${rawText}` }];
     if (providerDef.kind === 'openai_compat') {
       return await this.callOpenAICompatible({
         baseUrl: cfg.baseUrl || providerDef.baseUrl,
@@ -1900,50 +2232,209 @@ class AgentChat extends React.Component {
         ? { ...this.buildMessage(messageOrText, sender), ...(extra || {}) }
         : { ...(messageOrText || {}), ...(extra || {}) };
 
+    const canAcceptStoryRuntimeMessage =
+      !this.isStoryScope ||
+      message._localOnly ||
+      message._renderMode === 'commands' ||
+      message.sender === 'system' ||
+      this.isStoryPersistenceUnlocked();
+
     this.shouldScrollToEnd = true;
+    const shouldPersistCurrentStory =
+      this.isStoryScope &&
+      canAcceptStoryRuntimeMessage &&
+      !message._localOnly &&
+      message._renderMode !== 'commands' &&
+      message.sender !== 'system';
     this.setState(
       prevState => {
-        const allMessages = [...prevState.allMessages, message];
+        const allMessages = !canAcceptStoryRuntimeMessage ? prevState.allMessages : [...prevState.allMessages, message];
         const base = Math.max(prevState.visibleCount, PAGE_SIZE);
         const sourceMessages = allMessages;
-        const visibleCount = Math.min(sourceMessages.length, base + 1);
+        const visibleCount = Math.min(sourceMessages.length, base);
+        const nextCurrentStoryMessages = shouldPersistCurrentStory
+          ? this.mergeMessagesById([...(prevState.currentStoryMessages || []), ...[this.normalizeCurrentStoryMessage(message)].filter(Boolean)])
+          : prevState.currentStoryMessages || [];
+
         return {
           allMessages,
+          currentStoryMessages: nextCurrentStoryMessages,
           visibleCount,
           messages: sourceMessages.slice(-visibleCount),
+          currentStorySessionId: prevState.currentStorySessionId || this.getStorySessionId(),
         };
       },
-      () => {
-        this.persistMessageByDay(getLocalDateKey(message.timestamp), this.state.allMessages);
-        if (this.isStoryScope) {
-          this.appendStoryDigestForRaw(message);
+      async () => {
+        if (!shouldPersistCurrentStory) {
+          return;
+        }
+        const currentStoryMessages = this.state.currentStoryMessages;
+        if (message?.sender === 'agent') {
+          await this.persistCurrentStoryMessages(currentStoryMessages);
+          this.syncStoryChoicesFromMessages(this.state.currentStoryMessages);
+          await this.reconcileStoryLinkStatusAfterAgentUpdate();
+          await this.persistCurrentStoryMessages(this.state.currentStoryMessages);
+        } else {
+          await this.persistCurrentStoryMessages(currentStoryMessages);
+          this.syncStoryChoicesFromMessages(currentStoryMessages);
         }
       },
     );
   };
 
+  persistStoryLLMReply = async ({ requestId, replyText, placeholder } = {}) => {
+    if (!this.isStoryScope) {
+      return null;
+    }
+    const text = String(replyText || '').trim();
+    if (!text) {
+      return null;
+    }
+
+    const existing = Array.isArray(this.state?.allMessages)
+      ? this.state.allMessages.find(message => message?.requestId === requestId)
+      : null;
+    const message = this.normalizeCurrentStoryMessage({
+      ...(placeholder || {}),
+      ...(existing || {}),
+      id: existing?.id || placeholder?.id || `agent-${requestId || Date.now()}`,
+      sender: 'agent',
+      text,
+      pending: false,
+      requestId: requestId || existing?.requestId || placeholder?.requestId,
+      timestamp: Number(existing?.timestamp || placeholder?.timestamp || Date.now()),
+      completedAt: Number(existing?.completedAt || existing?.updatedAt || Date.now()),
+      updatedAt: Number(existing?.updatedAt || existing?.completedAt || Date.now()),
+    });
+    if (!message) {
+      return null;
+    }
+
+    const mergedMessages = this.mergeMessagesById([
+      ...(Array.isArray(this.state?.currentStoryMessages) ? this.state.currentStoryMessages : []),
+      ...((Array.isArray(this._currentStorySnapshot?.messages) ? this._currentStorySnapshot.messages : []) || []),
+      message,
+    ]);
+    const written = await this.persistCurrentStoryMessages(mergedMessages);
+    const requestKey = String(requestId || message.requestId || '');
+    const preparedChoices = this._preparedStoryReplyChoicesByRequestId?.[requestKey] || [];
+    const choices = preparedChoices.length > 0 ? preparedChoices : this.extractStoryChoices(text);
+
+    if (choices.length > 0) {
+      await this.writeCurrentChoicesFile(choices);
+      await this.updateCurrentStoryRuntime({
+        status: 'waiting_user',
+        phase: 'exploring',
+        lastChoiceSet: choices,
+        awaitingChoice: true,
+        shouldResumeGeneration: false,
+        lastSubmittedChoiceAt: 0,
+        lastSubmittedChoiceUserMessageId: '',
+        messages: written.messages,
+      });
+      if (preparedChoices.length > 0 && this._preparedStoryReplyChoicesByRequestId) {
+        delete this._preparedStoryReplyChoicesByRequestId[requestKey];
+      }
+      this.setStoryLinkStatus(this.getStoryMenuText('linkActive'));
+      return written;
+    }
+
+    await this.updateCurrentStoryRuntime({
+      status: 'exploring',
+      phase: 'exploring',
+      lastChoiceSet: [],
+      awaitingChoice: false,
+      shouldResumeGeneration: false,
+      messages: written.messages,
+    });
+    this.setStoryLinkStatus(this.getStoryMenuText('uplinkSent'), this.getStoryMenuText('waitingFieldResponseLower'), { waiting: true });
+    return written;
+  };
+
+  reconcileStoryLinkStatusAfterAgentUpdate = async () => {
+    if (!this.isStoryScope || !this._isMounted) {
+      return;
+    }
+
+    const currentChoices = this.syncStoryChoicesFromMessages(this.state.currentStoryMessages || []);
+    if (currentChoices.length > 0) {
+      await this.updateCurrentStoryRuntime({
+        status: 'waiting_user',
+        phase: 'exploring',
+        lastChoiceSet: currentChoices,
+        awaitingChoice: true,
+        shouldResumeGeneration: false,
+        lastSubmittedChoiceAt: 0,
+        lastSubmittedChoiceUserMessageId: '',
+      });
+      return;
+    }
+
+    const hasAgentText = (this.state.currentStoryMessages || []).some(
+      item => item?.sender === 'agent' && String(item?.text || '').trim()
+    );
+
+    if (!hasAgentText) {
+      return;
+    }
+
+    const recoveredBootstrapChoices = await this.maybeRecoverBootstrapStoryChoices(this.state.currentStoryMessages || []);
+    if (recoveredBootstrapChoices.length > 0) {
+      return;
+    }
+
+    this._pendingChoiceSubmissionAt = 0;
+    this._pendingChoiceUserMessageId = null;
+    if (this._isMounted) {
+      this.setState({ currentStoryChoices: [], currentStoryLastChoiceSet: [], currentStoryAwaitingChoice: false });
+      this.setStoryLinkStatus(this.getStoryMenuText('uplinkSent'), this.getStoryMenuText('waitingFieldResponseLower'), { waiting: true });
+    }
+    await this.updateCurrentStoryRuntime({
+      status: 'exploring',
+      phase: 'exploring',
+      lastChoiceSet: [],
+      awaitingChoice: false,
+      shouldResumeGeneration: false,
+    });
+  };
+
   appendMessages = messages => {
     this.shouldScrollToEnd = true;
+    const acceptedMessages = Array.isArray(messages)
+      ? messages.filter(message => {
+          if (message?._localOnly || message?._renderMode === 'commands' || message?.sender === 'system') return true;
+          return this.isStoryPersistenceUnlocked();
+        })
+      : [];
+    const persistedMessages = acceptedMessages.filter(message => !message?._localOnly && message._renderMode !== 'commands');
     this.setState(
       prevState => {
-        const allMessages = [...prevState.allMessages, ...messages];
-        const added = messages.length;
+        const allMessages = [...prevState.allMessages, ...acceptedMessages];
         const base = Math.max(prevState.visibleCount, PAGE_SIZE);
         const sourceMessages = allMessages;
-        const visibleCount = Math.min(sourceMessages.length, base + added);
+        const visibleCount = Math.min(sourceMessages.length, base);
+
+        const nextCurrentStoryMessages = this.mergeMessagesById([...(prevState.currentStoryMessages || []), ...persistedMessages.map(this.normalizeCurrentStoryMessage).filter(Boolean)]);
+
         return {
           allMessages,
+          currentStoryMessages: nextCurrentStoryMessages,
           visibleCount,
           messages: sourceMessages.slice(-visibleCount),
         };
       },
-      () => {
-        const dateKeys = [...new Set(messages.map(message => getLocalDateKey(message.timestamp)))];
-        dateKeys.forEach(dateKey => {
-          this.persistMessageByDay(dateKey, this.state.allMessages);
-        });
-        if (this.isStoryScope) {
-          messages.forEach(message => this.appendStoryDigestForRaw(message));
+      async () => {
+        if (persistedMessages.length > 0) {
+          const currentStoryMessages = this.state.currentStoryMessages;
+          if (persistedMessages.some(message => message?.sender === 'agent')) {
+            await this.persistCurrentStoryMessages(currentStoryMessages);
+            this.syncStoryChoicesFromMessages(this.state.currentStoryMessages);
+            await this.reconcileStoryLinkStatusAfterAgentUpdate();
+            await this.persistCurrentStoryMessages(this.state.currentStoryMessages);
+          } else {
+            await this.persistCurrentStoryMessages(currentStoryMessages);
+            this.syncStoryChoicesFromMessages(currentStoryMessages);
+          }
         }
       },
     );
@@ -1951,104 +2442,129 @@ class AgentChat extends React.Component {
 
   updateAgentMessage = (requestId, newText) => {
     this.shouldScrollToEnd = true;
-    this.setState(
-      prevState => {
+    return new Promise(resolve => {
+      this.setState(
+        prevState => {
+        if (this.isStoryScope && !this.isStoryPersistenceUnlocked()) {
+          return null;
+        }
         let didUpdate = false;
+        let updatedCurrent = null;
         const allMessages = prevState.allMessages.map(message => {
           if (message?.requestId === requestId) {
             didUpdate = true;
-            return {
+            updatedCurrent = {
               ...message,
               text: newText,
               pending: false,
+              completedAt: Date.now(),
+              updatedAt: Date.now(),
             };
+            return updatedCurrent;
           }
           return message;
         });
         if (!didUpdate) {
           return null;
         }
+
+        const nextCurrentStoryMessages = prevState.currentStoryMessages || [];
+        const normalizedUpdatedCurrent = this.normalizeCurrentStoryMessage(updatedCurrent);
+        const nextInCurrent = this.isStoryScope
+          ? this.mergeMessagesById(
+              [
+                ...nextCurrentStoryMessages.map(item => {
+                  if (item?.requestId === requestId) {
+                    return {
+                      ...item,
+                      text: newText,
+                      pending: false,
+                      completedAt: updatedCurrent?.completedAt || Date.now(),
+                      updatedAt: updatedCurrent?.updatedAt || Date.now(),
+                    };
+                  }
+                  return item;
+                }),
+                normalizedUpdatedCurrent,
+              ].filter(Boolean),
+            )
+          : prevState.currentStoryMessages || [];
+
         return {
           allMessages,
+          currentStoryMessages: nextCurrentStoryMessages ? nextInCurrent : prevState.currentStoryMessages,
           messages: allMessages.slice(-prevState.visibleCount),
         };
       },
-      () => {
-        const updated = this.state.allMessages.find(message => message?.requestId === requestId);
-        const key = updated ? getLocalDateKey(updated.timestamp) : getLocalDateKey();
-        this.persistMessageByDay(key, this.state.allMessages);
-        if (this.isStoryScope && updated) {
-          this.appendStoryDigestForRaw(updated);
-        }
-      },
-    );
-  };
-
-  hasIntroSequence = messages => {
-    if (messages.length < INTRO_MESSAGES.length) {
-      return false;
-    }
-    const lastIntroIndex = INTRO_MESSAGES.length - 1;
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage?.sender !== 'agent' || lastMessage?.text !== INTRO_MESSAGES[lastIntroIndex]) {
-      return false;
-    }
-    let introIndex = lastIntroIndex - 1;
-    for (let i = messages.length - 2; i >= 0 && introIndex >= 0; i -= 1) {
-      const message = messages[i];
-      if (message?.sender === 'agent' && message?.text === INTRO_MESSAGES[introIndex]) {
-        introIndex -= 1;
-      }
-    }
-    return introIndex < 0;
-  };
-
-  waitForIntroStep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-  playIntroSequence = async () => {
-    const { allMessages } = this.state;
-    if (this.hasIntroSequence(allMessages) || this.isPlayingIntro) {
-      return;
-    }
-
-    this.isPlayingIntro = true;
-    this.hasIntroAutoAOnce = false;
-
-    try {
-      for (let i = 0; i < INTRO_MESSAGES.length; i += 1) {
-        this.appendMessage(this.buildMessage(INTRO_MESSAGES[i], 'agent'));
-
-        if (i === 1 && !this.hasIntroAutoAOnce) {
-          this.hasIntroAutoAOnce = true;
-          await this.waitForIntroStep(50);
-          await this.sendCommand('/a');
-          await this.waitForIntroStep(200);
-        }
-
-        await this.waitForIntroStep(600);
-      }
-    } finally {
-      this.isPlayingIntro = false;
-    }
+        async () => {
+          try {
+            const updated = this.state.allMessages.find(message => message?.requestId === requestId);
+            if (!updated || updated._localOnly || updated._renderMode === 'commands') {
+              resolve(null);
+              return;
+            }
+            const currentStoryMessages = this.state.currentStoryMessages;
+            if (updated?.sender === 'agent') {
+              const preparedChoices =
+                this._preparedStoryReplyChoicesByRequestId?.[String(requestId || '')] || [];
+              await this.persistCurrentStoryMessages(currentStoryMessages);
+              if (preparedChoices.length > 0) {
+                await this.writeCurrentChoicesFile(preparedChoices);
+                await this.updateCurrentStoryRuntime({
+                  status: 'waiting_user',
+                  phase: 'exploring',
+                  lastChoiceSet: preparedChoices,
+                  awaitingChoice: true,
+                  shouldResumeGeneration: false,
+                  lastSubmittedChoiceAt: 0,
+                  lastSubmittedChoiceUserMessageId: '',
+                  messages: this.state.currentStoryMessages,
+                });
+                this.setStoryLinkStatus(this.getStoryMenuText('linkActive'));
+              } else {
+                this.syncStoryChoicesFromMessages(this.state.currentStoryMessages);
+              }
+              await this.persistCurrentStoryMessages(this.state.currentStoryMessages);
+            } else {
+              await this.persistCurrentStoryMessages(currentStoryMessages);
+              this.syncStoryChoicesFromMessages(currentStoryMessages);
+            }
+            this.appendStoryDigestForRaw(updated);
+            resolve(updated);
+          } catch (error) {
+            console.warn('Failed to persist updated agent message', error);
+            resolve(null);
+          }
+        },
+      );
+    });
   };
 
   handleSend = async payload => {
-    const rawInput = String(payload?.displayText ?? this.state.inputValue ?? '').trim();
+    const rawInput = String(payload?.displayText ?? '').trim();
     if (!rawInput) {
       return;
     }
     const modelText = String(payload?.modelText ?? rawInput).trim();
-    const userMessage = this.buildMessage(rawInput, 'user');
+    const userMessage = payload?.prebuiltUserMessage || this.buildMessage(rawInput, 'user');
     userMessage._modelText = modelText;
     userMessage._choiceMeta = payload?.choiceMeta || null;
-    this.appendMessage(rawInput, 'user', {
-      id: userMessage.id,
-      timestamp: userMessage.timestamp,
-      _modelText: userMessage._modelText,
-      _choiceMeta: userMessage._choiceMeta,
-    });
-    this.setState({ inputValue: '' });
-    await this.handleTriggers(modelText, userMessage);
+    if (!payload?.skipAppend) {
+      this.appendMessage(rawInput, 'user', {
+        id: userMessage.id,
+        timestamp: userMessage.timestamp,
+        _modelText: userMessage._modelText,
+        _choiceMeta: userMessage._choiceMeta,
+        _localOnly: userMessage._localOnly,
+        _recordExcluded: userMessage._recordExcluded,
+      });
+    }
+    try {
+      await this.handleTriggers(modelText, userMessage);
+    } catch (error) {
+      console.warn('AgentStory: handleSend trigger failed', error);
+      this.replyFromAgent('Action failed. Please try again.');
+    }
   };
 
   sendCommand = async commandText => {
@@ -2058,8 +2574,12 @@ class AgentChat extends React.Component {
     }
     const userMessage = this.buildMessage(text, 'user');
     this.appendMessage(userMessage);
-    this.setState({ inputValue: '' });
-    await this.handleTriggers(text, userMessage);
+    try {
+      await this.handleTriggers(text, userMessage);
+    } catch (error) {
+      console.warn('AgentStory: sendCommand trigger failed', error);
+      this.replyFromAgent('Action failed. Please try again.');
+    }
     this.shouldScrollToEnd = true;
   };
 
@@ -2097,74 +2617,24 @@ class AgentChat extends React.Component {
             this.setState({ pendingReturnToDestinyMenu: false, pendingModelFinalConfirm: false }, resolve)
           );
         }
-        // do NOT call /d here; replyFromAgent("model selected") will trigger /d once
       }
-      return;
-    }
-    const helpMatch = /^\/h\b/i.exec(trimmed);
-    if (helpMatch) {
-      this.replyFromAgent(getCommandHelpMessage());
       return;
     }
     const shortMatch = /^\/short(?:\s+(on|off))?\s*$/i.exec(trimmed);
     if (shortMatch) {
-      if (!this.isStoryScope) {
-        showStatus('"/short" is only available in Story mode', 2000);
-        return;
-      }
       const nextMode = (shortMatch[1] || '').toLowerCase();
       if (!nextMode) {
-        showStatus('Usage: /short on | /short off', 2000);
+        showStatus(this.getStoryMenuText('shortUsage'), 2000);
         return;
       }
       const enabled = nextMode === 'on';
       this.setState({ storyShortMode: enabled });
-      showStatus(enabled ? 'Story history: short ON' : 'Story history: short OFF', 2000);
+      showStatus(enabled ? this.getStoryMenuText('shortOn') : this.getStoryMenuText('shortOff'), 2000);
       return;
     }
     const langMatch = /^\/lang(?:\s+(.+))?\s*$/i.exec(trimmed);
     if (langMatch) {
       await this.handleLangCommand(langMatch[1] || '');
-      return;
-    }
-    const linkStartMatch = /^\/linkstart\b/i.exec(trimmed);
-    if (linkStartMatch) {
-      await this.playIntroSequence();
-      return;
-    }
-    if (/^\/m\b/i.test(trimmed)) {
-      await Rolecards.handleRoleMemoryCommand(
-        this,
-        {
-          BlueApp,
-          BlueElectrum,
-          updateKeyValue,
-          deleteKeyValue,
-          FALLBACK_DATA_PER_BYTE_FEE,
-        },
-        trimmed,
-      );
-      return;
-    }
-    const roleMatch = /^\/r\s+(.+)/i.exec(trimmed);
-    if (roleMatch) {
-      await Roleplay.handleRoleCommand(this, roleMatch[1], {
-        Rolecards,
-        buildRoleplayPrompt,
-      });
-      return;
-    }
-    if (/^\/r\b/i.test(trimmed)) {
-      await Roleplay.handleRoleCommand(this, 'unknown', {
-        Rolecards,
-        buildRoleplayPrompt,
-      });
-      this.replyFromAgent(
-        Roleplay.buildRoleHistoryMessage(this, {
-          getRoleHistoryTitle,
-          getCommandUsageMessage,
-        }),
-      );
       return;
     }
     const destinyMatch = /^\/d(?:\s+(.+))?$/i.exec(trimmed);
@@ -2178,19 +2648,15 @@ class AgentChat extends React.Component {
       return;
     }
 
-    if (/^\/welcome\b/i.test(trimmed)) {
-      const payload = trimmed.replace(/^\/welcome\b/i, '').trim();
-      if (payload) await this.handleWelcomeCommand(payload);
-      else await this.handleWelcomeLookup();
-      return;
-    }
-
     if (trimmed.startsWith('/')) {
-      this.replyFromAgent('Unknown command. Type /h');
+      this.replyFromAgent(this.getStoryMenuText('unknownCommand'));
       return;
     }
 
-    await this.replyFromLLM(trimmed, userMessage);
+    await this.runStoryContinueTurn({
+      userMessage,
+      submittedAt: Number(userMessage?.timestamp || 0),
+    });
   };
 
   runAutoCommand = async () => {
@@ -2206,226 +2672,20 @@ class AgentChat extends React.Component {
     if (!commandText) {
       return;
     }
+    const normalized = commandText.toLowerCase();
+    const autoCommandSource = String(navigation?.state?.params?.autoCommandSource || '').trim();
+    const allowlistedStoryAutoCommand = /^\/d\s+clear\b/.test(normalized)
+      || (autoCommandSource === 'story-fragment-import' && /^\/d\s+new\b/.test(normalized));
+    if (/^\/(?:d|a)\b/.test(normalized) && !allowlistedStoryAutoCommand) {
+      navigation?.setParams?.({ autoCommand: null });
+      this.setStoryLinkStatus(this.getStoryMenuText('linkIdle'), this.getStoryMenuText('autoTriggerBlocked'));
+      return;
+    }
     this.hasAutoCommandRun = true;
     this.lastAutoCommand = commandText;
-    const userMessage = this.buildMessage(commandText, 'user');
-    this.appendMessage(userMessage);
-    this.setState({ inputValue: '' });
-    await this.handleTriggers(commandText, userMessage);
+    await this.handleTriggers(commandText, null);
     this.shouldScrollToEnd = true;
     navigation?.setParams?.({ autoCommand: null });
-  };
-
-  runAutoLinkStart = async () => {
-    if (this.hasAutoLinkStartRun) {
-      return;
-    }
-    const { suppressAutoLinkStart } = this.props.navigation?.state?.params || {};
-    if (suppressAutoLinkStart) {
-      return;
-    }
-    this.hasAutoLinkStartRun = true;
-    if (this.hasIntroSequence(this.state.allMessages)) {
-      return;
-    }
-    await this.sendCommand('/linkstart');
-  };
-
-  decodeKeyValueEntry = kv => {
-    if (!kv) {
-      return kv;
-    }
-    let key = kv.key;
-    let value = kv.value;
-
-    try {
-      key = kv.key ? decodeBase64(kv.key) : kv.key;
-    } catch (error) {
-      key = kv.key;
-    }
-
-    if (value) {
-      try {
-        value = b64decode(value);
-      } catch (error) {
-        value = kv.value;
-      }
-    }
-
-    return { ...kv, key, value };
-  };
-
-  parseWelcomeEnvelope = value => {
-    if (!value) {
-      return '';
-    }
-    if (typeof value !== 'string') {
-      return String(value);
-    }
-    try {
-      const parsed = JSON.parse(value);
-      return parsed.text || parsed.cipher || value;
-    } catch (error) {
-      return value;
-    }
-  };
-
-  getNamespaceById = namespaceId => {
-    const namespaces = this.props?.namespaceList?.namespaces || {};
-    const direct = namespaces?.[namespaceId];
-    if (direct) {
-      return {
-        ...direct,
-        namespaceId: direct.namespaceId || direct.id || namespaceId,
-      };
-    }
-    const target = String(namespaceId || '').trim();
-    return (
-      Object.values(namespaces).find(entry => String(entry?.namespaceId || entry?.id || '').trim() === target) || null
-    );
-  };
-
-
-  resolveNamespaceContext = () => {
-    const { navigation } = this.props;
-    const { namespaceId, shortCode } = navigation.state.params || {};
-    if (!namespaceId) {
-      return null;
-    }
-
-    const namespace = this.getNamespaceById(namespaceId);
-    const resolvedNamespaceId = namespace?.namespaceId || namespaceId;
-    const scriptHash = namespace?.rootAddress
-      ? toScriptHash(namespace.rootAddress)
-      : getNamespaceScriptHash(resolvedNamespaceId);
-    const agentId = shortCode || resolvedNamespaceId;
-
-    return {
-      agentId,
-      namespace,
-      namespaceId: resolvedNamespaceId,
-      scriptHash,
-    };
-  };
-
-  fetchNamespaceKeyValues = async () => {
-    const context = this.resolveNamespaceContext();
-    if (!context) {
-      return null;
-    }
-
-    try {
-      await BlueElectrum.ping();
-      if (typeof BlueElectrum.waitTillConnected === 'function') {
-        await BlueElectrum.waitTillConnected();
-      }
-      const response = await BlueElectrum.blockchainKeva_getKeyValues(context.scriptHash, -1);
-      const keyvalues = Array.isArray(response) ? response : response?.keyvalues || [];
-      return {
-        context,
-        keyvalues: keyvalues.map(this.decodeKeyValueEntry),
-      };
-    } catch (error) {
-      console.warn('AgentChat: failed to fetch keyvalues', error);
-      return null;
-    }
-  };
-
-  fetchLatestKeyValue = async keyName => {
-    const data = await this.fetchNamespaceKeyValues();
-    if (!data?.keyvalues?.length) {
-      return null;
-    }
-
-    const entry = data.keyvalues
-      .slice()
-      .reverse()
-      .find(item => item?.key === keyName);
-
-    if (!entry) {
-      return null;
-    }
-    if (typeof entry.value === 'string') {
-      return entry.value;
-    }
-    if (entry.value === null || typeof entry.value === 'undefined') {
-      return '';
-    }
-    return String(entry.value || '');
-  };
-
-  fetchWelcomeValue = async () => {
-    try {
-      const value = await this.fetchLatestKeyValue('welcome');
-      if (!value) {
-        return null;
-      }
-      const parsedValue = this.parseWelcomeEnvelope(value);
-      const welcomeText = typeof parsedValue === 'string' ? parsedValue.trim() : String(parsedValue || '').trim();
-      return welcomeText || null;
-    } catch (error) {
-      console.warn('AgentChat: failed to load welcome message', error);
-      return null;
-    }
-  };
-
-  handleWelcomeLookup = async () => {
-    const welcomeText = await this.fetchWelcomeValue();
-    if (welcomeText) {
-      this.replyFromAgent(welcomeText);
-      return;
-    }
-    this.replyFromAgent(getCommandUsageMessage('welcome'));
-  };
-
-  handleWelcomeCommand = async rawValue => {
-    const { navigation } = this.props;
-    const { namespaceId, walletId } = navigation.state.params || {};
-    const value = String(rawValue || '')
-      .trim()
-      .slice(0, 1000);
-
-    if (!value) {
-      this.replyFromAgent('Welcome message is empty.');
-      return;
-    }
-    if (!namespaceId || !walletId) {
-      this.replyFromAgent('Missing namespace or wallet information to save welcome message.');
-      return;
-    }
-
-    const wallet = BlueApp.getWallets().find(w => w.getID() === walletId);
-    if (!wallet) {
-      this.replyFromAgent('Wallet not found for this agent.');
-      return;
-    }
-
-    try {
-      await this.updateKeyValue({
-        wallet,
-        namespaceId,
-        key: 'welcome',
-        value,
-      });
-      this.replyFromAgent('Saved welcome message on-chain.');
-    } catch (e) {
-      console.warn('AgentChat: failed to save welcome', e);
-      this.replyFromAgent('Failed to save welcome message.');
-    }
-  };
-
-  updateKeyValue = async ({ wallet, namespaceId, key, value }) => {
-    await BlueElectrum.ping();
-    if (typeof BlueElectrum.waitTillConnected === 'function') {
-      await BlueElectrum.waitTillConnected();
-    }
-    const { tx } = await updateKeyValue(wallet, FALLBACK_DATA_PER_BYTE_FEE, namespaceId, key, value);
-    const result = await BlueElectrum.broadcast(tx);
-    if (result?.code) {
-      throw new Error(result.message || 'Broadcast failed');
-    }
-    await BlueApp.saveToDisk();
-    return result;
   };
 
   readStoryBlockCache = async () => {
@@ -2465,22 +2725,37 @@ class AgentChat extends React.Component {
     return height;
   };
 
+  getFreshOrCachedBlockHeight = async () => {
+    try {
+      await BlueElectrum.ping();
+      if (typeof BlueElectrum.waitTillConnected === 'function') {
+        await BlueElectrum.waitTillConnected();
+      }
+      const height = await BlueElectrum.blockchainBlock_count();
+      await this.writeStoryBlockCache(height);
+      return Number.isFinite(Number(height)) ? Number(height) : null;
+    } catch (error) {
+      const cached = await this.readStoryBlockCache();
+      if (cached && cached.height > 0) {
+        return Number(cached.height);
+      }
+      console.warn('Failed to fetch fresh story block height', error);
+      return null;
+    }
+  };
+
   replyWithCurrentBlock = async (opts = {}) => {
     try {
       const height = await this.getCachedOrFetchBlockHeight();
-      const resultText = `Current block: ${height}`;
+      const resultText = this.getStoryMenuText('currentBlock', { height });
       if (!opts?.silent) {
         this.replyFromAgent(resultText);
-      } else {
-        this.appendStoryCommandMessage(resultText);
       }
       return height;
     } catch (e) {
-      const errText = `Failed to fetch current block: ${String(e?.message || e)}`;
+      const errText = this.getStoryMenuText('currentBlockFailed', { error: String(e?.message || e) });
       if (!opts?.silent) {
         this.replyFromAgent(errText);
-      } else {
-        this.appendStoryCommandMessage(errText);
       }
       console.warn('AgentChat: /block failed', e);
       return null;
@@ -2502,36 +2777,25 @@ class AgentChat extends React.Component {
   };
 
   replyFromAgent = text => {
-    const reply = this.buildMessage(text, 'agent');
-    this.appendMessage(reply);
+    const t = String(text || '')
+      .trim()
+      .toLowerCase();
 
-    // Story: after "model selected" -> auto /d menu
-    if (this.isStoryScope) {
-      const t = String(text || '')
-        .trim()
-        .toLowerCase();
+    const isModelSelectedMsg = t.includes('model selected');
 
-      // 只要包含 "model selected" 就触发（兼容 custom/builtin）
-      const isModelSelectedMsg = t.includes('model selected');
-
-      if (isModelSelectedMsg) {
-        // 1s 防抖，避免重复提示导致连环触发
-        const now = Date.now();
-        if (this._lastAutoDAt && now - this._lastAutoDAt < 1000) return;
-        this._lastAutoDAt = now;
-
-        // 不写入一条用户消息 "/d"，直接回到 /d 菜单
-        requestAnimationFrame(() => this.handleDestinyCommand('menu'));
-      }
+    if (isModelSelectedMsg) {
+      const now = Date.now();
+      if (this._lastAutoDAt && now - this._lastAutoDAt < 1000) return;
+      this._lastAutoDAt = now;
+      this.setStoryLinkStatus(this.getStoryMenuText('modelReady'), '', { waiting: true });
+      return;
     }
-  };
 
-  replyFromAgentSeedCard = (text, copyText, linkLabel = 'Copy full Destiny Seed Card') => {
-    const reply = {
-      ...this.buildMessage(text, 'agent'),
-      copyText,
-      linkLabel,
-    };
+    const reply = this.buildMessage(text, 'agent');
+    if (String(text || '').trim()) {
+      this.setStoryLinkStatus(this.getStoryMenuText('linkActive'));
+      this.maybeFinalizeStoryRunFromText(text);
+    }
     this.appendMessage(reply);
   };
 
@@ -2631,13 +2895,357 @@ class AgentChat extends React.Component {
     });
   };
 
-  handleLangCommand = async argsString => {
-    if (!this.isStoryScope) {
-      showStatus(this.getStoryMenuText('langOnlyStory'), 2000);
-      return true;
+  appendPersistentStoryStatusMessage = async text => {
+    const cleanText = String(text || '').trim();
+    if (!cleanText) {
+      return null;
     }
+
+    const message = {
+      ...this.buildMessage(cleanText, 'agent'),
+      _renderMode: 'commands',
+      _localOnly: true,
+      _storyStatusRecord: true,
+    };
+
+    this.appendMessage(message, 'user', {
+      _renderMode: 'commands',
+      _localOnly: true,
+      _storyStatusRecord: true,
+    });
+
+    const normalized = this.normalizeCurrentStoryMessage(message);
+    if (!normalized) {
+      return null;
+    }
+
+    const merged = this.mergeMessagesById([
+      ...(Array.isArray(this._currentStorySnapshot?.messages) ? this._currentStorySnapshot.messages : []),
+      ...(Array.isArray(this.state?.currentStoryMessages) ? this.state.currentStoryMessages : []),
+      normalized,
+    ]);
+    await this.persistCurrentStoryMessages(merged);
+    return normalized;
+  };
+
+  getLatestStoryUserMessage = messages => {
+    const ordered = this.sortMessagesByTime(Array.isArray(messages) ? messages : []);
+    for (let i = ordered.length - 1; i >= 0; i -= 1) {
+      const message = ordered[i];
+      if (message?.sender !== 'user' || message?._localOnly || message?._renderMode === 'commands') continue;
+      const text = String(message?._modelText || message?.text || '').trim();
+      if (!text) continue;
+      return message;
+    }
+    return null;
+  };
+
+  isSyntheticStoryFallbackChoice = messageOrChoice => {
+    const fallbackTexts = Object.values(STORY_OPTION_FALLBACK_TEXTS);
+    const fallbackPrompts = Object.values(STORY_OPTION_FALLBACK_PROMPTS);
+    if (messageOrChoice && typeof messageOrChoice === 'object') {
+      const text = String(messageOrChoice?._modelText || messageOrChoice?.text || '').trim();
+      return (
+        fallbackTexts.includes(text) ||
+        fallbackPrompts.includes(text) ||
+        messageOrChoice?._choiceMeta?.source === STORY_EMPTY_OPTION_FALLBACK_SOURCE ||
+        messageOrChoice?._choiceMeta?.syntheticFallback === true
+      );
+    }
+    const value = String(messageOrChoice || '').trim();
+    return fallbackTexts.includes(value) || fallbackPrompts.includes(value);
+  };
+
+  maybeAutoAdvanceStoryOnEmptyChoices = async (messages = null) => {
+    if (!this.isStoryScope || this._storyOptionRepairInFlight) return false;
+
+    const sourceMessages = this.mergeMessagesById(Array.isArray(messages) ? messages : this.state.currentStoryMessages || []);
+    const phase = String(this._currentStorySnapshot?.phase || this.state.currentStoryPhase || '');
+    if (!phase || phase === 'boot') return false;
+
+    const lastSubmittedChoiceAt = this.getLatestStoryChoiceSubmissionAt();
+    let latestAgentReply =
+      lastSubmittedChoiceAt > 0
+        ? this.getLatestEligibleAgentMessageAfterChoice(sourceMessages, lastSubmittedChoiceAt)
+        : this.getLatestStoryAgentReplyIgnoringSubmission(sourceMessages);
+    if (
+      !latestAgentReply &&
+      lastSubmittedChoiceAt > 0 &&
+      !this.hasPersistedStorySubmissionMessage(sourceMessages, lastSubmittedChoiceAt) &&
+      !this.hasPendingStoryAgentMessage(sourceMessages)
+    ) {
+      latestAgentReply = this.getLatestStoryAgentReplyIgnoringSubmission(sourceMessages);
+    }
+    if (!latestAgentReply?.id) return false;
+    if (this._storyOptionRepairSourceMessageId === latestAgentReply.id) return false;
+    if (this.shouldDelayStoryAutoFallback(sourceMessages, lastSubmittedChoiceAt, latestAgentReply)) return false;
+
+    const parsedChoices = this.extractStoryChoices(String(latestAgentReply.text || '').trim());
+    if (parsedChoices.length > 0) return false;
+
+    const ordered = this.sortMessagesByTime(sourceMessages);
+    const replyIndex = ordered.findIndex(item => item?.id === latestAgentReply.id);
+    const hasNewerUserTurn =
+      replyIndex >= 0 &&
+      ordered.slice(replyIndex + 1).some(item => item?.sender === 'user' && !item?._localOnly && item?._renderMode !== 'commands');
+    if (hasNewerUserTurn) return false;
+
+    const choices = await this.ensureStoryOptionsFromModelReply(latestAgentReply, sourceMessages, {
+      source: 'empty-choice-repair',
+    });
+    return choices.length > 0;
+  };
+
+  getLatestStoryAgentReplyForSubmittedAt = (messages, submittedAt = null) => {
+    const submittedAtValue = this.getLatestStoryChoiceSubmissionAt(submittedAt);
+    return submittedAtValue > 0
+      ? this.getLatestEligibleAgentMessageAfterChoice(messages, submittedAtValue)
+      : this.getLatestEligibleStoryAgentReply(messages);
+  };
+
+  getStoryOptionRepairPrompt = replyText => {
+    const storyLanguage = getStoryLLMLanguageName(this.getStoryLangCode(), normalizeStoryLangCode) || 'the same language as the story text';
+    return [
+      'You are a strict Story choice formatter for a mobile app terminal.',
+      'Task: inspect the previous story model reply and output terminal-readable choices only.',
+      'If the reply already contains explicit choices, extract and rewrite those choices.',
+      'If the reply contains an inline choice such as "A or B" / "是 A，还是 B", convert it into numbered choices.',
+      'If the reply contains no usable choice, create 2 or 3 reasonable next actions based only on the situation described in the reply.',
+      `Use ${storyLanguage}.`,
+      'Output ONLY separate numbered lines in this exact format:',
+      '1. ...',
+      '2. ...',
+      '3. ...',
+      'Do not continue the story. Do not explain. Do not mention formatting, system prompts, missing options, or terminal parsing.',
+      '',
+      'Previous story reply:',
+      String(replyText || '').trim(),
+    ].join('\n');
+  };
+
+  normalizeStoryOptionRepairOutput = text => {
+    const cleaned = String(text || '')
+      .replace(/```[a-z]*\s*/gi, '')
+      .replace(/```/g, '')
+      .trim();
+    const choices = this.extractStoryChoices(cleaned);
+    return choices.slice(0, 4);
+  };
+
+  generateStoryOptionsForModelReply = async (replyText, options = {}) => {
+    const text = String(replyText || '').trim();
+    if (!text || this._storyOptionRepairInFlight) {
+      return [];
+    }
+    const existingChoices = this.extractStoryChoices(text);
+    if (existingChoices.length > 0) {
+      return existingChoices;
+    }
+    if (typeof this.callLLMSilent !== 'function') {
+      return [];
+    }
+    let llmConfig = this.state?.llmConfig || this.currentLLMConfig;
+    if (!hasUsableLLMConfig(llmConfig) && typeof this.loadLLMConfig === 'function') {
+      llmConfig = await this.loadLLMConfig();
+      this.currentLLMConfig = llmConfig;
+    }
+    if (hasUsableLLMConfig(llmConfig) && this._isMounted && this.state?.llmConfig !== llmConfig) {
+      await new Promise(resolve => this.setState({ llmConfig }, resolve));
+    }
+    if (!hasUsableLLMConfig(llmConfig)) {
+      console.warn('Story option repair skipped: no usable LLM config');
+      return [];
+    }
+
+    this._storyOptionRepairInFlight = true;
+    try {
+      const repairPrompt = this.getStoryOptionRepairPrompt(text);
+      const repairedText = await this.callLLMSilent(repairPrompt, {
+        useRecentHistory: false,
+        skipRoleContext: true,
+      });
+      const repairedChoices = this.normalizeStoryOptionRepairOutput(repairedText);
+      if (!repairedChoices.length) {
+        console.warn('Story option repair produced no parseable choices', repairedText);
+        return [];
+      }
+      return repairedChoices;
+    } catch (error) {
+      console.warn('Failed to repair story options with LLM', options?.source || '', error);
+      return [];
+    } finally {
+      this._storyOptionRepairInFlight = false;
+    }
+  };
+
+  prepareStoryLLMReplyForDisplay = async ({ requestId, replyText, placeholder } = {}) => {
+    if (!this.isStoryScope) {
+      return [];
+    }
+    const text = String(replyText || '').trim();
+    if (!text) {
+      return [];
+    }
+    const choices = await this.generateStoryOptionsForModelReply(text, { source: 'pre-display-reply' });
+    if (choices.length > 0) {
+      this._preparedStoryReplyChoicesByRequestId = {
+        ...(this._preparedStoryReplyChoicesByRequestId || {}),
+        [String(requestId || placeholder?.requestId || '')]: choices,
+      };
+    }
+    return choices;
+  };
+
+  ensureStoryOptionsFromModelReply = async (latestAgentReply, messages = null, options = {}) => {
+    if (!this.isStoryScope || !latestAgentReply?.id) {
+      return [];
+    }
+    const replyText = String(latestAgentReply?.text || '').trim();
+    if (!replyText) {
+      return [];
+    }
+    const repairedChoices = await this.generateStoryOptionsForModelReply(replyText, options);
+    if (!repairedChoices.length) {
+      return [];
+    }
+
+    this._storyOptionRepairSourceMessageId = latestAgentReply.id;
+    const sourceMessages = this.mergeMessagesById(Array.isArray(messages) ? messages : this.state.currentStoryMessages || []);
+    await this.writeCurrentChoicesFile(repairedChoices);
+    await this.updateCurrentStoryRuntime({
+      status: 'waiting_user',
+      phase: 'exploring',
+      lastChoiceSet: repairedChoices,
+      awaitingChoice: true,
+      shouldResumeGeneration: false,
+      lastSubmittedChoiceAt: 0,
+      lastSubmittedChoiceUserMessageId: '',
+      messages: sourceMessages,
+    });
+    this.setStoryLinkStatus(this.getStoryMenuText('linkActive'));
+    return repairedChoices;
+  };
+
+  readCurrentStoryReplyFileState = async (submittedAt = null) => {
+    const path = this.getStoryCurrentPath();
+    try {
+      const exists = await RNFS.exists(path);
+      if (!exists) {
+        return { exists: false, empty: true, messages: [], latestAgentReply: null };
+      }
+
+      const raw = await RNFS.readFile(path, 'utf8');
+      if (!String(raw || '').trim()) {
+        return { exists: true, empty: true, messages: [], latestAgentReply: null };
+      }
+
+      const json = JSON.parse(raw);
+      const messages = this.mergeMessagesById(
+        (Array.isArray(json?.messages) ? json.messages : [])
+          .map(this.normalizeCurrentStoryMessage)
+          .filter(Boolean),
+      );
+      return {
+        exists: true,
+        empty: messages.length === 0,
+        messages,
+        latestAgentReply: this.getLatestStoryAgentReplyForSubmittedAt(messages, submittedAt),
+      };
+    } catch (error) {
+      console.warn('Failed to inspect current story reply file', error);
+      return { exists: false, empty: true, messages: [], latestAgentReply: null };
+    }
+  };
+
+  maybeAutoAdvanceStoryOnMissingReply = async () => false;
+
+  getLatestEligibleStoryAgentReply = messages => {
+    const ordered = this.sortMessagesByTime(Array.isArray(messages) ? messages : []);
+    const lastSubmittedChoiceAt = this.getLatestStoryChoiceSubmissionAt();
+    for (let i = ordered.length - 1; i >= 0; i -= 1) {
+      const message = ordered[i];
+      if (message?.sender !== 'agent') {
+        continue;
+      }
+      if (message?.pending || message?._localOnly || message?._renderMode === 'commands') {
+        continue;
+      }
+      const text = String(message?.text || '').trim();
+      if (!text) {
+        continue;
+      }
+      if (lastSubmittedChoiceAt > 0 && Number(message?.timestamp || 0) <= lastSubmittedChoiceAt) {
+        continue;
+      }
+      return message;
+    }
+    return null;
+  };
+
+  buildBootstrapStoryFallbackChoices = latestAgentReply => {
+    const latestText = String(latestAgentReply?.text || '').trim();
+    if (!latestText) {
+      return [];
+    }
+    const labels = getStoryBootstrapFallbackLabels(this.getStoryOptionFallbackLocale());
+    return [
+      {
+        key: '1',
+        send: '1',
+        label: labels.choice1,
+        source: STORY_BOOTSTRAP_FALLBACK_SOURCE,
+      },
+      {
+        key: '2',
+        send: '2',
+        label: labels.choice2,
+        source: STORY_BOOTSTRAP_FALLBACK_SOURCE,
+      },
+      {
+        key: '3',
+        send: '3',
+        label: labels.choice3,
+        source: STORY_BOOTSTRAP_FALLBACK_SOURCE,
+      },
+    ];
+  };
+
+  maybeRecoverBootstrapStoryChoices = async messages => {
+    if (!this.isStoryScope || !this._isMounted) {
+      return [];
+    }
+
+    const storyMessages = this.sortMessagesByTime(Array.isArray(messages) ? messages : []);
+    if (!storyMessages.length) {
+      return [];
+    }
+
+    const lastSubmittedChoiceAt = this.getLatestStoryChoiceSubmissionAt();
+    if (lastSubmittedChoiceAt > 0) {
+      return [];
+    }
+
+    const latestAgentReply = this.getLatestEligibleStoryAgentReply(storyMessages);
+    if (!latestAgentReply?.id) {
+      return [];
+    }
+
+    const parsedChoices = this.extractStoryChoices(String(latestAgentReply.text || '').trim());
+    if (parsedChoices.length > 0) {
+      return [];
+    }
+
+    return this.ensureStoryOptionsFromModelReply(latestAgentReply, storyMessages, {
+      source: 'bootstrap-option-repair',
+    });
+  };
+
+  maybeAutoSubmitStoryFallbackChoice = async () => false;
+
+  handleLangCommand = async argsString => {
     const args = String(argsString || '').trim();
     if (!args) {
+      this.setStoryLinkStatus(this.getStoryMenuText('languageRequired'), this.getStoryMenuText('selectOutputLanguage'));
       this.appendStoryCommandMessage(this.getStoryLangMenuMessage());
       return true;
     }
@@ -2651,23 +3259,13 @@ class AgentChat extends React.Component {
     }
 
     await this.setStoryLangCode(normalizedArg);
+    this.setStoryLinkStatus(this.getStoryMenuText('languageLocked'), `${getStoryLangLabel(normalizedArg)} (${normalizedArg})`);
     this.appendStoryCommandMessage(this.getStoryLangMenuMessage());
-
-    if (this.state.pendingDestinyRun) {
-      const pendingMode = this.state.pendingDestinyMode || 'menu';
-      await new Promise(resolve => this.setState({ pendingDestinyRun: false, pendingDestinyMode: null }, resolve));
-      await this.handleDestinyCommand(pendingMode);
-    } else {
-      await this.handleDestinyCommand('menu');
-    }
-
+    await new Promise(resolve => this.setState({ pendingDestinyRun: false, pendingDestinyMode: null }, resolve));
     return true;
   };
 
   getStoryLangCode = () => {
-    if (!this.isStoryScope) {
-      return null;
-    }
     const code = this.state.storyLangCode;
     if (!code) {
       return null;
@@ -2677,46 +3275,138 @@ class AgentChat extends React.Component {
 
   getStoryLocale = () => normalizeStoryLangCode(this.getStoryLangCode() || getDefaultStoryLangCode());
 
-  getStoryMenuText = (key, vars = {}) => {
-    const locale = this.getStoryLocale();
-    const base = String(locale || '').split('-')[0];
+  getStoryOptionFallbackLocale = () =>
+    normalizeStoryLangCode(this.getActiveRoleLanguageCode() || this.getStoryLocale() || getDefaultStoryLangCode());
 
-    const table = STORY_MENU_MESSAGES[locale] || STORY_MENU_MESSAGES[base] || STORY_MENU_MESSAGES.en;
+  getStoryEmptyOptionFallbackText = () => getStoryOptionFallbackText(this.getStoryOptionFallbackLocale());
 
-    let text = (table && table[key]) || (STORY_MENU_MESSAGES.en && STORY_MENU_MESSAGES.en[key]) || '';
-    Object.keys(vars).forEach(k => {
-      text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(vars[k]));
-    });
-    return text;
-  };
+  getStoryEmptyOptionFallbackPrompt = () => getStoryOptionFallbackPrompt(this.getStoryOptionFallbackLocale());
+
+  getStoryMenuText = (key, vars = {}) => getStoryMenuTextForLocale(key, vars, this.getStoryLocale());
+
+  getStoryStatusLocale = () =>
+    normalizeStoryLangCode(this.getActiveRoleLanguageCode() || this.getStoryLangCode() || getDefaultStoryLangCode());
+
+  getStoryStatusText = (key, vars = {}, locale = null) =>
+    getStoryMenuTextForLocale(key, vars, normalizeStoryLangCode(locale || this.getStoryStatusLocale()));
+
+  waitStoryStatusInterval = (delayMs = 500) => new Promise(resolve => setTimeout(resolve, delayMs));
 
   getDestinyModeFromArg = value => {
     const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'auto') {
+      return 'auto';
+    }
     if (normalized === 'continue') {
       return 'continue';
     }
     if (normalized === 'new') {
       return 'new';
     }
+    if (normalized === 'settings') {
+      return 'settings';
+    }
+    if (normalized === 'record') {
+      return 'record';
+    }
+    if (normalized === 'reconnect') {
+      return 'reconnect';
+    }
+    if (normalized === 'clear') {
+      return 'clear';
+    }
     return 'menu';
   };
 
   buildDestinyModeMenuMessage = () => {
+    const hasCurrentStory = Array.isArray(this.state.currentStoryMessages) && this.state.currentStoryMessages.some(message => message?.sender && !message._localOnly && message._renderMode !== 'commands');
+    const lines = [];
+    if (hasCurrentStory) {
+      lines.push(`[[/d continue|${this.getStoryMenuText('continueStory')}]]`);
+      lines.push('');
+    }
+    lines.push(`[[/d new|${this.getStoryMenuText('startNew')}]]`);
+    lines.push('');
+    lines.push(`[[/d settings|${this.getStoryMenuText('settings')}]]`);
+    return lines.join('\n');
+  };
+
+  buildDestinySettingsMenuMessage = () => {
     return [
-      this.getStoryMenuText('destinyTitle'),
+      `[[/d record|${this.getStoryMenuText('viewRecord')}]]`,
       '',
-      `[[/d continue|${this.getStoryMenuText('continueStory')}]]`,
+      `[[/d clear|${this.getStoryMenuText('clearRecord')}]]`,
       '',
-      `[[/d new|${this.getStoryMenuText('startNew')}]]`,
-      '',
-      `[[/lang|${this.getStoryMenuText('changeLanguage')}]]`,
-      '',
-      `[[/a list|${this.getStoryMenuText('changeModel')}]]`,
+      `[[/d|${this.getStoryMenuText('back')}]]`,
     ].join('\n');
   };
 
+  buildCurrentStoryRecordMessage = () => {
+    const currentMessages = Array.isArray(this.state.currentStoryMessages) ? this.state.currentStoryMessages.filter(Boolean) : [];
+    if (!currentMessages.length) {
+      return this.getStoryMenuText('noCurrentStory');
+    }
+    const lines = [this.getStoryMenuText('currentStoryTitle'), ''];
+    currentMessages.forEach(message => {
+      const role = message?.sender === 'user' ? 'U' : 'A';
+      const rawBody = String(message?._modelText || message?.text || '').trim();
+      const body = role === 'A' ? this.stripStoryChoiceLines(rawBody) : rawBody;
+      if (body) lines.push(`${role}: ${body}`);
+    });
+    return lines.join('\n');
+  };
+
+  resetStoryStorageAndRestart = async () => {
+    try {
+      const nextStorySessionId = this.getStorySessionId();
+      this.setStoryPersistenceUnlocked(false);
+      if (await RNFS.exists(this.agentChatDir)) {
+        await RNFS.unlink(this.agentChatDir).catch(() => {});
+      }
+      this._currentStorySnapshot = this.createEmptyCurrentStoryState(nextStorySessionId);
+      this._pendingChoiceSubmissionAt = 0;
+      this._pendingChoiceUserMessageId = null;
+      this._storyAutoFallbackInFlight = false;
+      this._storyAutoFallbackSourceMessageId = null;
+      await this.clearCurrentAlphaLog();
+      await ensureStoryDirs(this.agentChatDir);
+      await ensureAlphaDirs(this.agentChatDir);
+      this.loadedDateKeys = [];
+      this.allDateKeys = [];
+      await new Promise(resolve =>
+        this.setState(
+          {
+            allMessages: [],
+            messages: [],
+            visibleCount: PAGE_SIZE,
+            currentStoryMessages: [],
+            currentStorySessionId: nextStorySessionId,
+            currentStoryChoices: [],
+            currentStoryHasStoryFile: false,
+            currentStoryHasChoiceFile: false,
+            currentStoryLastChoiceSet: [],
+            currentStoryAwaitingChoice: false,
+            currentStoryStatus: 'idle',
+            currentStoryPhase: 'boot',
+            currentStoryEntryMode: 'new',
+            currentStoryShouldResumeGeneration: false,
+            lastSubmittedChoiceAt: 0,
+            currentAlpha: null,
+            baseAlpha: null,
+          },
+          resolve,
+        )
+      );
+      await this.hydrateStoryUiFromStorage();
+      this.setStoryLinkStatus(this.getStoryMenuText('linkWaiting'), this.getStoryMenuText('awaitingSignal'), { waiting: true });
+    } catch (error) {
+      console.warn('Failed to reset story storage', error);
+      toastError(error);
+    }
+  };
+
   buildDestinyCurrentLanguageNotice = () => {
-    const code = this.getStoryLangCode();
+    const code = this.getActiveRoleLanguageCode() || this.getStoryLangCode();
     if (!code) {
       return this.getStoryMenuText('currentLanguageNotSet');
     }
@@ -2725,9 +3415,6 @@ class AgentChat extends React.Component {
   };
 
   buildStoryCondensedMemory = async (limit = 50) => {
-    if (!this.isStoryScope) {
-      return '';
-    }
     try {
       const digestDir = `${this.agentChatDir}/digest`;
       const exists = await RNFS.exists(digestDir);
@@ -2779,136 +3466,391 @@ class AgentChat extends React.Component {
     }
   };
 
-  handleDestinyCommand = async modeArg => {
-    const mode = this.getDestinyModeFromArg(modeArg);
-    if (!this.isStoryScope) {
-      const height = await this.replyWithCurrentBlock({ silent: true });
-      this._latestStoryBlockHeight = height;
-      await this.startDestinyRun({ memoryMode: mode === 'continue' ? 'continue' : 'new', condensedMemory: '' });
-      return;
-    }
-
-    const lang = this.getStoryLangCode();
-    if (!lang) {
-      await new Promise(resolve =>
-        this.setState({ pendingDestinyRun: true, pendingDestinyMode: mode }, resolve)
-      );
-      await this.handleLangCommand('');
-      return;
-    }
-
-    this.appendStoryCommandMessage(this.buildDestinyCurrentLanguageNotice());
-
-    if (mode === 'menu') {
-      this.setState({ pendingReturnToDestinyMenu: false, pendingModelFinalConfirm: false });
-      this.appendStoryCommandMessage(this.buildDestinyModeMenuMessage());
-      return;
-    }
-
-    if (mode === 'continue') {
-      const height = await this.replyWithCurrentBlock({ silent: true });
-      this._latestStoryBlockHeight = height;
-      const condensedMemory = await this.buildStoryCondensedMemory();
-      await this.startDestinyRun({ memoryMode: 'continue', condensedMemory });
-      return;
-    }
-
+  startFreshStoryRun = async (options = {}) => {
+    this.setStoryPersistenceUnlocked(true);
+    this.setStoryLinkStatus(this.getStoryMenuText('linking'), this.getStoryMenuText('linkingAgu'), { waiting: true });
+    const roleContext = this.currentRoleContext || (await this.loadCurrentRoleForStory());
+    const alphaState = roleContext ? await this.ensureStoryAlphaState(roleContext) : null;
     const height = await this.replyWithCurrentBlock({ silent: true });
     this._latestStoryBlockHeight = height;
-    await this.startDestinyRun({ memoryMode: 'new', condensedMemory: '' });
+    await this.archiveCurrentStoryToRaw();
+    const statusLocale = normalizeStoryLangCode(options?.statusLocale || this.getStoryStatusLocale());
+    const statusDelayMs = Number.isFinite(Number(options?.statusDelayMs)) ? Number(options.statusDelayMs) : 500;
+    const roleReadyText = String(options?.roleReadyText || '').trim();
+    const hyperconstructTransferText = String(options?.hyperconstructTransferText || '').trim();
+    if (roleReadyText) {
+      await this.appendPersistentStoryStatusMessage(roleReadyText);
+      await this.waitStoryStatusInterval(statusDelayMs);
+    }
+    if (hyperconstructTransferText) {
+      await this.appendPersistentStoryStatusMessage(hyperconstructTransferText);
+      await this.waitStoryStatusInterval(statusDelayMs);
+    }
+    if (Number.isFinite(Number(height)) && Number(height) > 0) {
+      await this.appendPersistentStoryStatusMessage(this.getStoryStatusText('blockTime', { height: Number(height) }, statusLocale));
+      await this.waitStoryStatusInterval(statusDelayMs);
+    }
+    const connectionText =
+      this.getStoryStatusText('linkingAgu', {}, statusLocale) || 'Connecting to the All Generative Universe System network…';
+    await this.appendPersistentStoryStatusMessage(connectionText);
+    this.setStoryLinkStatus(this.getStoryStatusText('linking', {}, statusLocale) || this.getStoryMenuText('linking'), connectionText, { waiting: true });
+    await this.waitStoryStatusInterval(statusDelayMs);
+    this.setStoryPersistenceUnlocked(true);
+    await this.updateCurrentStoryRuntime(
+      {
+        status: 'waiting_agent',
+        phase: 'boot',
+        entryMode: 'new',
+        roleName: String(roleContext?.roleName || this.state.currentStoryRoleName || ''),
+        roleSlug: String(roleContext?.roleSlug || this.state.currentStoryRoleSlug || ''),
+        currentAlpha: this.normalizeStoryAlphaValue(alphaState?.currentAlpha ?? this.state.currentAlpha),
+        baseAlpha: this.normalizeStoryAlphaValue(alphaState?.baseAlpha ?? this.state.baseAlpha),
+      },
+      { allowCreate: true }
+    );
+    await this.startDestinyRun({
+      memoryMode: 'new',
+      condensedMemory: '',
+      persistStartupStatus: true,
+      skipStartupConnectionMessage: true,
+      statusDelayMs,
+      statusLocale,
+    });
+
+    const hasFreshChoices =
+      (Array.isArray(this.state.currentStoryChoices) && this.state.currentStoryChoices.length > 0) ||
+      (Array.isArray(this._currentStorySnapshot?.lastChoiceSet) && this._currentStorySnapshot.lastChoiceSet.length > 0) ||
+      Boolean(this.state.currentStoryAwaitingChoice || this._currentStorySnapshot?.awaitingChoice);
+
+    if (!hasFreshChoices) {
+      this.setStoryLinkStatus(this.getStoryMenuText('uplinkSent'), this.getStoryMenuText('waitingFieldResponseLower'), { waiting: true });
+    }
+  };
+
+  handleDestinyCommand = async modeArg => {
+    const mode = this.getDestinyModeFromArg(modeArg);
+
+    const roleContext = this.currentRoleContext || (await this.loadCurrentRoleForStory());
+    if (!roleContext) {
+      this.setStoryLinkStatus(this.getStoryMenuText('roleRequired'), this.getStoryMenuText('roleRequiredDetail'));
+      return;
+    }
+
+    await this.ensureStoryAlphaState(roleContext);
+
+    if (mode === 'menu') {
+      this.appendStoryCommandMessage(this.buildDestinySettingsMenuMessage());
+      this.setStoryLinkStatus(this.getStoryMenuText('linkIdle'), this.getStoryMenuText('chooseExplicitAction'));
+      return;
+    }
+
+    if (mode === 'auto') {
+      this.appendStoryCommandMessage(this.buildDestinySettingsMenuMessage());
+      this.setStoryLinkStatus(this.getStoryMenuText('linkIdle'), this.getStoryMenuText('autoStartDisabled'));
+      return;
+    }
+
+    if (mode === 'settings') {
+      this.appendStoryCommandMessage(this.buildDestinySettingsMenuMessage());
+      return;
+    }
+
+    if (mode === 'record') {
+      this.appendStoryCommandMessage(this.buildCurrentStoryRecordMessage());
+      return;
+    }
+
+    if (mode === 'reconnect') {
+      await this.startFreshStoryRun();
+      return;
+    }
+
+    if (mode === 'clear') {
+      this.setStoryLinkStatus(this.getStoryMenuText('resettingStory'), this.getStoryMenuText('clearingCurrentSession'));
+      await this.resetStoryStorageAndRestart();
+      return;
+    }
+
+    const statusLocale = this.getStoryStatusLocale();
+    const roleReadyText = this.getStoryStatusText('roleReadyTransfer', {
+      role: roleContext.roleName || this.getStoryStatusText('thisRole', {}, statusLocale),
+    }, statusLocale);
+    const hyperconstructTransferText = this.getStoryStatusText('hyperconstructTransfer', {}, statusLocale);
+
+    if (mode === 'continue') {
+      try {
+        this.setStoryLinkStatus(this.getStoryMenuText('linking'), this.getStoryMenuText('resumingCurrentStory'), { waiting: true });
+        const height = await this.replyWithCurrentBlock({ silent: true });
+        this._latestStoryBlockHeight = height;
+
+        const storyState = this._currentStorySnapshot || (await this.readCurrentStoryFile());
+        const existingMessages = this.mergeMessagesById(Array.isArray(storyState?.messages) ? storyState.messages : []);
+        const existingChoices = await this.readCurrentChoicesFile();
+        const hasStoredProgress =
+          (await RNFS.exists(this.getStoryCurrentPath())) ||
+          existingMessages.length > 0 ||
+          (Array.isArray(existingChoices) && existingChoices.length > 0);
+
+        if (!hasStoredProgress) {
+          await this.startFreshStoryRun({ roleReadyText, hyperconstructTransferText, statusLocale });
+          return;
+        }
+
+        const refreshedState = await this.refreshMessagesFromStorage();
+        const hydratedChoices = Array.isArray(refreshedState?.currentStoryChoices) ? refreshedState.currentStoryChoices : [];
+        const hasHydratedChoices = hydratedChoices.length > 0;
+
+        const shouldResumePendingReply =
+          !hasHydratedChoices &&
+          (Boolean(storyState?.shouldResumeGeneration) || String(storyState?.status || '') === 'waiting_agent');
+
+        if (shouldResumePendingReply) {
+          await this.updateCurrentStoryRuntime({
+            status: 'waiting_agent',
+            phase: 'exploring',
+            entryMode: 'continue',
+            lastChoiceSet: [],
+            awaitingChoice: false,
+            shouldResumeGeneration: false,
+          });
+
+          await this.startDestinyRun({
+            memoryMode: 'continue',
+            condensedMemory: await this.buildStoryCondensedMemory(),
+          });
+          return;
+        }
+
+        await this.updateCurrentStoryRuntime({
+          status: hasHydratedChoices ? 'waiting_user' : String(storyState?.status || 'exploring'),
+          phase: String(storyState?.phase || 'exploring'),
+          entryMode: 'continue',
+          lastChoiceSet: hydratedChoices,
+          awaitingChoice: hasHydratedChoices,
+          shouldResumeGeneration: false,
+        });
+
+        this.setStoryLinkStatus(
+          hasHydratedChoices ? this.getStoryMenuText('linkActive') : this.getStoryMenuText('linkWaiting'),
+          '',
+          { waiting: !hasHydratedChoices }
+        );
+        return;
+      } catch (error) {
+        console.warn('Failed to continue story', error);
+        this.setStoryLinkStatus(this.getStoryMenuText('reconnectRequired'), String(error?.message || error || this.getStoryMenuText('continueFailed')));
+        throw error;
+      }
+    }
+
+    try {
+      await this.startFreshStoryRun({ roleReadyText, hyperconstructTransferText, statusLocale });
+    } catch (error) {
+      console.warn('Failed to start story', error);
+      this.setStoryLinkStatus(this.getStoryMenuText('reconnectRequired'), String(error?.message || error || this.getStoryMenuText('startFailed')));
+      throw error;
+    }
     return;
   };
 
+  reportStoryContinueFailure = async error => {
+    const errorMessage = String(error?.message || error || this.getStoryMenuText('continueFailed'));
+    const failureText = this.getStoryMenuText('storyContinueFailed', { error: errorMessage });
+    const failureMessage = this.buildMessage(failureText, 'agent');
+
+    this._pendingChoiceSubmissionAt = 0;
+    this._pendingChoiceUserMessageId = null;
+
+    if (this._isMounted) {
+      this.setState(
+        prevState => {
+          const nextCurrentStoryMessages = this.mergeMessagesById([
+            ...(prevState.currentStoryMessages || []),
+            this.normalizeCurrentStoryMessage(failureMessage),
+          ].filter(Boolean));
+          const allMessages = [...(prevState.allMessages || []), failureMessage];
+          const base = Math.max(prevState.visibleCount, PAGE_SIZE);
+          const visibleCount = Math.min(allMessages.length, base);
+
+          return {
+            allMessages,
+            currentStoryMessages: nextCurrentStoryMessages,
+            visibleCount,
+            messages: allMessages.slice(-visibleCount),
+            currentStorySessionId: prevState.currentStorySessionId || this.getStorySessionId(),
+            currentStoryChoices: [],
+            currentStoryLastChoiceSet: [],
+            currentStoryAwaitingChoice: false,
+          };
+        },
+        () => {
+          this.persistCurrentStoryMessages(this.state.currentStoryMessages);
+          this.syncStoryChoicesFromMessages(this.state.currentStoryMessages);
+        },
+      );
+    }
+
+    await this.updateCurrentStoryRuntime({
+      status: 'error',
+      phase: 'exploring',
+      entryMode: 'continue',
+      awaitingChoice: false,
+      shouldResumeGeneration: false,
+      lastChoiceSet: [],
+    });
+
+    this.setStoryLinkStatus(this.getStoryMenuText('reconnectRequired'), errorMessage);
+  };
+
+  runStoryContinueTurn = async ({ userMessage, submittedAt = null } = {}) => {
+    const effectiveSubmittedAt =
+      Number.isFinite(Number(submittedAt)) && Number(submittedAt) > 0
+        ? Number(submittedAt)
+        : Number(userMessage?.timestamp || Date.now());
+
+    this._pendingChoiceSubmissionAt = effectiveSubmittedAt;
+    this._pendingChoiceUserMessageId = userMessage?.id || null;
+
+    await this.updateCurrentStoryRuntime({
+      status: 'waiting_agent',
+      phase: 'exploring',
+      entryMode: 'continue',
+      awaitingChoice: false,
+      shouldResumeGeneration: true,
+      lastChoiceSet: [],
+      lastSubmittedChoiceAt: effectiveSubmittedAt,
+      lastSubmittedChoiceUserMessageId: userMessage?.id || '',
+    });
+
+    try {
+      this.setStoryLinkStatus(this.getStoryMenuText('linking'), this.getStoryMenuText('preparingContinueContext'), { waiting: true });
+      const condensedMemory = await this.buildStoryCondensedMemory();
+      this.setStoryLinkStatus(this.getStoryMenuText('linking'), this.getStoryMenuText('passingContinueTurn'), { waiting: true });
+      await this.startDestinyRun({
+        memoryMode: 'continue',
+        condensedMemory,
+        submittedAt: effectiveSubmittedAt,
+      });
+    } catch (error) {
+      console.warn('Failed to continue story turn', error);
+      await this.reportStoryContinueFailure(error);
+      throw error;
+    }
+  };
+
   startDestinyRun = async options => {
+    const memoryMode = options?.memoryMode || 'new';
+    const submittedAt = Number.isFinite(Number(options?.submittedAt)) ? Number(options.submittedAt) : null;
+    const roleLangCode = this.getActiveRoleLanguageCode();
+    const currentStoryLang = this.getStoryLangCode();
+    const resolvedLangCode = normalizeStoryLangCode(roleLangCode || currentStoryLang || 'en');
+
+    await this.setStoryLangCode(resolvedLangCode);
+
+    let llmConfig = this.currentLLMConfig || this.state.llmConfig;
+    if (!hasUsableLLMConfig(llmConfig) && typeof this.loadLLMConfig === 'function') {
+      llmConfig = await this.loadLLMConfig();
+      this.currentLLMConfig = llmConfig;
+      if (this._isMounted) {
+        this.setState({ llmConfig });
+      }
+    }
+    if (!hasUsableLLMConfig(llmConfig) || typeof this.replyFromLLM !== 'function') {
+      this.setStoryLinkStatus(this.getStoryMenuText('modelRequired'), this.getStoryMenuText('loadLlmBeforeLinkStart'));
+      this.appendStoryCommandMessage(this.getStoryMenuText('storyLoadedModelRequired'));
+      return;
+    }
+
     const cached = await this.readStoryBlockCache();
     const latestHeight = this._latestStoryBlockHeight || cached?.height || null;
+    const roleContext = this.currentRoleContext || (await this.loadCurrentRoleForStory());
+    const alphaState = roleContext ? await this.getStoryPromptAlphaState(roleContext, { updateRuntime: true }) : null;
+    const promptAlpha = this.normalizeStoryAlphaValue(alphaState?.currentAlpha ?? this.state.currentAlpha);
+    const roleName = String(roleContext?.roleName || this.state.currentStoryRoleName || '').trim();
+    const alphaText = promptAlpha === null ? '' : `\n${buildAlphaPromptBlock(promptAlpha)}`;
+    const params = this.props?.navigation?.state?.params || {};
+    const agentId = params.shortCode || params.namespaceId || this.agentId;
+    const storyAttributeText = buildStoryAttributePromptBlock({
+      agentId,
+      overrideCurrentBlock: latestHeight,
+      alphaOverride: promptAlpha,
+      normalizeAlphaOverride: this.normalizeStoryAlphaValue,
+    });
+    const storyFragmentImport = memoryMode !== 'continue' ? params.storyFragmentImport : null;
+    const storyFragmentBlock = buildStoryFragmentSeedBlock(storyFragmentImport);
+    const seedPrompt = `${buildDestinySeedPrompt({
+      agentId,
+      overrideCurrentBlock: latestHeight,
+      alphaOverride: promptAlpha,
+      normalizeAlphaOverride: this.normalizeStoryAlphaValue,
+    })}${roleName ? `\nROLE_NAME = ${roleName}` : ''}${alphaText}\n\n${storyAttributeText}${storyFragmentBlock ? `\n\n${storyFragmentBlock}` : ''}\n`;
+    if (storyFragmentBlock) {
+      this.props.navigation?.setParams?.({ storyFragmentImport: null });
+    }
+    const lockedLanguage = getStoryLLMLanguageName(resolvedLangCode, normalizeStoryLangCode);
+    const prompt = buildStoryAutostartHeader(lockedLanguage) + removeStoryLanguageHandshake(seedPrompt);
+    const statusLocale = normalizeStoryLangCode(options?.statusLocale || resolvedLangCode || this.getStoryStatusLocale());
+    const statusDelayMs = Number.isFinite(Number(options?.statusDelayMs)) ? Number(options.statusDelayMs) : 500;
 
-    await Destiny.handleDestinyCommand(this, {
-      buildDestinySeedPrompt: agentId => buildDestinySeedPrompt(agentId, latestHeight),
-      loc,
-      storyLangCode: this.getStoryLangCode(),
-      memoryMode: options?.memoryMode || 'new',
+    if (memoryMode !== 'continue') {
+      if (!options?.skipStartupConnectionMessage) {
+        const connectionText =
+          this.getStoryStatusText('linkingAgu', {}, statusLocale) || 'Connecting to the All Generative Universe System network…';
+        if (options?.persistStartupStatus) {
+          await this.appendPersistentStoryStatusMessage(connectionText);
+          await this.waitStoryStatusInterval(statusDelayMs);
+        } else {
+          this.appendStoryCommandMessage(connectionText);
+        }
+        this.setStoryLinkStatus(this.getStoryStatusText('linking', {}, statusLocale) || this.getStoryMenuText('linking'), connectionText, { waiting: true });
+      }
+    } else {
+      this.setStoryLinkStatus(this.getStoryMenuText('linking'), this.getStoryMenuText('passingContinueTurn'), { waiting: true });
+    }
+
+    await this.replyFromLLM(prompt, null, {
+      silentUser: true,
+      useRecentHistory: memoryMode === 'continue',
+      memoryMode,
       condensedMemory: String(options?.condensedMemory || ''),
     });
+
+    if (this.isStoryScope) {
+      const renderedStoryMessages = Array.isArray(this.state?.allMessages)
+        ? this.state.allMessages.filter(
+            message =>
+              message?.sender &&
+              !message?._isHistory &&
+              !message?._localOnly &&
+              message?._renderMode !== 'commands' &&
+              message?.sender !== 'system',
+          )
+        : [];
+      const mergedStoryMessages = this.mergeMessagesById([
+        ...(Array.isArray(this.state?.currentStoryMessages) ? this.state.currentStoryMessages : []),
+        ...renderedStoryMessages.map(this.normalizeCurrentStoryMessage).filter(Boolean),
+      ]);
+      await this.persistCurrentStoryMessages(mergedStoryMessages);
+      const didRecoverMissingReply = await this.maybeAutoAdvanceStoryOnMissingReply({
+        submittedAt,
+        source: `destiny-${memoryMode}`,
+      });
+      if (didRecoverMissingReply) {
+        return;
+      }
+      await this.reconcileStoryLinkStatusAfterAgentUpdate();
+      await this.persistCurrentStoryMessages(this.state.currentStoryMessages);
+    }
   };
 
-  getStoryLanguageInstruction = () => {
-    if (!this.isStoryScope) {
-      return '';
-    }
-    const code = this.getStoryLangCode();
-    if (!code) {
-      return '';
-    }
-    switch (code) {
-      case 'zh-cn':
-        return 'Language: Simplified Chinese. Reply only in Simplified Chinese.';
-      case 'zh-tw':
-        return 'Language: Traditional Chinese. Reply only in Traditional Chinese.';
-      case 'ja':
-        return 'Language: Japanese. Reply only in Japanese.';
-      default:
-        return `Language: ${getStoryLangLabel(code)}. Reply only in ${getStoryLangLabel(code)}.`;
-    }
-  };
+  getStoryLanguageInstruction = () => buildStoryLanguageInstruction({
+    code: this.getStoryLangCode(),
+    isStoryScope: this.isStoryScope,
+    normalizeStoryLangCode,
+    getStoryLangLabel,
+  });
 
-  isInteractiveCommand = commandText => {
-    if (!commandText) {
-      return false;
-    }
-    const trimmed = commandText.trim();
-    if (/^\/welcome\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/r\b/i.test(trimmed)) {
-      return true;
-    }
-    return true;
-  };
-
-  isValidCommandText = text => {
-    if (!text) {
-      return false;
-    }
-    const trimmed = text.trim();
-    if (!trimmed.startsWith('/')) {
-      return false;
-    }
-    if (/^\/h\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/linkstart\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/a\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/r\s+.+/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/r\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/welcome\s+.+/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/welcome\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/m\b/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/d(?:\s+(?:continue|new))?$/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/block$/i.test(trimmed)) {
-      return true;
-    }
-    if (/^\/lang(?:\s+.+)?$/i.test(trimmed)) {
-      return true;
-    }
-    return false;
-  };
+  isInteractiveCommand = commandText => Boolean(String(commandText || '').trim());
 
   getCommandSegments = text => {
     if (!text) {
@@ -3090,14 +4032,41 @@ class AgentChat extends React.Component {
       return [];
     }
 
-    return raw.split(/\r?\n/).map(lineRaw => {
-      const segments = this.parseStoryLineSegments(lineRaw);
-      return {
-        type: 'line',
-        segments: segments.length > 0 ? segments : [{ type: 'text', text: lineRaw }],
-        rawLine: lineRaw,
-      };
-    });
+    return raw
+      .split(/\r?\n/)
+      .map(lineRaw => {
+        const segments = this.parseStoryLineSegments(lineRaw);
+        const normalizedSegments = segments.length > 0 ? segments : [{ type: 'text', text: lineRaw }];
+        const hasChoice = normalizedSegments.some(segment => segment?.type === 'choice');
+
+        if (hasChoice) {
+          return {
+            type: 'line',
+            segments: normalizedSegments,
+            rawLine: lineRaw,
+          };
+        }
+
+        const mergedText = normalizedSegments
+          .map(segment => String(segment?.text || ''))
+          .join('')
+          .trim();
+
+        if (!mergedText) {
+          return null;
+        }
+
+        if (/^(?:input|select|choose|reply)\s+\d+(?:\s*[-~to]\s*\d+)?/i.test(mergedText)) {
+          return null;
+        }
+
+        return {
+          type: 'line',
+          segments: [{ type: 'text', text: mergedText }],
+          rawLine: lineRaw,
+        };
+      })
+      .filter(Boolean);
   };
 
   handleCommandPress = commandText => {
@@ -3112,12 +4081,279 @@ class AgentChat extends React.Component {
     this.sendCommand(cmd);
   };
 
-  handleStoryChoicePress = (modelText, displayText, choiceMeta = null) => {
-    this.handleSend({
-      modelText: String(modelText || ''),
-      displayText: String(displayText || modelText || ''),
+  settleStoryChoiceDockBeforeSending = async (delayMs = 80) => {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  };
+
+  handleStoryLinkStartPressIn = () => {
+    console.warn('Story Link Start press-in detected');
+    this.setStoryLinkStatus(this.getStoryMenuText('linkTapDetected'), this.getStoryMenuText('linkTapHandoff'));
+    if (this._isMounted) {
+      this.setState({ storyLinkStartFeedbackActive: true });
+    }
+  };
+
+  handleStoryLinkStartPress = async () => {
+    console.warn('Story Link Start onPress fired');
+    if (this._storyLinkStartInFlight) {
+      return;
+    }
+
+    this._storyLinkStartInFlight = true;
+    this.setStoryLinkStatus(this.getStoryMenuText('linkStarted'), this.getStoryMenuText('linkStartedRoute'));
+    if (this._isMounted) {
+      this.setState({ storyLinkStartFeedbackActive: true });
+    }
+    console.warn('Story Link Start pressed from disconnected dock, routing through /d new');
+
+    try {
+      await this.handleStoryChoicePress('/d new', this.getStoryMenuText('establishLink'), {
+        source: 'link-start-button',
+      });
+    } catch (error) {
+      console.warn('Story Link Start failed', error);
+      this.setStoryLinkStatus(this.getStoryMenuText('linkFailed'), this.getStoryMenuText('unableOpenCommChannel'));
+      throw error;
+    } finally {
+      this._storyLinkStartInFlight = false;
+      if (this._isMounted) {
+        this.setState({ storyLinkStartFeedbackActive: false });
+      }
+    }
+  };
+
+  handleStoryChoicePress = async (modelText, displayText, choiceMeta = null) => {
+    const sendText = String(modelText || '').trim();
+    const normalizedEndingChoice = sendText.toUpperCase();
+    const endingChoices = ['SUMMARY', 'RECAP', 'CONTINUE', 'RESTART'];
+    if (endingChoices.includes(normalizedEndingChoice)) {
+      if (normalizedEndingChoice === 'SUMMARY' || normalizedEndingChoice === 'RECAP') {
+        const endingMenu = [
+          { key: 'ending-summary', send: 'SUMMARY', label: 'Summary' },
+          { key: 'ending-recap', send: 'RECAP', label: 'Recap' },
+          { key: 'ending-continue', send: 'CONTINUE', label: 'Continue' },
+          { key: 'ending-restart', send: 'RESTART', label: this.getStoryMenuText('restartConnection') },
+        ];
+        await this.updateCurrentStoryRuntime({
+          status: 'waiting_user',
+          phase: 'ended',
+          lastChoiceSet: endingMenu,
+          awaitingChoice: true,
+          shouldResumeGeneration: false,
+        });
+        if (this._isMounted) {
+          this.setState({
+            currentStoryChoices: endingMenu,
+            currentStoryLastChoiceSet: endingMenu,
+            currentStoryAwaitingChoice: true,
+          });
+        }
+        this.setStoryLinkStatus(this.getStoryMenuText('linkActive'));
+      } else if (normalizedEndingChoice === 'CONTINUE') {
+        this.setStoryLinkStatus(this.getStoryMenuText('uplinkSent'), this.getStoryMenuText('continuingNextLoop'), { waiting: true });
+      } else if (normalizedEndingChoice === 'RESTART') {
+        this.setStoryLinkStatus(this.getStoryMenuText('resettingStory'), this.getStoryMenuText('restartingConnectionProgress'));
+        await this.resetStoryStorageAndRestart();
+        return;
+      }
+
+      await this.clearCurrentChoicesFile();
+      await new Promise(resolve =>
+        this.setState(
+          {
+            currentStoryChoices: [],
+            currentStoryLastChoiceSet: [],
+            currentStoryAwaitingChoice: false,
+          },
+          resolve,
+        )
+      );
+      await this.settleStoryChoiceDockBeforeSending();
+      await this.handleSend({
+        modelText: normalizedEndingChoice,
+        displayText: String(displayText || modelText || ''),
+        choiceMeta,
+      });
+      return;
+    }
+
+    if (sendText === '/d new' || /^\/linkstart\s*$/i.test(sendText)) {
+      const roleContext = this.currentRoleContext || (await this.loadCurrentRoleForStory());
+      if (!roleContext) {
+        this.setStoryLinkStatus(this.getStoryMenuText('roleRequired'), this.getStoryMenuText('roleRequiredDetail'));
+        return;
+      }
+      await this.clearCurrentChoicesFile();
+      await new Promise(resolve =>
+        this.setState(
+          { currentStoryChoices: [], currentStoryLastChoiceSet: [], currentStoryAwaitingChoice: false },
+          resolve,
+        )
+      );
+      await this.updateCurrentStoryRuntime({ lastChoiceSet: [], awaitingChoice: false, status: 'waiting_agent', phase: 'exploring' });
+      this.setStoryLinkStatus(this.getStoryMenuText('uplinkSent'), this.getStoryMenuText('waitingFieldResponse'), { waiting: true });
+      await this.handleDestinyCommand('new');
+      return;
+    }
+
+    const isSyntheticFallback = Boolean(choiceMeta?.syntheticFallback);
+    const visibleText = String(displayText || modelText || '').trim();
+    const userMessage = this.buildMessage(visibleText, 'user');
+    userMessage._modelText = sendText;
+    userMessage._choiceMeta = choiceMeta || null;
+    if (isSyntheticFallback) {
+      userMessage._localOnly = true;
+      userMessage._recordExcluded = true;
+    }
+
+    const submittedAt = Number(userMessage.timestamp || Date.now());
+
+    await this.clearCurrentChoicesFile();
+    this._pendingChoiceSubmissionAt = submittedAt;
+    this._pendingChoiceUserMessageId = userMessage.id;
+
+    await new Promise(resolve =>
+      this.setState(
+        {
+          currentStoryChoices: [],
+          currentStoryLastChoiceSet: [],
+          currentStoryAwaitingChoice: false,
+          currentStoryHasChoiceFile: false,
+          lastSubmittedChoiceAt: submittedAt,
+        },
+        resolve,
+      )
+    );
+
+    await this.updateCurrentStoryRuntime({
+      lastChoiceSet: [],
+      awaitingChoice: false,
+      status: 'waiting_agent',
+      phase: 'exploring',
+      shouldResumeGeneration: true,
+      lastSubmittedChoiceAt: submittedAt,
+      lastSubmittedChoiceUserMessageId: userMessage.id,
+      lastAutoFallbackReplyId: isSyntheticFallback ? String(choiceMeta?.fallbackReplyId || '') : '',
+    });
+
+    this.setStoryLinkStatus(this.getStoryMenuText('uplinkSent'), this.getStoryMenuText('waitingFieldResponse'), { waiting: true });
+    await this.settleStoryChoiceDockBeforeSending();
+
+    await this.applyAlphaDeltaForChoice({ visibleText, sendText, submittedAt });
+
+    await this.handleSend({
+      prebuiltUserMessage: userMessage,
+      modelText: sendText,
+      displayText: visibleText,
       choiceMeta,
     });
+  };
+
+  cleanStoryChoiceLabel = value =>
+    String(value || '')
+      .replace(/^\s*(?:\[\s*[A-Za-z0-9]{1,2}\s*\]|【\s*[A-Za-z0-9]{1,2}\s*】|\(\s*[A-Za-z0-9]{1,2}\s*\)|（\s*[A-Za-z0-9]{1,2}\s*）|[A-Za-z0-9]{1,2}\s*[).:：、．])\s*/, '')
+      .trim();
+
+  renderStoryChoiceDock = () => {
+    const rawChoices = Array.isArray(this.state.currentStoryChoices) ? this.state.currentStoryChoices : [];
+    const dockDisplayState = this.getStoryDockDisplayState();
+    const isChoiceState = dockDisplayState === 'choices';
+    const isDisconnectedState = dockDisplayState === 'start';
+    const isWaitingSignalState = dockDisplayState === 'awaiting';
+    const isRoleRequiredState = String(this.state.storyLinkStatus || '') === this.getStoryMenuText('roleRequired');
+    const choices = isChoiceState ? rawChoices : [];
+    const panelTitle = isRoleRequiredState ? this.getStoryMenuText('roleRequired') : isDisconnectedState ? this.getStoryMenuText('establishLink') : isWaitingSignalState ? this.getStoryMenuText('awaitingSignal') : this.getStoryMenuText('aguComm');
+    const panelMode = isRoleRequiredState ? 'ROLE CHECK' : isDisconnectedState ? 'LINK START' : isWaitingSignalState ? 'SIGNAL WAIT' : 'CHOICE GRID';
+    const isNextActionState = isWaitingSignalState || isChoiceState;
+    const handleNextActionPress = async () => {
+      if (rawChoices.length > 0) {
+        const nextChoice = rawChoices[0] || {};
+        const sendText = String(nextChoice.send || nextChoice.key || nextChoice.label || '').trim();
+        const displayText = this.cleanStoryChoiceLabel(nextChoice.label || nextChoice.send || nextChoice.key || sendText);
+        if (sendText) {
+          await this.handleStoryChoicePress(sendText, displayText || sendText, {
+            source: 'manual-next-action-choice',
+            raw: nextChoice,
+          });
+          return;
+        }
+      }
+
+      const storyMessages = this.mergeMessagesById(this.state.currentStoryMessages || []);
+      const latestAgentReply = this.getLatestStoryAgentReplyIgnoringSubmission(storyMessages);
+      const repairedChoices = latestAgentReply
+        ? await this.ensureStoryOptionsFromModelReply(latestAgentReply, storyMessages, { source: 'manual-next-action-repair' })
+        : [];
+      if (repairedChoices.length > 0) {
+        return;
+      }
+      this.setStoryLinkStatus(this.getStoryMenuText('linkWaiting'), this.getStoryMenuText('awaitingSignal'), { waiting: true });
+    };
+    const showLinkStartFeedback = isDisconnectedState && (this.state.storyLinkStartFeedbackActive || this._storyLinkStartInFlight);
+    const light1Color = isDisconnectedState ? '#596172' : isWaitingSignalState ? '#ffd84d' : '#6dff97';
+    const light2Color = isDisconnectedState ? '#596172' : isWaitingSignalState ? '#ffd84d' : '#6dff97';
+    const light3Color = isDisconnectedState ? '#596172' : isWaitingSignalState ? '#ffd84d' : '#6dff97';
+
+    return (
+      <View style={styles.storyChoiceDock}>
+        <View style={styles.storyChoicePanelFrame}>
+          <View style={styles.storyChoicePanelHeader}>
+            <View style={styles.storyChoicePanelHeaderTextBlock}>
+              <Text style={styles.storyChoicePanelLabel}>{panelTitle}</Text>
+            </View>
+            <View style={styles.storyChoicePanelHeaderCenter}>
+              <View style={styles.storyChoicePanelLightsCentered}>
+                <View style={[styles.storyChoicePanelLight, { backgroundColor: light1Color }]} />
+                <View style={[styles.storyChoicePanelLight, { backgroundColor: light2Color }]} />
+                <View style={[styles.storyChoicePanelLight, { backgroundColor: light3Color }]} />
+              </View>
+            </View>
+            {isNextActionState ? (
+              <TouchableOpacity activeOpacity={0.85} onPress={handleNextActionPress}>
+                <Text style={styles.storyChoicePanelMode}>NEXT ACTION</Text>
+              </TouchableOpacity>
+            ) : (
+              <Text style={styles.storyChoicePanelMode}>{panelMode}</Text>
+            )}
+          </View>
+          <View style={styles.storyChoicePanelScreen}>
+            {isDisconnectedState ? (
+              <TouchableOpacity
+                style={[styles.storyChoiceIdleCard, showLinkStartFeedback && styles.storyChoiceIdleCardPressed]}
+                activeOpacity={0.85}
+                hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}
+                onPressIn={this.handleStoryLinkStartPressIn}
+                onPress={this.handleStoryLinkStartPress}
+              >
+                <Text style={[styles.storyChoiceIdleText, showLinkStartFeedback && styles.storyChoiceIdleTextPressed]}>
+                  {isRoleRequiredState ? this.getStoryMenuText('roleRequiredDetail') : showLinkStartFeedback ? this.getStoryMenuText('linkStartDetected') : this.getStoryMenuText('establishLink')}
+                </Text>
+              </TouchableOpacity>
+            ) : isWaitingSignalState ? (
+              <View style={styles.storyChoiceIdleCard}>
+                <Text style={styles.storyChoiceIdleText}>{this.getStoryMenuText('awaitingSignal')}</Text>
+              </View>
+            ) : (
+              choices.map((choice, index) => {
+                const cleanLabel = this.cleanStoryChoiceLabel(choice.label || choice.send);
+                const isIdleButton = choice?.variant === 'idle';
+                return (
+                  <TouchableOpacity
+                    key={`${choice.key || choice.send || 'choice'}-${index}`}
+                    style={[styles.storyChoiceButton, isIdleButton && styles.storyChoiceButtonIdle]}
+                    activeOpacity={0.85}
+                    onPress={() => this.handleStoryChoicePress(choice.send, cleanLabel, { source: 'dock', raw: choice.label })}
+                  >
+                    <Text style={[styles.storyChoiceButtonText, isIdleButton && styles.storyChoiceButtonTextIdle]}>{cleanLabel}</Text>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </View>
+        </View>
+      </View>
+    );
   };
 
   handleMessageLongPress = messageText => {
@@ -3125,7 +4361,7 @@ class AgentChat extends React.Component {
       return;
     }
     Clipboard.setString(messageText);
-    showStatus('Copied to clipboard', 2000);
+    showStatus((loc?.general && loc.general.copiedToClipboard) || this.getStoryMenuText('copiedToClipboard'), 2000);
     if (Platform.OS === 'ios') {
       ActionSheet.showActionSheetWithOptions(
         {
@@ -3187,12 +4423,51 @@ class AgentChat extends React.Component {
     });
   };
 
+  hasOlderStoryRecordsForRoleViewer = () => {
+    const allMessages = Array.isArray(this.state.allMessages) ? this.state.allMessages : [];
+    return allMessages.length > PAGE_SIZE;
+  };
+
+  openRoleStoryReaderAtOlderPage = async () => {
+    const navigation = this.props.navigation;
+    const params = navigation?.state?.params || {};
+    if (!navigation || typeof navigation.push !== 'function') return;
+    await this.persistLastSpaceShortcut('role');
+    navigation.push('AgentRole', {
+      namespaceId: params.namespaceId,
+      shortCode: params.shortCode,
+      displayName: params.displayName,
+      walletId: params.walletId,
+      txid: params.txid,
+      rootAddress: params.rootAddress,
+      price: params.price,
+      desc: params.desc,
+      addr: params.addr,
+      profile: params.profile,
+      autoCommand: '/role story view older',
+      roleEntrySource: 'story-older-records-button',
+      suppressAutoLinkStart: true,
+    });
+  };
+
+  renderStoryOlderRoleViewerButton = () => {
+    if (!this.hasOlderStoryRecordsForRoleViewer()) return null;
+    return (
+      <TouchableOpacity
+        activeOpacity={0.85}
+        style={styles.storyOpenRoleStoryButton}
+        onPress={this.openRoleStoryReaderAtOlderPage}
+      >
+        <Text style={styles.storyOpenRoleStoryButtonText}>{this.getStoryMenuText('openOlderStoryInRole')}</Text>
+      </TouchableOpacity>
+    );
+  };
+
   loadMoreHistory = async () => {
-    if (this.isStoryScope || this.loadingMore) {
+    if (this.loadingMore) {
       return;
     }
 
-    // 清屏后的第一次上翻：先加载最新日期文件
     if (this.state.allMessages.length === 0 && this.loadedDateKeys.length === 0) {
       const keys = this.allDateKeys?.length ? this.allDateKeys : await this.listDateKeys();
       this.allDateKeys = keys;
@@ -3266,7 +4541,7 @@ class AgentChat extends React.Component {
 
   handleScroll = event => {
     const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
-    if (contentOffset?.y <= 20) {
+    if (!this.isStoryScope && contentOffset?.y <= 20) {
       this.loadMoreHistory();
     }
     const paddingToBottom = 80;
@@ -3276,19 +4551,42 @@ class AgentChat extends React.Component {
     this.isNearBottom = layoutHeight + offsetY >= contentHeight - paddingToBottom;
   };
 
-  scrollToBottomOffset = (animated = true) => {
+  scheduleBottomFollow = () => {
+    if (Array.isArray(this.pendingScrollBottomTimeouts)) {
+      this.pendingScrollBottomTimeouts.forEach(timer => clearTimeout(timer));
+      this.pendingScrollBottomTimeouts = [];
+    }
+    const run = () => this.scrollToBottomOffset(false);
+    requestAnimationFrame(() => run());
+    [80, 180].forEach(delay => {
+      const timer = setTimeout(() => run(), delay);
+      this.pendingScrollBottomTimeouts.push(timer);
+    });
+  };
+
+  scrollToBottomOffset = (animated = false) => {
     if (!this.listRef) {
       return;
     }
+
+    if (typeof this.listRef.scrollToEnd === 'function') {
+      try {
+        this.listRef.scrollToEnd({ animated });
+        return;
+      } catch {}
+    }
+
     const offset = Math.max(0, (this.lastContentHeight || 0) + 200);
     this.listRef.scrollToOffset({ offset, animated });
   };
 
   handleContentSizeChange = (width, height) => {
+    const prevHeight = this.lastContentHeight || 0;
     this.lastContentHeight = height || 0;
+    const heightChanged = Math.abs(this.lastContentHeight - prevHeight) > 2;
     const shouldFollow = this.forceScrollToBottomOnce || (this.shouldScrollToEnd && this.isNearBottom);
-    if (shouldFollow && this.lastContentHeight > 0) {
-      requestAnimationFrame(() => this.scrollToBottomOffset(true));
+    if (shouldFollow && this.lastContentHeight > 0 && heightChanged) {
+      this.scheduleBottomFollow();
     }
     this.forceScrollToBottomOnce = false;
     this.shouldScrollToEnd = false;
@@ -3337,26 +4635,69 @@ class AgentChat extends React.Component {
     return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${time}`;
   };
 
-  getUserAvatar = () => {
-    const { namespaceList } = this.props;
-    const firstId = namespaceList?.order?.[0];
-    const namespace = firstId ? namespaceList?.namespaces?.[firstId] : null;
-    if (!namespace) {
-      return null;
+  loadUserAvatar = async () => {
+    try {
+      const userAvatarUri = await getUserAvatarUri();
+      if (this._isMounted) {
+        this.setState({ userAvatarUri });
+      }
+    } catch (error) {
+      console.warn('Failed to load user avatar for agentstory', error);
     }
-    const avatarUri = buildHeadAssetUri(namespace.shortCode);
-    if (avatarUri) {
-      return { type: 'image', uri: avatarUri };
-    }
-    const displayName = namespace.displayName || ' ';
-    return {
-      type: 'fallback',
-      initials: getInitials(displayName),
-      color: stringToColor(displayName),
-    };
   };
 
-  renderAvatar = sender => {
+  loadAgentLocalAvatar = async () => {
+    try {
+      const { shortCode } = this.props.navigation.state.params || {};
+      if (!shortCode) {
+        if (this._isMounted) this.setState({ agentLocalAvatarUri: null });
+        return;
+      }
+      const path = getNamespaceAvatarPath(shortCode);
+      const exists = await RNFS.exists(path);
+      if (this._isMounted) {
+        this.setState({ agentLocalAvatarUri: exists ? `file://${path}` : null });
+      }
+    } catch (error) {
+      console.warn('Failed to load agentstory local avatar', error);
+    }
+  };
+
+  getUserAvatar = () => {
+    if (this.state?.userAvatarUri) {
+      return { type: 'image', uri: this.state.userAvatarUri };
+    }
+    return null;
+  };
+
+  handleUserAvatarPress = () => {
+    const { navigation } = this.props;
+    if (!navigation || typeof navigation.navigate !== 'function') {
+      return;
+    }
+    navigation.navigate('UserAvatarSettings', { agentId: this.agentId });
+  };
+
+  shouldUseSatoshiPreLLMAvatar = (item = null, visibleIndex = -1) => {
+    const allMessages = Array.isArray(this.state?.allMessages) ? this.state.allMessages : [];
+    if (allMessages.length === 0) {
+      return true;
+    }
+    const firstCompletedLLMIndex = allMessages.findIndex(message =>
+      (message?.sender === 'agent' || message?.role === 'assistant') && message?.requestId && !message?.pending,
+    );
+    if (firstCompletedLLMIndex < 0) {
+      return true;
+    }
+    const itemId = item?.id ? String(item.id) : '';
+    const allIndex = itemId ? allMessages.findIndex(message => String(message?.id || '') === itemId) : -1;
+    if (allIndex >= 0) {
+      return allIndex < firstCompletedLLMIndex;
+    }
+    return visibleIndex >= 0 ? visibleIndex < firstCompletedLLMIndex : false;
+  };
+
+  renderAvatar = (sender, item = null, visibleIndex = -1) => {
     const isUser = sender === 'user';
     if (isUser) {
       const userAvatar = this.getUserAvatar();
@@ -3387,8 +4728,11 @@ class AgentChat extends React.Component {
     }
 
     const { shortCode } = this.props.navigation.state.params || {};
+    const localAvatarUri = this.state.agentLocalAvatarUri;
     const avatarUri = buildHeadAssetUri(shortCode);
-    const source = avatarUri ? { uri: avatarUri } : require('../../img/bluebeast.png');
+    const source = this.shouldUseSatoshiPreLLMAvatar(item, visibleIndex)
+      ? SATOSHI_PRE_LLM_AVATAR_SOURCE
+      : (localAvatarUri ? { uri: localAvatarUri } : (avatarUri ? { uri: avatarUri } : require('../../img/bluebeast.png')));
     return (
       <View style={[styles.avatarWrapper, styles.agentAvatarWrapper]}>
         <Image source={source} style={styles.avatarImage} resizeMode="cover" />
@@ -3400,19 +4744,28 @@ class AgentChat extends React.Component {
     const showDigest = this.isStoryScope && this.state.storyShortMode && item?._isHistory === true;
     const isStoryDigest = this.isStoryScope && Boolean(item?.ref) && showDigest;
     const isUser = item?.sender === 'user' || item?.role === 'user';
-    const text = showDigest ? item?.digest || item?.summary || item?.text || '' : item?.text || '';
-    const hasCopyLink = Boolean(item.copyText && item.linkLabel) && !isStoryDigest;
+    const rawText = showDigest ? item?.digest || item?.summary || item?.text || '' : item?.text || '';
+    const latestSubmittedChoiceAt = this.getLatestStoryChoiceSubmissionAt();
     const forceCommandRender = item?._renderMode === 'commands';
-    const commandSegments =
-      isUser && !isStoryDigest && this.isValidCommandText(text)
-        ? [{ text, isCommand: true }]
-        : this.getCommandSegments(text);
+    const shouldSuppressChoiceText = this.isStoryScope && !isUser && !isStoryDigest && !forceCommandRender;
+    const text = shouldSuppressChoiceText ? this.stripStoryChoiceLines(rawText) : rawText;
+    if (this.isStoryScope && !isUser && !isStoryDigest && !forceCommandRender && !String(text || '').trim()) {
+      return null;
+    }
+    const hasCopyLink = Boolean(item.copyText && item.linkLabel) && !isStoryDigest;
+    const commandSegments = this.getCommandSegments(text);
     const hasCommand = Array.isArray(commandSegments) && commandSegments.some(segment => segment.isCommand || segment.commandText);
     const inlineLines =
       this.isStoryScope && !forceCommandRender && !isUser && !isStoryDigest && !hasCommand ? this.buildStoryInlineLines(text) : null;
     const hasCommandTokens = commandSegments.some(segment => segment.isCommand);
     const messageTextStyle = [styles.messageText, isUser ? styles.userText : styles.agentText];
     const commandTextStyle = isUser ? styles.commandTextUser : styles.commandText;
+    const isSubmittedChoiceEcho =
+      this.isStoryScope &&
+      isUser &&
+      item?._choiceMeta &&
+      Number(item?.timestamp || item?.t || 0) <= latestSubmittedChoiceAt &&
+      /UPLINK SENT/i.test(String(this.state.storyLinkStatus || ''));
     return (
       <>
         {this.shouldShowTimestamp(index) && (
@@ -3428,7 +4781,7 @@ class AgentChat extends React.Component {
               onPress={() => this.handleAvatarPress(text)}
               style={styles.avatarPressable}
             >
-              {this.renderAvatar('agent')}
+              {this.renderAvatar('agent', item, index)}
             </TouchableOpacity>
           )}
           <View style={[styles.bubbleColumn, isUser ? styles.userBubbleColumn : styles.agentBubbleColumn]}>
@@ -3447,7 +4800,7 @@ class AgentChat extends React.Component {
               }
               style={[styles.messageBubble, isUser ? styles.userBubble : styles.agentBubble]}
             >
-              <Text style={messageTextStyle}>
+              <Text suppressHighlighting={isSubmittedChoiceEcho} style={messageTextStyle}>
                 {inlineLines
                   ? inlineLines.map((lineItem, lineIndex) => (
                       <Text key={`${item.id}-ln-${lineIndex}`}>
@@ -3518,9 +4871,9 @@ class AgentChat extends React.Component {
           </View>
           {isUser && (
             <TouchableOpacity
-              accessibilityLabel="Open submit form"
+              accessibilityLabel="Open user avatar settings"
               activeOpacity={0.7}
-              onPress={() => this.handleAvatarPress(text)}
+              onPress={this.handleUserAvatarPress}
               style={styles.avatarPressable}
             >
               {this.renderAvatar('user')}
@@ -3548,9 +4901,10 @@ class AgentChat extends React.Component {
               keyExtractor={item => item.id}
               renderItem={this.renderMessage}
               contentContainerStyle={this.state.messages.length === 0 ? styles.emptyContainer : styles.listContent}
+              ListHeaderComponent={this.renderStoryOlderRoleViewerButton}
               ListEmptyComponent={() => (
                 <View style={styles.emptyState}>
-                  <Text style={styles.emptyText}>Start a conversation with this agent.</Text>
+                  <Text style={styles.emptyText}>{this.getStoryMenuText('commTerminalPreparing')}</Text>
                 </View>
               )}
               onContentSizeChange={this.handleContentSizeChange}
@@ -3558,27 +4912,16 @@ class AgentChat extends React.Component {
                 if (!this.didInitialScroll && this.state.messages.length > 0) {
                   this.forceScrollToBottomOnce = true;
                   this.didInitialScroll = true;
+                  requestAnimationFrame(() => this.scrollToBottomOffset(false));
                 }
               }}
               onScroll={this.handleScroll}
               scrollEventThrottle={16}
+              maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
               keyboardShouldPersistTaps="handled"
             />
           </View>
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              value={this.state.inputValue}
-              placeholder="Type a message"
-              placeholderTextColor="#6f7587"
-              onChangeText={text => this.setState({ inputValue: text })}
-              onSubmitEditing={this.handleSend}
-              returnKeyType="send"
-            />
-            <TouchableOpacity style={styles.sendButton} onPress={this.handleSend}>
-              <Text style={styles.sendButtonText}>Send</Text>
-            </TouchableOpacity>
-          </View>
+          {this.renderStoryChoiceDock()}
         </KeyboardAvoidingView>
       </SafeAreaView>
     );
@@ -3596,17 +4939,69 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0a0d15',
   },
-  headerTitle: {
-    color: '#000000',
-    fontSize: 18,
-    fontWeight: '700',
+  headerCenterWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  headerTitleButton: {
+  headerCenterWrapAbsolute: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    pointerEvents: 'none',
+  },
+  headerCommsBadge: {
+    width: '99%',
+    minHeight: 30,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    backgroundColor: '#e9eef5',
+    shadowColor: 'transparent',
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  headerCommsBadgeIdle: {
+    borderColor: '#cfd6e4',
+    backgroundColor: '#e9eef5',
+  },
+  headerCommsBadgeActive: {
+    borderColor: '#cfd6e4',
+    backgroundColor: '#e9eef5',
+  },
+  headerCenterText: {
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  headerToolbarRightWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: 12,
+  },
+  headerToolbarPill: {
+    minHeight: 28,
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    borderRadius: 9,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 6,
+    backgroundColor: '#f7faff',
   },
-  headerAction: {
-    paddingHorizontal: 16,
+  headerToolbarPillIdle: {
+    borderColor: '#cfd8ea',
+  },
+  headerToolbarPillActive: {
+    borderColor: '#7ed69a',
+    backgroundColor: '#e9eef5',
+  },
+  headerToolbarButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   chatContainer: {
     flex: 1,
@@ -3742,6 +5137,22 @@ const styles = StyleSheet.create({
     color: '#6f7587',
     fontSize: 14,
   },
+  storyOpenRoleStoryButton: {
+    alignSelf: 'center',
+    marginTop: 10,
+    marginBottom: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#2f4d8f',
+    backgroundColor: '#101a2d',
+  },
+  storyOpenRoleStoryButtonText: {
+    color: '#9fd8ff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   regenButton: {
     marginTop: 6,
     alignSelf: 'flex-start',
@@ -3782,35 +5193,149 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     overflow: 'hidden',
   },
-  inputContainer: {
+  storyChoiceDock: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#1b2336',
+    backgroundColor: '#0a0f18',
+    minHeight: 118,
+  },
+  storyChoicePanelFrame: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2d3a55',
+    backgroundColor: '#0d1420',
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 10,
+    shadowColor: '#000000',
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 8,
+  },
+  storyChoicePanelHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#1f2a44',
-    backgroundColor: '#0b1224',
+    justifyContent: 'space-between',
+    marginBottom: 8,
   },
-  input: {
+  storyChoicePanelHeaderTextBlock: {
     flex: 1,
-    height: 44,
-    paddingHorizontal: 12,
+    alignItems: 'flex-start',
+    marginRight: 8,
+  },
+  storyChoicePanelHeaderCenter: {
+    width: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 8,
+  },
+  storyChoicePanelLightsCentered: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 5,
+  },
+  storyChoicePanelLight: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    marginRight: 6,
+  },
+  storyChoicePanelLabel: {
+    color: '#9fc2ff',
+    fontSize: 12,
+    lineHeight: 15,
+    letterSpacing: 1.1,
+    fontWeight: '700',
+    textShadowColor: 'rgba(118, 191, 255, 0.35)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 6,
+  },
+  storyChoicePanelSubstatus: {
+    marginTop: 2,
+    color: '#5f789c',
+    fontSize: 10,
+    lineHeight: 12,
+    letterSpacing: 0.5,
+  },
+  storyChoicePanelMode: {
+    color: '#7fe7ff',
+    fontSize: 10,
+    lineHeight: 13,
+    letterSpacing: 1.1,
+    fontWeight: '700',
+    textShadowColor: 'rgba(102, 255, 245, 0.28)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 5,
+  },
+  storyChoicePanelScreen: {
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#24304a',
-    borderRadius: 12,
-    color: '#ffffff',
-    backgroundColor: '#0f162b',
+    borderColor: '#182233',
+    backgroundColor: '#0a111b',
+    padding: 10,
   },
-  sendButton: {
-    marginLeft: 10,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
+  storyChoiceButton: {
     borderRadius: 12,
-    backgroundColor: KevaColors.actionText,
+    backgroundColor: '#111b2b',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#29476f',
   },
-  sendButtonText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '600',
+  storyChoiceButtonIdle: {
+    backgroundColor: '#2c3442',
+    borderColor: '#5d6472',
+  },
+  storyChoiceButtonText: {
+    color: '#d7f0ff',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  storyChoiceButtonTextIdle: {
+    color: '#e7edf7',
+  },
+  storyChoiceWaitingCard: {
+    borderRadius: 12,
+    backgroundColor: '#0f1a1d',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#214a44',
+  },
+  storyChoiceWaitingText: {
+    color: '#78d7c4',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  storyChoiceIdleCard: {
+    borderRadius: 12,
+    backgroundColor: '#2c3442',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#4c586f',
+  },
+  storyChoiceIdleText: {
+    color: '#eef3fb',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  storyChoiceIdleCardPressed: {
+    backgroundColor: '#1d5f58',
+    borderColor: '#78d7c4',
+  },
+  storyChoiceIdleTextPressed: {
+    color: '#d9fff5',
   },
 });

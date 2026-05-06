@@ -4,9 +4,9 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>PROJECT KEVA AGENT ALPHA</title>
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="vendor/html2canvas.min.js"></script>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+@font-face{font-family:'Share Tech Mono';src:url('fonts/share-tech-mono.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap;}
 
 html,body{
   height:100%;
@@ -84,19 +84,7 @@ html,body{
   margin:30px auto 16px;
   box-sizing:border-box;
 }
-.alpha-card::before{
-  content:"";
-  position:absolute;
-  inset:0;
-  background:linear-gradient(
-    120deg,
-    rgba(255,0,255,0.15),
-    rgba(0,255,255,0.15),
-    rgba(255,0,255,0.15)
-  );
-  filter:blur(40px);
-  opacity:0.2;
-}
+.alpha-card::before{content:"";position:absolute;inset:0;background:#000;filter:none;opacity:0;}
 
 /* 新增：顶部左右布局 */
 .alpha-header{

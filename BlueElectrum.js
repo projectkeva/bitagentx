@@ -13,8 +13,11 @@ const { setLatestKnownBlockHeight } = require('./common/shortcodeLevel');
 
 const storageKey = 'ELECTRUM_PEERS';
 const DEFAULT_PORT = 50002;
-const defaultPeer = { host: 'ec.kevacoin.org', ssl: DEFAULT_PORT };
+const defaultPeer = { host: 'x.xkeva.com', ssl: DEFAULT_PORT };
 const hardcodedPeers = [
+  { host: 'x.xkeva.com', ssl: DEFAULT_PORT },
+  { host: 'y.xkeva.com', ssl: DEFAULT_PORT },
+  { host: 'z.xkeva.com', ssl: DEFAULT_PORT },
   { host: 'ec.kevacoin.org', ssl: DEFAULT_PORT },
 ];
 
@@ -61,47 +64,50 @@ function parsePort(portValue) {
 }
 
 async function connectMain() {
-  let usingPeer = await getRandomHardcodedPeer();
   let savedPeer = await getSavedPeer();
-  if (savedPeer && savedPeer.host && (savedPeer.tcp || savedPeer.ssl)) {
-    usingPeer = savedPeer;
-  }
-  currentPeer = usingPeer;
+  const peersToTry = savedPeer && savedPeer.host && (savedPeer.tcp || savedPeer.ssl)
+    ? [savedPeer]
+    : getDefaultHardcodedPeers();
 
-  try {
-    const resolvedPort = parsePort(usingPeer.ssl || usingPeer.tcp);
-    const isValidPort = Number.isFinite(resolvedPort) && resolvedPort > 0;
-    if (!isValidPort) {
-      console.warn('connectMain: invalid port detected for peer, falling back to default', usingPeer);
-      usingPeer = { ...defaultPeer };
-      currentPeer = usingPeer;
-    }
-    const sanitizedHost = sanitizeHost(usingPeer.host);
-    if (sanitizedHost !== usingPeer.host) {
-      console.warn('connectMain: invalid host detected for peer, falling back to default host', usingPeer);
-      usingPeer = { ...usingPeer, host: sanitizedHost };
-      currentPeer = usingPeer;
-    }
+  for (let usingPeer of peersToTry) {
+    currentPeer = usingPeer;
 
-    const port = isValidPort ? resolvedPort : DEFAULT_PORT;
-
-    console.log('begin connection:', JSON.stringify({ ...usingPeer, port }));
-    mainClient = new ElectrumClient(port, sanitizedHost, usingPeer.ssl ? 'tls' : 'tcp');
-    const ver = await mainClient.initElectrum({ client: 'bluewallet', version: '1.4' });
-    if (ver && ver[0]) {
-      console.log('connected to ', ver);
-      serverName = ver[0];
-      mainConnected = true;
-      wasConnectedAtLeastOnce = true;
-      if (ver[0].startsWith('ElectrumPersonalServer') || ver[0].startsWith('electrs')) {
-        // TODO: once they release support for batching - disable batching only for lower versions
-        disableBatching = true;
+    try {
+      const resolvedPort = parsePort(usingPeer.ssl || usingPeer.tcp);
+      const isValidPort = Number.isFinite(resolvedPort) && resolvedPort > 0;
+      if (!isValidPort) {
+        console.warn('connectMain: invalid port detected for peer, falling back to default', usingPeer);
+        usingPeer = { ...defaultPeer };
+        currentPeer = usingPeer;
       }
-      // AsyncStorage.setItem(storageKey, JSON.stringify(peers));  TODO: refactor
+      const sanitizedHost = sanitizeHost(usingPeer.host);
+      if (sanitizedHost !== usingPeer.host) {
+        console.warn('connectMain: invalid host detected for peer, falling back to default host', usingPeer);
+        usingPeer = { ...usingPeer, host: sanitizedHost };
+        currentPeer = usingPeer;
+      }
+
+      const port = isValidPort ? resolvedPort : DEFAULT_PORT;
+
+      console.log('begin connection:', JSON.stringify({ ...usingPeer, port }));
+      mainClient = new ElectrumClient(port, sanitizedHost, usingPeer.ssl ? 'tls' : 'tcp');
+      const ver = await mainClient.initElectrum({ client: 'bluewallet', version: '1.4' });
+      if (ver && ver[0]) {
+        console.log('connected to ', ver);
+        serverName = ver[0];
+        mainConnected = true;
+        wasConnectedAtLeastOnce = true;
+        if (ver[0].startsWith('ElectrumPersonalServer') || ver[0].startsWith('electrs')) {
+          // TODO: once they release support for batching - disable batching only for lower versions
+          disableBatching = true;
+        }
+        // AsyncStorage.setItem(storageKey, JSON.stringify(peers));  TODO: refactor
+        return;
+      }
+    } catch (e) {
+      mainConnected = false;
+      console.log('bad connection:', JSON.stringify(usingPeer), e);
     }
-  } catch (e) {
-    mainConnected = false;
-    console.log('bad connection:', JSON.stringify(usingPeer), e);
   }
 }
 
@@ -121,13 +127,13 @@ function ensureConnectMainRunning() {
 ensureConnectMainRunning();
 
 /**
- * Returns random hardcoded electrum server guaranteed to work
- * at the time of writing.
+ * Returns hardcoded Electrum servers in the global default order.
+ * Clean installs should try x -> y -> z -> ec instead of picking randomly.
  *
- * @returns {Promise<{tcp, host}|*>}
+ * @returns {Array<{tcp, host, ssl}>}
  */
-async function getRandomHardcodedPeer() {
-  return hardcodedPeers[(hardcodedPeers.length * Math.random()) | 0];
+function getDefaultHardcodedPeers() {
+  return hardcodedPeers.map(peer => ({ ...peer }));
 }
 
 async function getSavedPeer() {

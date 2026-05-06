@@ -51,15 +51,24 @@ export default class WalletsAdd extends Component {
   }
 
   async componentDidMount() {
-    let walletBaseURI = await AsyncStorage.getItem(AppStorage.LNDHUB);
-    let isAdvancedOptionsEnabled = await BlueApp.isAdancedModeEnabled();
-    walletBaseURI = walletBaseURI || '';
+    let walletBaseURI = '';
+    let isAdvancedOptionsEnabled = false;
+    try {
+      walletBaseURI = (await AsyncStorage.getItem(AppStorage.LNDHUB)) || '';
+    } catch (error) {
+      console.warn('AddWallet: failed to read LNDHub setting', error);
+    }
+    try {
+      isAdvancedOptionsEnabled = await BlueApp.isAdancedModeEnabled();
+    } catch (error) {
+      console.warn('AddWallet: failed to read advanced mode setting', error);
+    }
     this.setState({
       isLoading: false,
       activeBitcoin: true,
       selectedIndex: 2, //HD SegWit Multiple Address.
       label: '',
-      isAdvancedOptionsEnabled,
+      isAdvancedOptionsEnabled: Boolean(isAdvancedOptionsEnabled),
       walletBaseURI,
     });
   }
@@ -331,17 +340,23 @@ export default class WalletsAdd extends Component {
                           w.setLabel(this.state.label || loc.wallets.details.title);
                         }
                         if (this.state.activeBitcoin) {
-                          await w.generate();
-                          BlueApp.wallets.push(w);
-                          await BlueApp.saveToDisk();
-                          EV(EV.enum.WALLETS_COUNT_CHANGED);
-                          ReactNativeHapticFeedback.trigger('notificationSuccess', { ignoreAndroidSystemSettings: false });
-                          if (w.type === HDSegwitP2SHWallet.type || w.type === HDSegwitBech32Wallet.type) {
-                            this.props.navigation.navigate('PleaseBackup', {
-                              secret: w.getSecret(),
-                            });
-                          } else {
-                            this.props.navigation.dismiss();
+                          try {
+                            await w.generate();
+                            BlueApp.wallets.push(w);
+                            await BlueApp.saveToDisk();
+                            EV(EV.enum.WALLETS_COUNT_CHANGED);
+                            ReactNativeHapticFeedback.trigger('notificationSuccess', { ignoreAndroidSystemSettings: false });
+                            if (w.type === HDSegwitP2SHWallet.type || w.type === HDSegwitBech32Wallet.type) {
+                              this.props.navigation.navigate('PleaseBackup', {
+                                secret: w.getSecret(),
+                              });
+                            } else {
+                              this.props.navigation.dismiss();
+                            }
+                          } catch (Err) {
+                            this.setState({ isLoading: false });
+                            console.warn('AddWallet: bitcoin wallet create failure', Err);
+                            alert(String(Err?.message || Err || 'Wallet create failed'));
                           }
                         }
                       });
