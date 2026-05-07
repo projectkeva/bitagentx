@@ -669,9 +669,7 @@ class AgentChat extends React.Component {
     RNFS.appendFile(paramsDebugPath, `${new Date().toISOString()} agentrole componentDidMount params=${safeParamsText}\n`, 'utf8').catch(() => {});
     this.props.navigation?.setParams?.({ onTitlePress: this.handleTitlePress });
     this.roleEntrySource = this.props.navigation?.state?.params?.roleEntrySource || 'role';
-    if (this.roleEntrySource !== 'satoshi-role-button') {
-      this.initRoleTalk().catch(error => console.warn('[agentrole] initRoleTalk failed', error));
-    }
+    this.initRoleTalk().catch(error => console.warn('[agentrole] initRoleTalk failed', error));
     this.focusUnsubscribe = this.props.navigation?.addListener?.('didFocus', () => {
       this.forceScrollToBottomOnce = true;
       this.loadUserAvatar().catch(error => console.warn('[agentrole] loadUserAvatar on focus failed', error));
@@ -798,18 +796,13 @@ class AgentChat extends React.Component {
     }
     this.setState({ talkState: ROLE_TALK_STATES.REQUESTING_PERMISSION, speechError: null });
     const hasPermission = await ensureRoleTalkPermission();
-    const available = await isRoleTalkAvailable().catch(() => false);
+    const available = await isRoleTalkAvailable().catch(() => null);
     if (!hasPermission) {
-      this.setState({ talkEnabled: false, talkState: ROLE_TALK_STATES.ERROR, speechAvailable: available, speechError: this.getRoleUiText('roleTalkPermissionDenied') });
+      this.setState({ talkEnabled: false, talkState: ROLE_TALK_STATES.ERROR, speechAvailable: available === null ? false : available, speechError: this.getRoleUiText('roleTalkPermissionDenied') });
       this.replyFromAgent(this.getRoleUiText('roleTalkPermissionDenied'));
       return false;
     }
-    if (!available) {
-      this.setState({ talkEnabled: false, talkState: ROLE_TALK_STATES.ERROR, speechAvailable: false, speechError: this.getRoleUiText('roleTalkUnavailable') });
-      this.replyFromAgent(this.getRoleUiText('roleTalkUnavailable'));
-      return false;
-    }
-    this.setState({ talkEnabled: true, talkState: ROLE_TALK_STATES.IDLE, speechAvailable: true, speechError: null, speechTextDraft: '', speechFinalText: '' });
+    this.setState({ talkEnabled: true, talkState: ROLE_TALK_STATES.IDLE, speechAvailable: available !== false, speechError: null, speechTextDraft: '', speechFinalText: '' });
     return true;
   };
 
@@ -838,6 +831,11 @@ class AgentChat extends React.Component {
     try {
       this.setState({ talkState: ROLE_TALK_STATES.STARTING, speechError: null, speechTextDraft: '', speechFinalText: '' });
       await startRoleTalkRecognition(this.state.speechLocale || 'zh-CN');
+      if (this._isMounted) {
+        this.setState(prev =>
+          prev.talkState === ROLE_TALK_STATES.STARTING ? { talkState: ROLE_TALK_STATES.LISTENING } : null,
+        );
+      }
       return true;
     } catch (error) {
       this.setState({ talkState: ROLE_TALK_STATES.ERROR, speechError: String(error?.message || error || 'speech_start_failed') });
@@ -894,6 +892,13 @@ class AgentChat extends React.Component {
       await this.startRoleTalkOnce();
       return;
     }
+    if (this.state.talkState === ROLE_TALK_STATES.STARTING) {
+      await cancelRoleTalkRecognition();
+      if (this._isMounted) {
+        this.setState({ talkState: ROLE_TALK_STATES.IDLE, speechTextDraft: '', speechFinalText: '' });
+      }
+      return;
+    }
     if (this.state.talkState === ROLE_TALK_STATES.LISTENING) {
       await this.stopRoleTalkOnce();
     }
@@ -901,6 +906,7 @@ class AgentChat extends React.Component {
 
   getRoleTalkStatusText = () => {
     switch (this.state.talkState) {
+      case ROLE_TALK_STATES.STARTING:
       case ROLE_TALK_STATES.LISTENING:
         return this.getRoleUiText('roleTalkListening');
       case ROLE_TALK_STATES.RECOGNIZING:
@@ -1429,15 +1435,16 @@ class AgentChat extends React.Component {
       const verifiedValue = await this.readSingleOnChainMemoryValue(namespaceId, `role.memory.${safeRoleSlug}.verified`);
       const likelyValue = await this.readSingleOnChainMemoryValue(namespaceId, `role.memory.${safeRoleSlug}.likely`);
       const fogValue = await this.readSingleOnChainMemoryValue(namespaceId, `role.memory.${safeRoleSlug}.fog`);
-      const roleName = String(nameValue || currentRoleData?.roleName || safeRoleSlug).trim() || safeRoleSlug;
       const memoryLayers = {
         verified: String(verifiedValue || '').trim(),
         likely: String(likelyValue || '').trim(),
         fog: String(fogValue || '').trim(),
       };
-      if (!roleName && !memoryLayers.verified && !memoryLayers.likely && !memoryLayers.fog) {
-        return null;
+      const hasOnChainMemory = !!String(nameValue || '').trim() || !!memoryLayers.verified || !!memoryLayers.likely || !!memoryLayers.fog;
+      if (!hasOnChainMemory) {
+        return { notFound: true };
       }
+      const roleName = String(nameValue || currentRoleData?.roleName || safeRoleSlug).trim() || safeRoleSlug;
 
       if (currentRoleData) {
         await this.writeRoleLastMemory(safeRoleSlug, { roleData: currentRoleData, kind: 'before-onchain-restore', trigger: '/role onchainmemory' });
@@ -6068,6 +6075,8 @@ class AgentChat extends React.Component {
         return true;
       }
 
+      this.replyFromAgent(this.getRoleUiText('memoryCommitPreparing') || 'Preparing memory for permanent on-chain commit…');
+
       try {
         const namespaceId = this.props?.navigation?.state?.params?.namespaceId;
         if (!namespaceId) {
@@ -6180,6 +6189,10 @@ class AgentChat extends React.Component {
 
     if (/^\/role\s+onchainmemory\s+do\b/i.test(trimmed)) {
       const result = await this.restoreRoleFromOnChainMemory();
+      if (result?.notFound) {
+        this.replyFromAgent(this.getRoleUiText('onchainMemoryNotFound') || 'No on-chain memory found.');
+        return true;
+      }
       if (!result?.roleData) {
         this.replyFromAgent(this.getRoleUiText('onchainRestoreFailed'));
         return true;
@@ -6256,9 +6269,15 @@ class AgentChat extends React.Component {
     }
 
     if (/^\/role\s+onchainmemory\s+local\b/i.test(trimmed)) {
+      this.replyFromAgent(this.getRoleUiText('onchainMemoryReading') || 'Reading on-chain memory…');
       const roleSlug = this.getSpaceRoleKey();
       const roleData = await this.readRoleFile(roleSlug);
       const status = await this.getOnChainMemoryStatus();
+      const hasOnChainMemory = !!(status?.nameExists || status?.verifiedExists || status?.likelyExists || status?.fogExists);
+      if (!hasOnChainMemory) {
+        this.replyFromAgent(this.getRoleUiText('onchainMemoryNotFound') || 'No on-chain memory found.');
+        return true;
+      }
       this.replyFromAgent([
         this.getRoleUiText('onchainRestoreConfirm'),
         String(roleData?.roleName || roleSlug || '').trim(),
@@ -8192,11 +8211,13 @@ if (/^\/r\s+memory\s+recover\b/i.test(trimmed)) {
       return null;
     }
     const params = this.props.navigation?.state?.params || {};
+    const roleNameForFile = await this.getCurrentRoleNameForStoryExplore().catch(() => '');
     const result = await exportRoleStoryRecordHelper({
       namespace: {
         namespaceId: params.namespaceId,
         shortCode: params.shortCode,
         displayName: params.displayName,
+        exportDisplayName: roleNameForFile,
       },
     });
     const filePath = String(result?.filePath || '').trim();
@@ -9148,8 +9169,9 @@ if (/^\/r\s+memory\s+recover\b/i.test(trimmed)) {
   openRoleStorySummaryRecords = async ({ forceRefresh = false } = {}) => {
     let summary = forceRefresh ? null : await this.readRoleCurrentStorySummary();
     if (!summary) {
-      this.replyFromAgent('开始整理全生成宇宙探索记录…');
-      showStatus(this.getRoleUiText('storySummaryGenerating') || 'Generating story summary…');
+      const generatingText = this.getRoleUiText('storySummaryGenerating') || 'Generating story summary…';
+      this.replyFromAgent(generatingText);
+      showStatus(generatingText);
       summary = await this.generateRoleCurrentStorySummary();
     }
     const displayMessages = [{

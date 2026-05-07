@@ -3,6 +3,7 @@ import {
   Text,
   View,
   TouchableOpacity,
+  TextInput,
 } from 'react-native';
 import Toast from 'react-native-root-toast';
 import RNPickerSelect from 'react-native-picker-select';
@@ -10,7 +11,6 @@ import Icon from 'react-native-vector-icons/Ionicons';
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaButton = require('../../common/KevaButton');
 const KevaColors = require('../../common/KevaColors');
-import FloatTextInput from '../../common/FloatTextInput';
 import { THIN_BORDER, SCREEN_WIDTH, toastError } from '../../util';
 import { HDSegwitP2SHWallet,  } from '../../class';
 import {
@@ -48,6 +48,14 @@ class OfferNFT extends React.Component {
     ...BlueNavigationStyle(),
     title: '',
     tabBarVisible: false,
+    headerStyle: {
+      backgroundColor: '#050915',
+      borderBottomWidth: 1,
+      borderBottomColor: 'rgba(125, 211, 252, 0.2)',
+      elevation: 0,
+      shadowColor: 'transparent',
+    },
+    headerTintColor: '#E5E7EB',
     headerRight: () => (
       <TouchableOpacity
         style={{ marginHorizontal: 16, minWidth: 150, justifyContent: 'center', alignItems: 'flex-end' }}
@@ -63,7 +71,7 @@ class OfferNFT extends React.Component {
         style={{ marginHorizontal: 16, minWidth: 150, justifyContent: 'center', alignItems: 'flex-start' }}
         onPress={() => navigation.goBack()}
       >
-        <Text style={{ color: KevaColors.actionText, fontSize: 16 }}>{loc.general.cancel}</Text>
+        <Text style={{ color: '#93C5FD', fontSize: 16 }}>{loc.general.cancel}</Text>
       </TouchableOpacity>
     ),
     ...TransitionPresets.ModalTransition,
@@ -132,10 +140,14 @@ class OfferNFT extends React.Component {
     }
 
     const namespaces = namespaceList.namespaces;
-    const items = Object.keys(namespaces).map(ns => ({label: namespaces[ns].displayName, value: namespaces[ns].id}));
+    const items = Object.keys(namespaces).map(ns => ({
+      label: namespaces[ns].displayName,
+      value: namespaces[ns].id,
+      color: '#E5E7EB',
+    }));
     let selectNamespacePage = (
       <View style={styles.modalNS}>
-        <Text style={[styles.modalText, {textAlign: 'center', marginBottom: 20, color: KevaColors.darkText}]}>{"Choose a namespace"}</Text>
+        <Text style={styles.modalTitle}>{"Choose a namespace"}</Text>
         <RNPickerSelect
           value={this.state.namespaceId}
           placeholder={{}}
@@ -143,7 +155,17 @@ class OfferNFT extends React.Component {
           style={{
             inputAndroid: styles.inputAndroid,
             inputIOS: styles.inputIOS,
+            inputAndroidContainer: styles.pickerContainer,
+            inputIOSContainer: styles.pickerContainer,
+            viewContainer: styles.pickerViewContainer,
+            placeholder: styles.pickerPlaceholder,
+            iconContainer: styles.pickerIconContainer,
+            modalViewTop: styles.pickerModalView,
+            modalViewMiddle: styles.pickerModalView,
+            modalViewBottom: styles.pickerModalView,
+            modalDoneButtonText: styles.pickerDoneButtonText,
           }}
+          pickerProps={{ dropdownIconColor: '#93C5FD', mode: 'dropdown' }}
           onValueChange={(namespaceId) => this.setState({namespaceId})}
           items={items}
           Icon={() => <Icon name="ios-arrow-down" size={24} color={KevaColors.actionText} style={{ padding: 12 }} />}
@@ -207,7 +229,7 @@ class OfferNFT extends React.Component {
             </>
             :
             <>
-              <Text style={[styles.modalText, { alignSelf: 'center', color: KevaColors.darkText }]}>{loc.namespaces.creating_tx}</Text>
+              <Text style={[styles.modalText, { alignSelf: 'center' }]}>{loc.namespaces.creating_tx}</Text>
               <Text style={styles.waitText}>{loc.namespaces.please_wait}</Text>
               <BlueLoading style={{ paddingTop: 30 }} />
             </>
@@ -325,17 +347,16 @@ class OfferNFT extends React.Component {
       <View style={styles.container}>
         {this.getOfferModal()}
         <View style={styles.inputKey}>
-          <FloatTextInput
-            editable
-            noBorder
+          <TextInput
             keyboardType={'numeric'}
             autoCorrect={false}
             value={this.state.value}
             underlineColorAndroid='rgba(0,0,0,0)'
-            style={{fontSize:15}}
+            style={styles.bidInput}
             placeholder={loc.namespaces.bid_price + ' (KVA)'}
+            placeholderTextColor="#64748B"
             clearButtonMode="while-editing"
-            onChangeTextValue={value => {this.setState({value})}}
+            onChangeText={value => {this.setState({value})}}
           />
         </View>
       </View>
@@ -357,20 +378,73 @@ export default OfferNFTScreen = connect(mapStateToProps)(OfferNFT);
 var styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: KevaColors.background,
+    backgroundColor: '#050915',
   },
   inputKey: {
-    height: 56,
-    marginTop: 10,
-    borderWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
-    paddingHorizontal: 10
+    height: 58,
+    marginHorizontal: 14,
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.32)',
+    backgroundColor: '#0b1224',
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    justifyContent: 'center',
+    shadowColor: '#7dd3fc',
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
+  },
+  bidInput: {
+    flex: 1,
+    color: '#E5E7EB',
+    fontSize: 17,
+    fontWeight: '700',
+    paddingVertical: 0,
+  },
+  modalTitle: {
+    fontSize: 18,
+    color: '#E5E7EB',
+    textAlign: 'center',
+    marginBottom: 20,
+    fontWeight: '700',
+  },
+  pickerContainer: {
+    width: SCREEN_WIDTH * 0.8,
+  },
+  pickerViewContainer: {
+    width: SCREEN_WIDTH * 0.8,
+    borderRadius: 12,
+    backgroundColor: '#111827',
+  },
+  pickerPlaceholder: {
+    color: '#64748B',
+  },
+  pickerIconContainer: {
+    top: 4,
+    right: 8,
+  },
+  pickerModalView: {
+    backgroundColor: '#0b1224',
+  },
+  pickerDoneButtonText: {
+    color: '#93C5FD',
+    fontWeight: '700',
   },
   modalNS: {
-    height: 300,
+    minHeight: 300,
+    width: SCREEN_WIDTH * 0.86,
     alignSelf: 'center',
     justifyContent: 'flex-start',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.28)',
+    borderRadius: 18,
+    backgroundColor: '#0b1224',
+    paddingHorizontal: 14,
+    paddingTop: 18,
+    paddingBottom: 20,
   },
   modalText: {
     fontSize: 18,
@@ -389,24 +463,27 @@ var styles = StyleSheet.create({
   modalErr: {
     fontSize: 16,
     marginTop: 20,
+    color: '#FCA5A5',
   },
   inputAndroid: {
     width: SCREEN_WIDTH*0.8,
-    color: KevaColors.lightText,
+    color: '#E5E7EB',
     textAlign: 'center',
     fontSize: 16,
-    borderWidth: THIN_BORDER,
-    borderColor: KevaColors.lightText,
-    borderRadius: 4
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.32)',
+    borderRadius: 10,
+    backgroundColor: '#0b1224',
   },
   inputIOS: {
     width: SCREEN_WIDTH*0.8,
-    color: KevaColors.lightText,
+    color: '#E5E7EB',
     textAlign: 'center',
     fontSize: 16,
-    borderWidth: THIN_BORDER,
-    borderColor: KevaColors.lightText,
-    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.32)',
+    borderRadius: 10,
     height: 46,
+    backgroundColor: '#0b1224',
   },
 });

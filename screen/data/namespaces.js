@@ -48,6 +48,7 @@ import Biometric from '../../class/biometrics';
 import { requestServerNamespace, getCachedServerNamespaceResult } from '../../class/namespace-api';
 import { Button } from 'react-native-elements';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+import { getAlphaAvatarFrameDetails } from '../../common/alphaVisuals';
 import ImagePicker from 'react-native-image-crop-picker';
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-community/async-storage';
@@ -129,34 +130,6 @@ const computeAlphaValue = id => {
   }
 };
 
-const blendChannel = (from, to, ratio) => {
-  const t = Math.max(0, Math.min(1, ratio));
-  return Math.round(from + (to - from) * t);
-};
-
-const buildAlphaColorComponents = alphaValue => {
-  const normalized = normalizeAlphaValue(alphaValue);
-  if (normalized === null || normalized === 0) return { r: 255, g: 255, b: 255 };
-  const intensity = Math.abs(normalized) / 99;
-  const white = { r: 255, g: 255, b: 255 };
-  const target = normalized < 0 ? { r: 12, g: 176, b: 96 } : { r: 24, g: 128, b: 255 };
-  return {
-    r: blendChannel(white.r, target.r, intensity),
-    g: blendChannel(white.g, target.g, intensity),
-    b: blendChannel(white.b, target.b, intensity),
-  };
-};
-
-const toRgbaString = ({ r, g, b }, alpha = 1) => `rgba(${r}, ${g}, ${b}, ${alpha})`;
-
-const getAlphaGlowDetails = alphaValue => {
-  const components = buildAlphaColorComponents(alphaValue);
-  return {
-    glowColor: toRgbaString(components, 0.95),
-    glowSoftColor: toRgbaString(components, 0.22),
-  };
-};
-
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const alphaFileValueCache = new Map();
 
@@ -233,6 +206,25 @@ const normalizeShortCode = shortCode => {
     return '';
   }
   return String(shortCode).replace(/\s+/g, '').trim();
+};
+
+const readProfileStoryRoleName = async namespace => {
+  const shortCode = normalizeShortCode(namespace && namespace.shortCode);
+  if (!shortCode) return '';
+  const roleDir = `${CHAT_DIR}/${encodeURIComponent(shortCode)}/role/roles/${shortCode}`;
+  const rolePath = `${roleDir}/role.json`;
+  const legacyRolePath = `${CHAT_DIR}/${encodeURIComponent(shortCode)}/role/roles/${shortCode}.json`;
+  for (const path of [rolePath, legacyRolePath]) {
+    try {
+      if (!(await RNFS.exists(path))) continue;
+      const parsed = JSON.parse(await RNFS.readFile(path, 'utf8'));
+      const roleName = String(parsed && parsed.roleName ? parsed.roleName : '').trim();
+      if (roleName) return roleName;
+    } catch (error) {
+      console.warn('Failed to read profile story role name', { path, error });
+    }
+  }
+  return '';
 };
 
 
@@ -783,7 +775,7 @@ class Namespace extends React.Component {
 
     const namespaceText = key => getNamespaceText(key, this.state.namespaceUiLang);
 
-    const { glowColor: alphaGlowColor, glowSoftColor: alphaGlowSoftColor } = getAlphaGlowDetails(alphaValue);
+    const { frameColor: alphaGlowColor, frameSoftColor: alphaGlowSoftColor } = getAlphaAvatarFrameDetails(alphaValue);
     const alphaGlowStyle = alphaGlowColor ? {
       shadowColor: alphaGlowColor,
       shadowOpacity: 0.95,
@@ -2353,7 +2345,11 @@ class Namespaces extends React.Component {
   onExportStoryDatas = async namespace => {
     if (!namespace) return;
     try {
-      const result = await exportStoryRecordToFile(namespace);
+      const roleNameForFile = await readProfileStoryRoleName(namespace);
+      const result = await exportStoryRecordToFile({
+        ...namespace,
+        exportDisplayName: roleNameForFile,
+      });
       const filePath = String(result && result.filePath ? result.filePath : '').trim();
       Alert.alert(
         'Export story record',
@@ -2543,7 +2539,7 @@ class Namespaces extends React.Component {
     const modalAlphaValue = nsData.shortCode
       ? (this.state.nsDataAlphaValue !== null ? this.state.nsDataAlphaValue : resolveNamespaceAlphaValue(nsData.shortCode))
       : null;
-    const { glowColor: modalAlphaGlowColor, glowSoftColor: modalAlphaGlowSoftColor } = getAlphaGlowDetails(modalAlphaValue);
+    const { frameColor: modalAlphaGlowColor, frameSoftColor: modalAlphaGlowSoftColor } = getAlphaAvatarFrameDetails(modalAlphaValue);
     const modalAlphaGlowStyle = modalAlphaGlowColor ? {
       shadowColor: modalAlphaGlowColor,
       shadowOpacity: 0.95,

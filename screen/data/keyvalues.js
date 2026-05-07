@@ -44,6 +44,7 @@ import { timeConverter, getInitials, stringToColor } from "../../util";
 import Biometric from '../../class/biometrics';
 import { extractMedia, getImageGatewayURL, removeMedia } from './mediaManager';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+import { getAlphaAvatarFrameDetails } from '../../common/alphaVisuals';
 import RNFS from 'react-native-fs';
 import { readStoryJsonFile, getAlphaStatePath } from './story_alpha';
 import LinearGradient from 'react-native-linear-gradient';
@@ -154,96 +155,6 @@ const computeAlphaValue = id => {
     return null;
   }
 };
-
-const clampAlpha = value => {
-  if (!Number.isFinite(value)) {
-    return null;
-  }
-  return Math.max(-99, Math.min(99, value));
-};
-
-const blendChannel = (from, to, ratio) => {
-  const t = Math.max(0, Math.min(1, ratio));
-  return Math.round(from + (to - from) * t);
-};
-
-const alphaTextPalettes = {
-  lightBackground: {
-    primaryColor: '#0b1224',
-    secondaryColor: '#1f2937',
-    accentColor: '#0f172a',
-    underlineColor: 'rgba(0, 0, 0, 0.35)',
-  },
-  darkBackground: {
-    primaryColor: '#E8F5FF',
-    secondaryColor: '#D1E8FF',
-    accentColor: '#7DD3FC',
-    underlineColor: 'rgba(11, 18, 36, 0.75)',
-  },
-};
-
-const buildAlphaColorComponents = clampedValue => {
-  if (clampedValue === 0) {
-    return { r: 255, g: 255, b: 255 };
-  }
-
-  const intensity = Math.abs(clampedValue) / 99;
-  const white = { r: 255, g: 255, b: 255 };
-  if (clampedValue < 0) {
-    const deepGreen = { r: 12, g: 176, b: 96 };
-    return {
-      r: blendChannel(white.r, deepGreen.r, intensity),
-      g: blendChannel(white.g, deepGreen.g, intensity),
-      b: blendChannel(white.b, deepGreen.b, intensity),
-    };
-  }
-
-  const vividBlue = { r: 24, g: 128, b: 255 };
-  return {
-    r: blendChannel(white.r, vividBlue.r, intensity),
-    g: blendChannel(white.g, vividBlue.g, intensity),
-    b: blendChannel(white.b, vividBlue.b, intensity),
-  };
-};
-
-const toRgbString = ({ r, g, b }) => `rgb(${r}, ${g}, ${b})`;
-const toRgbaString = ({ r, g, b }, alpha = 1) => `rgba(${r}, ${g}, ${b}, ${alpha})`;
-
-const getRelativeLuminance = ({ r, g, b }) => {
-  const normalize = v => {
-    const channel = v / 255;
-    return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
-  };
-  const R = normalize(r);
-  const G = normalize(g);
-  const B = normalize(b);
-  return 0.2126 * R + 0.7152 * G + 0.0722 * B;
-};
-
-const getAlphaColorDetails = alphaValue => {
-  const clamped = clampAlpha(alphaValue);
-  if (clamped === null) {
-    return {
-      backgroundColor: null,
-      glowColor: null,
-      glowSoftColor: null,
-      luminance: null,
-      textPalette: alphaTextPalettes.darkBackground,
-    };
-  }
-
-  const components = buildAlphaColorComponents(clamped);
-  const backgroundColor = toRgbString(components);
-  const luminance = getRelativeLuminance(components);
-  return {
-    backgroundColor,
-    glowColor: toRgbaString(components, 0.95),
-    glowSoftColor: toRgbaString(components, 0.22),
-    luminance,
-    textPalette: alphaTextPalettes.darkBackground,
-  };
-};
-
 
 const CHAT_DIR = `${RNFS.DocumentDirectoryPath}/agent_chats`;
 const alphaFileValueCache = new Map();
@@ -1596,14 +1507,14 @@ class KeyValues extends React.Component {
     const buyNFTBtn = (
       <Button
         type='solid'
-        buttonStyle={{marginLeft: 15, borderRadius: 30, height: 28, width: 120, padding: 0, borderColor: KevaColors.okColor, backgroundColor: KevaColors.okColor}}
+        buttonStyle={{marginLeft: 5, borderRadius: 30, height: 26, width: 80, padding: 0, borderColor: KevaColors.okColor, backgroundColor: KevaColors.okColor}}
         title={ isOther ? loc.namespaces.buy_it : loc.namespaces.manage}
-        titleStyle={{fontSize: 14, color: '#fff', marginLeft: 8}}
+        titleStyle={{fontSize: 11, color: '#fff', marginLeft: 2}}
         onPress={()=>{this.onBuy(namespaceId, displayName, this.state.saleTx, this.state.price, this.state.desc, this.state.addr, profile)}}
         icon={
           <Icon
             name="ios-cart"
-            size={20}
+            size={14}
             color="#fff"
           />
         }
@@ -1612,9 +1523,9 @@ class KeyValues extends React.Component {
     const filterButton = (
       <Button
         type='solid'
-        buttonStyle={{borderRadius: 30, height: 28, width: 110, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
+        buttonStyle={{borderRadius: 30, height: 26, width: 88, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
         title={this.getFilterModeLabel(this.state.filterMode || 'TEXT')}
-        titleStyle={{fontSize: 13, color: '#fff'}}
+        titleStyle={{fontSize: 12, color: '#fff'}}
         onPress={this.cycleFilterMode}
       />
     );
@@ -1675,7 +1586,7 @@ class KeyValues extends React.Component {
       const alphaValue = shortCode
         ? (this.state.resolvedAlphaLoaded ? this.state.resolvedAlphaValue : resolveNamespaceAlphaValue(shortCode))
         : null;
-      const { glowColor: alphaGlowColor, glowSoftColor: alphaGlowSoftColor, textPalette: alphaTextPalette } = getAlphaColorDetails(alphaValue);
+      const { frameColor: alphaGlowColor, frameSoftColor: alphaGlowSoftColor } = getAlphaAvatarFrameDetails(alphaValue);
       const alphaGlowStyle = alphaGlowColor ? {
         shadowColor: alphaGlowColor,
         shadowOpacity: 0.95,
@@ -1748,46 +1659,46 @@ class KeyValues extends React.Component {
                 </>
               )}
             </View>
-            <View style={{paddingRight: 10, flexShrink: 1}}>
+            <View style={{paddingRight: 10, flex: 1, flexShrink: 1, minWidth: 0}}>
               <View style={{flexDirection: 'row', marginBottom: 5}}>
                 <Text
-                  style={[styles.sender, { color: alphaTextPalette.primaryColor }]}
+                  style={[styles.sender, styles.headerReadableName]}
                   numberOfLines={1}
                   ellipsizeMode="tail"
                 >
                   {displayName + ' '}
                 </Text>
                 <TouchableOpacity onPress={() => this.copyString(shortCode)}>
-                  <Text style={[styles.shortCode, { color: alphaTextPalette.accentColor }]}>
+                  <Text style={[styles.shortCode, styles.headerReadableShortCode]}>
                     {`@${shortCode}`}
                   </Text>
                 </TouchableOpacity>
               </View>
               {levelLabelText && (
-                <Text style={[styles.levelLabel, { color: alphaTextPalette.secondaryColor }]}>{levelLabelText}</Text>
+                <Text style={[styles.levelLabel, styles.headerReadableMeta]}>{levelLabelText}</Text>
               )}
               {
                 isOther ?
                 (isFollowing ?
-                  <View style={{flexDirection: 'row'}}>
+                  <View style={{flexDirection: 'row', alignItems: 'center', flexShrink: 1}}>
                     {filterButton}
                     <Button
                       type='solid'
-                      buttonStyle={{marginLeft: 10, borderRadius: 30, height: 28, width: 120, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
+                      buttonStyle={{marginLeft: 6, borderRadius: 30, height: 26, width: 92, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
                       title={loc.namespaces.following}
-                      titleStyle={{fontSize: 14, color: '#fff'}}
+                      titleStyle={{fontSize: 12, color: '#fff'}}
                       onPress={()=>{this.onUnfollow(namespaceId)}}
                     />
                     { this.state.price && buyNFTBtn }
                   </View>
                   :
-                  <View style={{flexDirection: 'row'}}>
+                  <View style={{flexDirection: 'row', alignItems: 'center', flexShrink: 1}}>
                     {filterButton}
                     <Button
                       type='outline'
-                      buttonStyle={{marginLeft: 10, borderRadius: 30, height: 28, width: 120, padding: 0, borderColor: KevaColors.actionText}}
+                      buttonStyle={{marginLeft: 6, borderRadius: 30, height: 26, width: 92, padding: 0, borderColor: KevaColors.actionText}}
                       title={loc.namespaces.follow}
-                      titleStyle={{fontSize: 14, color: KevaColors.actionText}}
+                      titleStyle={{fontSize: 12, color: KevaColors.actionText}}
                       onPress={()=>{this.onFollow(namespaceId, namespaceInfo)}}
                     />
                     { this.state.price && buyNFTBtn }
@@ -1795,12 +1706,12 @@ class KeyValues extends React.Component {
                 )
                 :
                 (
-                <View style={{flexDirection: 'row'}}>
+                <View style={{flexDirection: 'row', alignItems: 'center', flexShrink: 1}}>
                   <Button
                     type='solid'
-                    buttonStyle={{borderRadius: 30, height: 28, width: 130, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
+                    buttonStyle={{borderRadius: 30, height: 26, width: 88, padding: 0, borderColor: KevaColors.actionText, backgroundColor: KevaColors.actionText}}
                     title={this.getFilterModeLabel(this.state.filterMode || 'TEXT')}
-                    titleStyle={{fontSize: 13, color: '#fff'}}
+                    titleStyle={{fontSize: 12, color: '#fff'}}
                     onPress={this.cycleFilterMode}
                   />
                   {this.state.price ? buyNFTBtn : null}
@@ -2215,5 +2126,14 @@ var styles = StyleSheet.create({
     fontSize: 12,
     color: '#9CA3AF',
     marginBottom: 6,
+  },
+  headerReadableName: {
+    color: '#E5E7EB',
+  },
+  headerReadableShortCode: {
+    color: '#93C5FD',
+  },
+  headerReadableMeta: {
+    color: '#93C5FD',
   },
 });

@@ -69,7 +69,15 @@ export const unbindRoleTalkEvents = () => {
 };
 
 export const startRoleTalkRecognition = async locale => {
-  await Voice.start(locale || 'zh-CN');
+  try {
+    await Voice.cancel();
+  } catch {}
+  await Voice.start(locale || 'zh-CN', {
+    EXTRA_LANGUAGE_MODEL: 'LANGUAGE_MODEL_FREE_FORM',
+    EXTRA_MAX_RESULTS: 5,
+    EXTRA_PARTIAL_RESULTS: true,
+    REQUEST_PERMISSIONS_AUTO: false,
+  });
 };
 
 export const stopRoleTalkRecognition = async () => {

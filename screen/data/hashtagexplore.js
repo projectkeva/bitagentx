@@ -41,6 +41,7 @@ import { extractMedia, getImageGatewayURL } from './mediaManager';
 import ExploreFollow from './explore_follow';
 import cardStyles from './hashtagkeyvalues_template';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+import { getAlphaColorDetails, getAlphaAvatarFrameDetails } from '../../common/alphaVisuals';
 import LinearGradient from 'react-native-linear-gradient';
 const { calculateLevelFromShortcode } = require('../../common/shortcodeLevel');
 const createHash = require('create-hash');
@@ -81,111 +82,6 @@ const computeAlphaValue = id => {
   }
 };
 
-const clampAlpha = value => {
-  if (!Number.isFinite(value)) {
-    return null;
-  }
-  return Math.max(-99, Math.min(99, value));
-};
-
-const blendChannel = (from, to, ratio) => {
-  const t = Math.max(0, Math.min(1, ratio));
-  return Math.round(from + (to - from) * t);
-};
-
-const alphaTextPalettes = {
-  lightBackground: {
-    primaryColor: '#0b1224',
-    secondaryColor: '#1f2937',
-    accentColor: '#0f172a',
-    underlineColor: 'rgba(0, 0, 0, 0.35)',
-  },
-  darkBackground: {
-    primaryColor: '#E8F5FF',
-    secondaryColor: '#D1E8FF',
-    accentColor: '#7DD3FC',
-    underlineColor: 'rgba(11, 18, 36, 0.75)',
-  },
-};
-
-const buildAlphaColorComponents = clampedValue => {
-  if (clampedValue === 0) {
-    return { r: 255, g: 255, b: 255 };
-  }
-
-  const intensity = Math.abs(clampedValue) / 99;
-  const white = { r: 255, g: 255, b: 255 };
-  if (clampedValue < 0) {
-    const deepGreen = { r: 12, g: 176, b: 96 };
-    return {
-      r: blendChannel(white.r, deepGreen.r, intensity),
-      g: blendChannel(white.g, deepGreen.g, intensity),
-      b: blendChannel(white.b, deepGreen.b, intensity),
-    };
-  }
-
-  const vividBlue = { r: 24, g: 128, b: 255 };
-  return {
-    r: blendChannel(white.r, vividBlue.r, intensity),
-    g: blendChannel(white.g, vividBlue.g, intensity),
-    b: blendChannel(white.b, vividBlue.b, intensity),
-  };
-};
-
-const toRgbString = ({ r, g, b }) => `rgb(${r}, ${g}, ${b})`;
-const toRgbaString = ({ r, g, b }, alpha = 1) => `rgba(${r}, ${g}, ${b}, ${alpha})`;
-
-const getAlphaGlowDetails = alphaValue => {
-  const clamped = clampAlpha(alphaValue);
-  if (clamped === null) {
-    return {
-      glowColor: null,
-      glowSoftColor: null,
-    };
-  }
-  const components = buildAlphaColorComponents(clamped);
-  return {
-    glowColor: toRgbaString(components, 0.95),
-    glowSoftColor: toRgbaString(components, 0.22),
-  };
-};
-
-const getRelativeLuminance = ({ r, g, b }) => {
-  const normalize = v => {
-    const channel = v / 255;
-    return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
-  };
-  const R = normalize(r);
-  const G = normalize(g);
-  const B = normalize(b);
-  return 0.2126 * R + 0.7152 * G + 0.0722 * B;
-};
-
-const getAlphaColorDetails = alphaValue => {
-  const clamped = clampAlpha(alphaValue);
-  if (clamped === null) {
-    return {
-      backgroundColor: null,
-      luminance: null,
-      textPalette: alphaTextPalettes.darkBackground,
-    };
-  }
-
-  const components = buildAlphaColorComponents(clamped);
-  const backgroundColor = toRgbString(components);
-  const luminance = getRelativeLuminance(components);
-  const isLightBackground = luminance >= 0.68;
-  return {
-    backgroundColor,
-    luminance,
-    textPalette: isLightBackground ? alphaTextPalettes.lightBackground : alphaTextPalettes.darkBackground,
-  };
-};
-
-const getAlphaBackgroundColor = alphaValue => {
-  const { backgroundColor } = getAlphaColorDetails(alphaValue);
-  return backgroundColor;
-};
 const formatShortCodeForDisplay = shortCode => {
   const normalized = (shortCode || '').toString().trim();
   if (!/^\d+$/.test(normalized)) {
@@ -454,22 +350,17 @@ class Item extends React.Component {
     let priceLabel = null;
     const titleStyles = [isSellHashtag ? styles.shortCodeTitle : styles.keyDesc];
     let levelLabelText = null;
+    let alphaLabelText = null;
     const alphaValue = shortCodeText.length > 0 ? computeAlphaValue(shortCodeText) : null;
-    const { backgroundColor: alphaBackgroundColor, textPalette: alphaTextPalette } = getAlphaColorDetails(alphaValue);
-    const { glowColor: alphaGlowColor, glowSoftColor: alphaGlowSoftColor } = getAlphaGlowDetails(alphaValue);
-    const alphaGlowStyle = alphaGlowColor ? {
-      shadowColor: alphaGlowColor,
-      shadowOpacity: 0.95,
-      shadowRadius: 15,
-      shadowOffset: { width: 0, height: 0 },
-      elevation: 10,
-    } : null;
-    const alphaNeonHaloStyle = alphaGlowColor ? {
-      borderColor: alphaGlowColor,
-      backgroundColor: alphaGlowSoftColor,
-      shadowColor: alphaGlowColor,
-      shadowOpacity: 0.75,
-      shadowRadius: 18,
+    const { textPalette: alphaTextPalette } = getAlphaColorDetails(alphaValue);
+    const { frameColor: alphaFrameColor, frameSoftColor: alphaFrameSoftColor } = getAlphaAvatarFrameDetails(alphaValue);
+    const shouldShowAlphaAvatarFrame = shortCodeText.length > 0;
+    const alphaAvatarFrameStyle = shouldShowAlphaAvatarFrame ? {
+      borderColor: alphaFrameColor,
+      backgroundColor: alphaFrameSoftColor,
+      shadowColor: alphaFrameColor,
+      shadowOpacity: 0.85,
+      shadowRadius: 12,
       shadowOffset: { width: 0, height: 0 },
       elevation: 8,
     } : null;
@@ -488,10 +379,10 @@ class Item extends React.Component {
           currentBlockHeight: this.props.latestBlockHeight,
         });
         if (Number.isFinite(shortCodeLevel)) {
-          const alphaLabel = Number.isFinite(alphaValue)
-            ? `[ α${alphaValue > 0 ? `+${alphaValue}` : alphaValue} ]`
-            : '';
-          levelLabelText = `[ Lv.${shortCodeLevel} ]${alphaLabel ? ` ${alphaLabel}` : ''}`;
+          levelLabelText = `[ Lv.${shortCodeLevel} ]`;
+        }
+        if (Number.isFinite(alphaValue)) {
+          alphaLabelText = `[ α${alphaValue > 0 ? `+${alphaValue}` : alphaValue} ]`;
         }
       }
       if (!titleStyles.some(style => style && style.color)) {
@@ -507,16 +398,22 @@ class Item extends React.Component {
         );
       }
     }
-    const avatarSizeStyle = isSellHashtag ? styles.nftAvatarSize : null;
+    const avatarSizeStyle = null;
     const avatarContent = avatarSource ? (
       <View style={[styles.generatedAvatarContainer, avatarSizeStyle]}>
-        <RNImage source={avatarSource} style={isSellHashtag ? styles.nftGeneratedAvatarImage : styles.generatedAvatarImage} />
+        <RNImage source={avatarSource} style={styles.generatedAvatarImage} />
       </View>
     ) : (
       <View style={[styles.fallbackAvatar, avatarSizeStyle, { backgroundColor: fallbackColor }]}>
-        <Text style={[styles.fallbackAvatarLabel, isSellHashtag && styles.nftAvatarLabel]}>{fallbackInitials}</Text>
+        <Text style={styles.fallbackAvatarLabel}>{fallbackInitials}</Text>
       </View>
     );
+
+    const framedAvatarContent = shouldShowAlphaAvatarFrame && alphaAvatarFrameStyle ? (
+      <View style={[styles.nftAvatarColorFrame, alphaAvatarFrameStyle]}>
+        {avatarContent}
+      </View>
+    ) : avatarContent;
 
     const cardAvatarContent = avatarSource ? (
       <View style={cardStyles.generatedAvatarContainer}>
@@ -527,6 +424,11 @@ class Item extends React.Component {
         <Text style={cardStyles.fallbackAvatarLabel}>{fallbackInitials}</Text>
       </View>
     );
+    const framedCardAvatarContent = shouldShowAlphaAvatarFrame && alphaAvatarFrameStyle ? (
+      <View style={[cardStyles.avatarColorFrame, alphaAvatarFrameStyle]}>
+        {cardAvatarContent}
+      </View>
+    ) : cardAvatarContent;
 
     if (useMasonryLayout) {
       const { mediaCID, mimeType } = extractMedia(item.value);
@@ -567,7 +469,7 @@ class Item extends React.Component {
                       onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
                     />
                   )}
-                  {cardAvatarContent}
+                  {framedCardAvatarContent}
                 </View>
                 <Text style={cardStyles.authorName} numberOfLines={1}>{item.displayName || item.shortCode}</Text>
               </TouchableOpacity>
@@ -585,27 +487,41 @@ class Item extends React.Component {
       ? [item.displayName, shortCodeText ? `@${formattedShortCode || shortCodeText}` : null].filter(Boolean).join('  ')
       : null;
     const titleContent = isSellHashtag ? (
-      <TouchableOpacity onPress={() => onShow(item)} activeOpacity={0.7}>
-        <View style={styles.titleRow}>
+      <TouchableOpacity onPress={() => onShow(item)} activeOpacity={0.7} style={styles.nftInfoTouchable}>
+        <View style={styles.nftInfoStack}>
           <Text
-            style={[...titleStyles, styles.nftShortCodeTitle, { color: alphaTextPalette.primaryColor }, underlineStyle]}
+            style={[styles.shortCodeTitle, styles.nftShortCodeTitle, styles.nftReadablePrimaryText]}
             numberOfLines={1}
             ellipsizeMode="tail"
           >
             {titleText}
           </Text>
-          {levelLabelText && (
-            <Text
-              style={[
-                styles.levelLabel,
-                styles.nftLevelLabel,
-                { color: alphaTextPalette.secondaryColor },
-                underlineStyle,
-              ]}
-            >
-              {levelLabelText}
-            </Text>
-          )}
+          <View style={styles.nftMetaRow}>
+            {levelLabelText && (
+              <Text
+                style={[
+                  styles.levelLabel,
+                  styles.nftLevelLabel,
+                  styles.nftReadableSecondaryText,
+                ]}
+                numberOfLines={1}
+              >
+                {levelLabelText}
+              </Text>
+            )}
+            {alphaLabelText && (
+              <Text
+                style={[
+                  styles.levelLabel,
+                  styles.nftAlphaLabel,
+                  styles.nftReadableSecondaryText,
+                ]}
+                numberOfLines={1}
+              >
+                {alphaLabelText}
+              </Text>
+            )}
+          </View>
         </View>
       </TouchableOpacity>
     ) : (
@@ -626,14 +542,7 @@ class Item extends React.Component {
     );
 
     const WrapperComponent = LinearGradient;
-    const wrapperProps = isSellHashtag ? {
-      colors: alphaBackgroundColor
-        ? [alphaBackgroundColor, alphaBackgroundColor, alphaBackgroundColor]
-        : ['#0b1224', '#0f162b', '#0b1224'],
-      start: { x: 0, y: 0 },
-      end: { x: 1, y: 1 },
-      style: [styles.card, styles.nftCard],
-    } : {
+    const wrapperProps = {
       colors: ['#0b1224', '#0f162b', '#0b1224'],
       start: { x: 0, y: 0 },
       end: { x: 1, y: 1 },
@@ -642,14 +551,13 @@ class Item extends React.Component {
 
     return (
       <WrapperComponent {...wrapperProps}>
-        <View style={[styles.cardInner, isSellHashtag && styles.nftCardInner]}>
-          <View style={[styles.headerRow, isSellHashtag && styles.nftHeaderRow]}>
+        <View style={styles.cardInner}>
+          <View style={styles.headerRow}>
             <TouchableOpacity
               onPress={() => onOpenNamespace(item)}
               activeOpacity={0.7}
-              style={[styles.avatarWrapper, isSellHashtag && styles.nftAvatarWrapper, alphaGlowStyle]}
+              style={styles.avatarWrapper}
             >
-              {alphaNeonHaloStyle ? <View pointerEvents="none" style={[styles.avatarNeonHalo, isSellHashtag && styles.nftAvatarNeonHalo, alphaNeonHaloStyle]} /> : null}
               {shouldProbeAvatar && (
                 <Image
                   source={{ uri: avatarCandidateUri }}
@@ -658,7 +566,7 @@ class Item extends React.Component {
                   onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
                 />
               )}
-              {avatarContent}
+              {framedAvatarContent}
             </TouchableOpacity>
             <View style={[styles.headerTextContainer, isSellHashtag && styles.nftHeaderTextContainer]}>
               {titleContent}
@@ -668,22 +576,13 @@ class Item extends React.Component {
                     style: [
                       styles.priceLabel,
                       styles.nftPriceLabel,
-                      { color: alphaTextPalettes.lightBackground.primaryColor },
-                      underlineStyle,
+                      styles.nftReadablePriceText,
                     ],
                   })}
                 </View>
               )}
             </View>
           </View>
-          {isSellHashtag && (
-            <LinearGradient
-              colors={['transparent', 'rgba(125, 211, 252, 0.65)', 'transparent']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.nftAccentLine}
-            />
-          )}
         </View>
       </WrapperComponent>
     )
@@ -1627,8 +1526,11 @@ var styles = StyleSheet.create({
     flexShrink: 1,
   },
   nftShortCodeTitle: {
+    flexShrink: 1,
+    marginRight: 0,
     fontSize: 18,
     color: '#E0F2FE',
+    fontWeight: '700',
     letterSpacing: 0.4,
   },
   headerRow: {
@@ -1647,7 +1549,22 @@ var styles = StyleSheet.create({
     justifyContent: 'center',
   },
   nftHeaderTextContainer: {
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  nftInfoTouchable: {
+    flex: 1,
+    minWidth: 0,
+  },
+  nftInfoStack: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  nftMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 5,
   },
   titleRow: {
     flex: 1,
@@ -1669,7 +1586,35 @@ var styles = StyleSheet.create({
     fontWeight: '500',
   },
   nftLevelLabel: {
+    flexShrink: 0,
+    marginLeft: 0,
     color: 'rgba(125, 211, 252, 0.9)',
+  },
+  nftAlphaLabel: {
+    flexShrink: 0,
+    marginLeft: 8,
+    color: 'rgba(125, 211, 252, 0.9)',
+  },
+  nftAvatarColorFrame: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    borderWidth: 3,
+    justifyContent: 'center',
+    alignItems: 'center',
+    opacity: 0.98,
+  },
+  nftReadablePrimaryText: {
+    color: '#E5E7EB',
+    textDecorationLine: 'none',
+  },
+  nftReadableSecondaryText: {
+    color: '#93C5FD',
+    textDecorationLine: 'none',
+  },
+  nftReadablePriceText: {
+    color: '#0F172A',
+    textDecorationLine: 'none',
   },
   priceLabel: {
     fontSize: 14,
@@ -1678,17 +1623,22 @@ var styles = StyleSheet.create({
     marginLeft: 10,
   },
   nftPriceWrapper: {
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginLeft: 10,
   },
   nftPriceLabel: {
-    color: '#7DD3FC',
-    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    flexShrink: 0,
+    color: '#0F172A',
+    backgroundColor: '#E0F2FE',
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 6,
     overflow: 'hidden',
-    marginLeft: 0,
+    marginLeft: 8,
+    fontWeight: '800',
   },
   valueDesc: {
     flex: 1,

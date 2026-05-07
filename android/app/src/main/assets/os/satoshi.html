@@ -475,7 +475,7 @@ ${second}` : ''}`;
     }
     if(hint){
       if(hasSatoshi && currentStatus==='ready'){
-        hint.textContent=table.readyHint || TEXT.en.readyHint;
+        hint.textContent='';
       }else if(currentStatus==='waiting'){
         hint.textContent=table.hint || TEXT.en.hint;
       }else{

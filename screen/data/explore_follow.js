@@ -18,10 +18,12 @@ import { setKeyValueList } from '../../actions';
 import { extractMedia } from './mediaManager';
 import cardStyles from './hashtagkeyvalues_template';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+import { getAlphaAvatarFrameDetails } from '../../common/alphaVisuals';
 
 let BlueElectrum = require('../../BlueElectrum');
 const StyleSheet = require('../../PlatformStyleSheet');
 const KevaColors = require('../../common/KevaColors');
+const createHash = require('create-hash');
 
 const FOLLOW_LIMIT_PER_NAMESPACE = 5;
 
@@ -33,6 +35,32 @@ const selectAvatarCandidateUri = (candidateUris = [], failedUris = [], generated
     return candidate;
   }
   return null;
+};
+
+const sha256Bytes = message => Buffer.from(createHash('sha256').update(message).digest());
+
+const attrSeedBytes = (id, attrName) => {
+  const seed0 = sha256Bytes(`${id}projectkeva`);
+  const attrBytes = Buffer.from(`:${attrName}`);
+  return Buffer.from(createHash('sha256').update(Buffer.concat([seed0, attrBytes])).digest());
+};
+
+const attrIntInRange = (seedBytes, min, max) => {
+  const hi = seedBytes.readUInt32BE(0);
+  const lo = seedBytes.readUInt32BE(4);
+  const v = (hi ^ lo) >>> 0;
+  const span = max - min + 1;
+  return min + (v % span);
+};
+
+const computeAlphaValue = id => {
+  try {
+    const seedBytes = attrSeedBytes(id, 'alpha');
+    return attrIntInRange(seedBytes, -99, 99);
+  } catch (err) {
+    console.warn(err);
+    return null;
+  }
 };
 
 const decodeKvKey = key => {
@@ -218,9 +246,30 @@ class ExploreFollowItem extends React.PureComponent {
     const avatarCandidateUri = selectAvatarCandidateUri(avatarCandidateUris, avatarFailedUris, generatedAvatarUri);
     const shouldProbeAvatar = !!(avatarCandidateUri && avatarCandidateRequestId === this._avatarRequestId);
     const avatarName = safeText(item.displayName || item.shortCode || 'A').trim();
+    const shortCode = safeText(item.shortCode).trim();
     const fallbackInitials = getInitials(avatarName || 'A');
     const fallbackColor = stringToColor(avatarName || 'A');
     const avatarSource = generatedAvatarUri ? { uri: generatedAvatarUri } : undefined;
+    const alphaValue = shortCode.length > 0 ? computeAlphaValue(shortCode) : null;
+    const { frameColor, frameSoftColor } = getAlphaAvatarFrameDetails(alphaValue);
+    const avatarFrameStyle = shortCode.length > 0 ? {
+      borderColor: frameColor,
+      backgroundColor: frameSoftColor,
+      shadowColor: frameColor,
+      shadowOpacity: 0.85,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 8,
+    } : null;
+    const avatarContent = avatarSource ? (
+      <View style={cardStyles.generatedAvatarContainer}>
+        <RNImage source={avatarSource} style={cardStyles.generatedAvatarImage} />
+      </View>
+    ) : (
+      <View style={[cardStyles.fallbackAvatar, { backgroundColor: fallbackColor }]}>
+        <Text style={cardStyles.fallbackAvatarLabel}>{fallbackInitials}</Text>
+      </View>
+    );
     return (
       <View style={cardStyles.avatarWrapper}>
         {shouldProbeAvatar && (
@@ -231,15 +280,11 @@ class ExploreFollowItem extends React.PureComponent {
             onError={() => this.onAvatarLoadError(avatarCandidateUri, avatarCandidateRequestId)}
           />
         )}
-        {avatarSource ? (
-          <View style={cardStyles.generatedAvatarContainer}>
-            <RNImage source={avatarSource} style={cardStyles.generatedAvatarImage} />
+        {avatarFrameStyle ? (
+          <View style={[cardStyles.avatarColorFrame, avatarFrameStyle]}>
+            {avatarContent}
           </View>
-        ) : (
-          <View style={[cardStyles.fallbackAvatar, { backgroundColor: fallbackColor }]}>
-            <Text style={cardStyles.fallbackAvatarLabel}>{fallbackInitials}</Text>
-          </View>
-        )}
+        ) : avatarContent}
       </View>
     );
   };

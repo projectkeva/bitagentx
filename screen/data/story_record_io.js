@@ -229,7 +229,7 @@ export const exportStoryRecordToFile = async namespace => {
   const exportDir = `${downloadsRoot}/xkeva`;
   await ensureDir(exportDir);
   const now = new Date();
-  const displayName = sanitizeFilePart(namespace?.displayName || snapshot?.source?.shortCode || snapshot?.source?.agentId || 'story');
+  const displayName = sanitizeFilePart(namespace?.exportDisplayName || namespace?.roleName || namespace?.displayName || snapshot?.source?.shortCode || snapshot?.source?.agentId || 'story');
   const agentIdPart = sanitizeFilePart(snapshot?.source?.agentId || 'agent');
   const preferredPath = `${exportDir}/${displayName}-${agentIdPart}-story-xkeva-${compactTimestamp(now)}.txt`;
   const fallbackPath = `${exportDir}/story-export-${agentIdPart}-${compactTimestamp(now)}.txt`;

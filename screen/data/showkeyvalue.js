@@ -39,6 +39,7 @@ const loc = require('../../loc');
 import { connect } from 'react-redux';
 import { extractMedia, getImageGatewayURL, removeMedia, replaceMedia } from './mediaManager';
 import { buildHeadAssetUriCandidates } from '../../common/namespaceAvatar';
+import { getAlphaAvatarFrameDetails } from '../../common/alphaVisuals';
 const createHash = require('create-hash');
 
 const MAX_TIME = 3147483647;
@@ -55,16 +56,6 @@ const selectAvatarCandidateUri = (candidateUris = [], failedUris = [], generated
   return null;
 };
 
-const clampAlpha = value => {
-  if (!Number.isFinite(value)) return null;
-  return Math.max(-99, Math.min(99, value));
-};
-
-const blendChannel = (from, to, ratio) => {
-  const t = Math.max(0, Math.min(1, ratio));
-  return Math.round(from + (to - from) * t);
-};
-
 const computeAlphaValue = id => {
   try {
     const seed0 = Buffer.from(createHash('sha256').update(`${id || ''}projectkeva`).digest());
@@ -77,29 +68,6 @@ const computeAlphaValue = id => {
     console.warn(err);
     return null;
   }
-};
-
-const buildAlphaColorComponents = alphaValue => {
-  const clamped = clampAlpha(alphaValue);
-  if (clamped === null || clamped === 0) return { r: 255, g: 255, b: 255 };
-  const intensity = Math.abs(clamped) / 99;
-  const white = { r: 255, g: 255, b: 255 };
-  const target = clamped < 0 ? { r: 12, g: 176, b: 96 } : { r: 24, g: 128, b: 255 };
-  return {
-    r: blendChannel(white.r, target.r, intensity),
-    g: blendChannel(white.g, target.g, intensity),
-    b: blendChannel(white.b, target.b, intensity),
-  };
-};
-
-const toRgbaString = ({ r, g, b }, alpha = 1) => `rgba(${r}, ${g}, ${b}, ${alpha})`;
-
-const getAlphaGlowDetails = shortCode => {
-  const components = buildAlphaColorComponents(computeAlphaValue(shortCode));
-  return {
-    glowColor: toRgbaString(components, 0.95),
-    glowSoftColor: toRgbaString(components, 0.22),
-  };
 };
 
 class NamespaceAvatar extends React.PureComponent {
@@ -259,7 +227,7 @@ class NamespaceAvatar extends React.PureComponent {
     const borderRadius = size / 2;
     const fallbackFontSize = Math.max(12, Math.round(size * 0.45));
     const avatarSource = localAvatarUri ? { uri: localAvatarUri } : (generatedAvatarUri ? { uri: generatedAvatarUri } : undefined);
-    const { glowColor, glowSoftColor } = getAlphaGlowDetails(shortCode);
+    const { frameColor: glowColor, frameSoftColor: glowSoftColor } = getAlphaAvatarFrameDetails(computeAlphaValue(shortCode));
     const haloSize = size + 22;
     const haloStyle = {
       width: haloSize,

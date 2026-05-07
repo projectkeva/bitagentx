@@ -408,6 +408,14 @@ class BuyNFT extends React.Component {
     ...BlueNavigationStyle(),
     title: '',
     tabBarVisible: false,
+    headerStyle: {
+      backgroundColor: '#050915',
+      borderBottomWidth: 1,
+      borderBottomColor: 'rgba(125, 211, 252, 0.2)',
+      elevation: 0,
+      shadowColor: 'transparent',
+    },
+    headerTintColor: '#E5E7EB',
   });
 
   maybeHTML = value => {
@@ -853,16 +861,16 @@ class BuyNFT extends React.Component {
       let saleStatusBackground;
       if (saleStatus.state === 'valid') {
         saleStatusText = 'Listing status: Active';
-        saleStatusColor = KevaColors.okColor;
-        saleStatusBackground = '#e6f6ea';
+        saleStatusColor = '#86EFAC';
+        saleStatusBackground = 'rgba(34, 197, 94, 0.12)';
       } else if (saleStatus.state === 'invalid') {
         saleStatusText = message ? `Listing needs attention: ${message}` : 'Listing is no longer valid';
-        saleStatusColor = KevaColors.errColor;
-        saleStatusBackground = '#fcebea';
+        saleStatusColor = '#FCA5A5';
+        saleStatusBackground = 'rgba(239, 68, 68, 0.12)';
       } else {
         saleStatusText = 'Checking listing status…';
-        saleStatusColor = KevaColors.warnColor;
-        saleStatusBackground = '#fff8e6';
+        saleStatusColor = '#FDE68A';
+        saleStatusBackground = 'rgba(250, 204, 21, 0.12)';
       }
       saleStatusView = (
         <View style={[styles.saleStatusContainer, { backgroundColor: saleStatusBackground, borderColor: saleStatusColor }]}>
@@ -898,13 +906,13 @@ class BuyNFT extends React.Component {
           </View>
         </View>
         <View style={styles.valueContainer}>
-          <Text style={{fontSize: 18, marginBottom: 10, color: KevaColors.darkText}}>
+          <Text style={styles.askingText}>
               {loc.namespaces.asking_price}
-            <Text style={{fontSize: 18, marginBottom: 10, color: KevaColors.darkText, fontWeight: '700'}}>
+            <Text style={styles.askingPriceText}>
               {price + ' KVA'}
             </Text>
           </Text>
-          <Text style={{fontSize: 16, color: KevaColors.darkText}}>{desc}</Text>
+          <Text style={styles.descText}>{desc}</Text>
         </View>
         {saleStatusView}
         <View style={styles.actionContainer}>
@@ -943,7 +951,7 @@ class BuyNFT extends React.Component {
         style={styles.listStyle}
         ListHeaderComponent={listHeader}
         removeClippedSubviews={false}
-        contentContainerStyle={{paddingBottom: 100}}
+        contentContainerStyle={styles.listContent}
         data={replies}
         onRefresh={() => this.fetchReplies(true)}
         refreshing={this.state.isRefreshing}
@@ -982,35 +990,70 @@ export default BuyNFTScreen = connect(mapStateToProps)(BuyNFT);
 
 var styles = StyleSheet.create({
   container: {
-    backgroundColor: KevaColors.background,
+    backgroundColor: '#050915',
+  },
+  listStyle: {
+    flex: 1,
+    borderBottomWidth: 1,
+    borderColor: 'rgba(125, 211, 252, 0.2)',
+    backgroundColor: '#050915',
+  },
+  listContent: {
+    paddingBottom: 120,
   },
   keyContainer: {
-    marginVertical: 10,
-    borderWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
-    padding: 10,
+    marginHorizontal: 14,
+    marginTop: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.32)',
+    backgroundColor: '#0b1224',
+    borderRadius: 18,
+    padding: 14,
     flexDirection: 'row',
+    shadowColor: '#7dd3fc',
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
   },
   key: {
     fontSize: 16,
     fontWeight: '700',
-    color: KevaColors.darkText,
+    color: '#E5E7EB',
     flex: 1,
     flexWrap: 'wrap',
   },
   value: {
     fontSize: 16,
-    color: KevaColors.darkText,
+    color: '#CBD5E1',
     lineHeight: 25,
   },
   valueContainer: {
+    marginHorizontal: 14,
     marginTop: 2,
-    borderWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
-    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.24)',
+    backgroundColor: '#0b1224',
+    borderRadius: 18,
+    paddingHorizontal: 14,
     paddingVertical: 18,
+  },
+  askingText: {
+    fontSize: 18,
+    marginBottom: 10,
+    color: '#CBD5E1',
+  },
+  askingPriceText: {
+    fontSize: 18,
+    marginBottom: 10,
+    color: '#E0F2FE',
+    fontWeight: '800',
+  },
+  descText: {
+    fontSize: 16,
+    color: '#CBD5E1',
+    lineHeight: 23,
   },
   saleStatusContainer: {
     marginTop: 10,
@@ -1027,11 +1070,14 @@ var styles = StyleSheet.create({
   actionContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    borderBottomWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
-    backgroundColor: '#fff',
-    padding: 10,
-    paddingVertical: 15,
+    marginHorizontal: 14,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.24)',
+    backgroundColor: '#0b1224',
+    borderRadius: 18,
+    padding: 12,
+    paddingVertical: 14,
   },
   shareIcon: {
     color: KevaColors.arrowIcon,
@@ -1056,11 +1102,14 @@ var styles = StyleSheet.create({
   reply: {
     flexDirection: 'row',
     justifyContent: 'flex-start',
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    backgroundColor:'#fff',
-    borderBottomWidth: THIN_BORDER,
-    borderColor: KevaColors.cellBorder,
+    marginHorizontal: 14,
+    marginVertical: 7,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    backgroundColor:'#0b1224',
+    borderWidth: 1,
+    borderRadius: 16,
+    borderColor: 'rgba(94, 234, 212, 0.22)',
   },
   offerStatusText: {
     marginTop: 6,
@@ -1069,7 +1118,7 @@ var styles = StyleSheet.create({
   },
   replyValue: {
     fontSize: 18,
-    color: KevaColors.darkText,
+    color: '#E0F2FE',
     paddingVertical: 8,
     lineHeight: 25,
     fontWeight: '700',
@@ -1080,29 +1129,29 @@ var styles = StyleSheet.create({
     fontSize: 13,
   },
   timestampReply: {
-    color: KevaColors.extraLightText,
+    color: '#94A3B8',
     alignSelf: 'flex-start',
     fontSize: 13,
   },
   sender: {
     fontSize: 16,
-    color: KevaColors.darkText,
+    color: '#E5E7EB',
     alignSelf: 'center',
     maxWidth: 220,
   },
   shortCode: {
     fontSize: 16,
     fontWeight: '700',
-    color: KevaColors.actionText,
+    color: '#93C5FD',
   },
   shortCodeReply: {
     fontSize: 16,
     fontWeight: '700',
-    color: KevaColors.actionText,
+    color: '#93C5FD',
   },
   senderBar: {
     borderLeftWidth: 4,
-    borderColor: KevaColors.cellBorder,
+    borderColor: '#38BDF8',
     width: 0,
     paddingLeft: 3,
     paddingRight: 7,
